@@ -1,0 +1,7 @@
+{
+  "name": "keys-keeper",
+  "description": "macOS-first secrets manager skill: stores API keys, SSH keys, server creds, and domain info in macOS Keychain via the `keys` CLI. Agents architecturally cannot reveal plaintext (Sealed wrapper + env-gated reveal). Works with Claude Code and Codex CLI.",
+  "author": {
+    "name": "kyzdes"
+  }
+}
