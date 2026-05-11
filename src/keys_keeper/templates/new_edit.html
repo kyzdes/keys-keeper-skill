@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="modal-backdrop" style="position:static;background:transparent;align-items:flex-start;padding:24px">
+  <div class="modal new-modal" style="margin:0 auto" data-edit-id="{{ entry.id if entry else '' }}">
+    <div class="modal-header">
+      <span class="modal-title">{% if entry %}Edit {{ entry.name }}{% else %}New entry{% endif %}</span>
+    </div>
+    <div class="type-cards" id="type-cards">
+      {% for t in ['api_key', 'ssh_key', 'server', 'domain', 'note'] %}
+      <div class="type-card {% if (entry and entry.type.value == t) or (not entry and t == 'api_key') %}selected{% endif %}" data-type="{{ t }}">
+        <div class="icon-large" style="background:var(--type-{{ t.split('_')[0] }})">{{ t[:2]|upper }}</div>
+        <div class="label">{{ t }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="form-fields" id="form-fields">
+      <div class="form-row">
+        <span class="label">name <span class="req">*</span></span>
+        <input class="text-input" id="f-name" value="{{ entry.name if entry else '' }}" {% if entry %}readonly{% endif %}>
+      </div>
+      <div id="type-specific-fields"></div>
+      <div class="form-row">
+        <span class="label">tags</span>
+        <input class="text-input" id="f-tags" placeholder="comma-separated" value="{{ ','.join(entry.tags) if entry else '' }}">
+      </div>
+      <div class="form-row">
+        <span class="label">note</span>
+        <textarea class="textarea-input" id="f-note">{{ entry.note if entry else '' }}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <span style="flex:1;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)"><span class="kbd">⌘ Enter</span> save</span>
+      <a class="btn btn-ghost" href="{% if entry %}/entry/{{ entry.id }}{% else %}/{% endif %}">Cancel</a>
+      <button class="btn btn-primary" id="save-btn">Save entry</button>
+    </div>
+    <div id="form-error" style="padding:0 18px 12px;color:var(--danger);font-family:'JetBrains Mono',monospace;font-size:11px"></div>
+  </div>
+</div>
+{% endblock %}

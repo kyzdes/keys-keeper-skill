@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="detail-shell" id="detail-mount" data-entry-id="{{ entry.id }}">
+  <div class="detail-main">
+    <div class="detail-header">
+      <span class="type-badge" style="background:var(--type-{{ entry.type.value if entry.type.value else entry.type }}-soft, var(--surface-2));">{{ entry.type.value if entry.type.value else entry.type }}</span>
+      <span class="last-access mono" style="color:var(--text-3);font-size:11px">id: {{ entry.id }}</span>
+    </div>
+    <h1 class="detail-name" id="entry-name">{{ entry.name }}</h1>
+    <div class="detail-tags" id="detail-tags"></div>
+    <div class="detail-action-bar">
+      <button class="btn btn-primary" id="copy-btn">Copy value</button>
+      <a class="btn" href="/entry/{{ entry.id }}/edit">Edit</a>
+      <button class="btn btn-ghost" id="replace-secret-btn">Replace secret</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-danger btn-sm" id="delete-btn">Delete</button>
+    </div>
+    <div id="fields-mount"></div>
+    <div id="refs-mount"></div>
+    <div class="field-section">
+      <div class="field-section-title">Notes</div>
+      <div style="padding:8px 0;font-size:13px;color:var(--text-2);line-height:1.55">{{ entry.note or '—' }}</div>
+    </div>
+  </div>
+  <div class="detail-side">
+    <div class="field-section-title">Recent access</div>
+    <div id="recent-mount" class="mini-audit">Loading…</div>
+  </div>
+</div>
+<div class="modal-backdrop" id="replace-modal" hidden>
+  <div class="modal" style="width:480px">
+    <div class="modal-header">
+      <span class="modal-title">Replace secret value</span>
+      <button class="icon-btn" id="rm-cancel">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-top:0;font-size:12.5px">Paste the new value below. The old value is overwritten in keychain. The DOM never stores the value after submit.</p>
+      <textarea id="rm-input" class="textarea-input" rows="4" placeholder="Paste new secret value"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="rm-cancel-2">Cancel</button>
+      <button class="btn btn-primary" id="rm-save">Replace</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

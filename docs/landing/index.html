@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>keys-keeper · a macOS secrets manager AI agents architecturally cannot leak from</title>
+<meta name="description" content="Stores keys in macOS Keychain. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value. Free, MIT, OSS.">
+<meta name="theme-color" content="#0a0b0c">
+<meta property="og:title" content="keys-keeper · the secrets manager AI agents can't leak from">
+<meta property="og:description" content="Stores keys in macOS Keychain. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value.">
+<meta property="og:url" content="https://github.com/kyzdes/keys-keeper">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ──────────────── tokens (lifted from src/keys_keeper/static/app.css) ─────────────── */
+:root {
+  --bg: #0a0b0c;
+  --bg-elevated: #0e1011;
+  --surface: #131517;
+  --surface-2: #181b1e;
+  --surface-hover: #1f2327;
+  --border: #24282d;
+  --border-subtle: #1c1f23;
+  --border-strong: #2f343a;
+  --text: #e8e9eb;
+  --text-2: #a3a8af;
+  --text-3: #6c7178;
+  --text-4: #44484e;
+  --accent: #d97550;
+  --accent-soft: rgba(217, 117, 80, 0.12);
+  --accent-line: rgba(217, 117, 80, 0.35);
+  --success: #6fb37a;
+  --success-soft: rgba(111, 179, 122, 0.12);
+  --danger: #d96565;
+  --danger-soft: rgba(217, 101, 101, 0.12);
+  --warning: #d9a850;
+  --info: #6695d9;
+  --type-api: #d9a850;
+  --type-ssh: #6fb37a;
+  --type-server: #6695d9;
+  --type-domain: #b773d9;
+  --type-note: #8d92a0;
+  --shadow-md: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.3);
+  --shadow-lg: 0 4px 8px rgba(0,0,0,0.5), 0 16px 32px rgba(0,0,0,0.4);
+  --shadow-xl: 0 8px 16px rgba(0,0,0,0.55), 0 32px 64px rgba(0,0,0,0.5);
+  --max-w: 1120px;
+  --gutter: 28px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+}
+.mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; font-feature-settings: "ss01", "cv02", "cv11"; letter-spacing: -0.01em; }
+
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--accent); }
+button { font: inherit; cursor: pointer; }
+::selection { background: var(--accent-soft); color: var(--text); }
+
+/* subtle ambient grid behind the hero — enough to ground but not loud */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px);
+  background-size: 64px 64px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+main, nav, footer { position: relative; z-index: 1; }
+
+/* ──────────────── nav ─────────────── */
+nav.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  height: 60px;
+  padding: 0 var(--gutter);
+  background: rgba(10, 11, 12, 0.78);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+nav .inner {
+  width: 100%;
+  max-width: var(--max-w);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 15px; }
+.brand .glyph { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: var(--bg); font-size: 14px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+nav .links { display: flex; gap: 22px; margin-left: 24px; font-size: 14px; color: var(--text-2); }
+nav .links a:hover { color: var(--text); }
+nav .spacer { flex: 1; }
+nav .stars {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--text-2);
+}
+nav .stars b { color: var(--text); font-weight: 600; }
+nav .stars .star { color: var(--accent); }
+
+/* ──────────────── shared ─────────────── */
+section { padding: 88px var(--gutter); }
+.wrap { max-width: var(--max-w); margin: 0 auto; }
+h1, h2, h3 { font-family: 'JetBrains Mono', monospace; font-weight: 600; letter-spacing: -0.015em; }
+h1 { font-size: clamp(38px, 5.6vw, 64px); line-height: 1.05; margin: 0 0 18px; text-wrap: balance; }
+h2 { font-size: clamp(26px, 3.2vw, 36px); line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+h3 { font-size: 18px; line-height: 1.3; margin: 0 0 8px; }
+p { margin: 0 0 14px; color: var(--text-2); text-wrap: pretty; }
+.eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 0.18em; color: var(--text-3); text-transform: uppercase; margin: 0 0 14px; }
+.section-head { margin-bottom: 36px; max-width: 760px; }
+.section-head p { font-size: 17px; color: var(--text-2); }
+
+/* ──────────────── S1 hero ─────────────── */
+.hero { padding: 64px var(--gutter) 56px; }
+.hero .wrap { display: grid; grid-template-columns: 1fr; gap: 44px; align-items: start; }
+.hero h1 { color: var(--text); }
+.hero h1 .accent { color: var(--accent); }
+.hero .sub { font-size: 19px; line-height: 1.55; max-width: 720px; color: var(--text-2); margin: 0 0 28px; }
+
+.cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 100ms ease;
+}
+.btn:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.07); background: var(--accent); color: var(--bg); }
+.btn-primary svg { stroke: var(--bg); }
+.btn svg { width: 14px; height: 14px; stroke: currentColor; flex-shrink: 0; }
+
+.hero-badges {
+  display: flex; flex-wrap: wrap; gap: 10px 18px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px dashed var(--border-subtle);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.hero-badges span { display: inline-flex; align-items: center; gap: 6px; }
+.hero-badges .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.hero-badges .dot-warn { background: var(--warning); }
+.hero-badges .dot-info { background: var(--info); }
+.hero-badges .dot-mit { background: var(--accent); }
+
+/* ── hero video slot — animated terminal mock until real .mp4 lands ── */
+.video-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+.video-chrome {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.dots { display: inline-flex; gap: 6px; }
+.dots span { width: 11px; height: 11px; border-radius: 50%; }
+.dots span:nth-child(1) { background: #ff5f57; }
+.dots span:nth-child(2) { background: #febc2e; }
+.dots span:nth-child(3) { background: #28c840; }
+.video-chrome .url {
+  flex: 1; max-width: 360px; padding: 4px 11px; background: var(--surface-2);
+  border: 1px solid var(--border-subtle); border-radius: 5px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-3);
+  display: flex; align-items: center; gap: 7px;
+}
+.video-chrome .url::before { content: '●'; color: var(--success); font-size: 9px; }
+.video-chrome .label {
+  margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  letter-spacing: 0.08em; color: var(--text-4); text-transform: uppercase;
+}
+
+.terminal-mock {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 22px 26px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+  height: calc(100% - 44px);
+  overflow: hidden;
+}
+.tm-pane { position: relative; padding: 14px 16px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+.tm-pane h4 {
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle);
+  font-family: 'JetBrains Mono', monospace; font-weight: 500;
+}
+.tm-pane.bad h4 { color: var(--danger); }
+.tm-pane.good h4 { color: var(--success); }
+.tm-pane.bad { animation: pulseBad 16s ease-in-out infinite; }
+.tm-pane.good { animation: pulseGood 16s ease-in-out infinite; }
+@keyframes pulseBad {
+  0%, 45%, 100% { box-shadow: 0 0 0 0 rgba(217, 101, 101, 0); border-color: var(--border); }
+  50%, 90%      { box-shadow: 0 0 0 1px var(--danger); border-color: var(--danger); }
+}
+@keyframes pulseGood {
+  0%, 45%, 100% { box-shadow: 0 0 0 1px var(--success); border-color: var(--success); }
+  50%, 90%      { box-shadow: 0 0 0 0 rgba(111, 179, 122, 0); border-color: var(--border); }
+}
+.tm-line { color: var(--text-2); margin: 2px 0; }
+.tm-line .prompt { color: var(--text-4); margin-right: 6px; }
+.tm-line .user { color: var(--info); }
+.tm-line .tool { color: var(--text-3); font-style: italic; }
+.tm-line .leak { color: var(--danger); background: var(--danger-soft); padding: 1px 4px; border-radius: 3px; border-bottom: 1px dashed var(--danger); }
+.tm-line .ok { color: var(--success); }
+.tm-line .cmd { color: var(--accent); }
+.tm-caption {
+  position: absolute; bottom: 10px; left: 16px; right: 16px;
+  font-size: 11px; color: var(--text-4); font-style: italic;
+  border-top: 1px dashed var(--border-subtle); padding-top: 10px;
+  margin-top: 10px;
+  background: var(--surface);
+}
+.tm-marker {
+  position: absolute; top: 12px; right: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px; letter-spacing: 0.12em;
+  padding: 3px 7px; border-radius: 3px;
+}
+.tm-marker.bad { background: var(--danger-soft); color: var(--danger); }
+.tm-marker.good { background: var(--success-soft); color: var(--success); }
+
+.hero-cta-bar { display: flex; flex-direction: column; gap: 22px; }
+
+/* ──────────────── S2 contrast ─────────────── */
+.contrast { background: linear-gradient(180deg, transparent 0%, var(--surface) 100%); border-top: 1px solid var(--border-subtle); }
+.contrast-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.contrast-col { border: 1px solid var(--border); border-radius: 11px; background: var(--bg-elevated); overflow: hidden; transition: opacity 200ms ease; }
+.contrast-col__header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+.contrast-col__header .pill { font-size: 10.5px; letter-spacing: 0.12em; padding: 3px 8px; border-radius: 3px; }
+.contrast-col.bad .pill { background: var(--danger-soft); color: var(--danger); }
+.contrast-col.good .pill { background: var(--success-soft); color: var(--success); }
+.contrast-col.bad .contrast-col__header { color: var(--danger); }
+.contrast-col.good .contrast-col__header { color: var(--success); }
+.contrast-col__body { padding: 22px; font-family: 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.7; }
+.contrast-col__caption {
+  padding: 14px 18px; border-top: 1px dashed var(--border-subtle);
+  font-family: 'Inter', sans-serif; font-size: 13.5px; color: var(--text-2); line-height: 1.5;
+}
+.contrast-col.bad .contrast-col__caption strong { color: var(--danger); }
+.contrast-col.good .contrast-col__caption strong { color: var(--success); }
+
+.tx-line { color: var(--text-2); margin: 3px 0; }
+.tx-line .role { color: var(--text-4); margin-right: 8px; font-size: 11px; }
+.tx-line .role-user { color: var(--info); }
+.tx-line .tool { color: var(--text-3); }
+.tx-line .leak { color: var(--danger); background: var(--danger-soft); padding: 1px 4px; border-radius: 3px; }
+.tx-line .ok { color: var(--success); }
+.tx-line .cmd { color: var(--accent); }
+.tx-line.indent { padding-left: 18px; color: var(--text-3); font-size: 12px; }
+
+/* ──────────────── S3 surface ─────────────── */
+.surface-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+.surface-col {
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 11px; overflow: hidden;
+}
+.surface-col__header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.surface-col__header .label { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+.surface-col__header .badge { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.12em; padding: 3px 8px; border-radius: 3px; }
+.surface-col.safe .badge { background: var(--success-soft); color: var(--success); }
+.surface-col.gated .badge { background: var(--warning); color: var(--bg); }
+.surface-row { display: grid; grid-template-columns: 16px 1fr; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--border-subtle); align-items: start; }
+.surface-row:last-child { border-bottom: none; }
+.surface-row .check { color: var(--success); font-weight: 700; line-height: 1.5; }
+.surface-row.warn .check { color: var(--warning); }
+.surface-row code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text); display: block; margin-bottom: 4px; }
+.surface-row .desc { font-size: 13px; color: var(--text-3); line-height: 1.5; }
+.surface-callout {
+  margin-top: 28px;
+  padding: 22px 26px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  border-radius: 6px;
+  font-family: 'Inter', sans-serif;
+  font-size: 15px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.surface-callout strong { color: var(--text); font-weight: 600; }
+.surface-callout code { font-family: 'JetBrains Mono', monospace; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 3px; font-size: 13px; }
+
+/* ──────────────── S4 admin tour ─────────────── */
+.admin-section { background: var(--surface); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+.admin-tour { display: grid; grid-template-columns: 1fr; gap: 22px; }
+.admin-mock {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+.admin-mock__chrome {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.admin-mock__chrome .url {
+  flex: 1; padding: 4px 10px; background: var(--surface-2);
+  border: 1px solid var(--border-subtle); border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-3);
+}
+.admin-mock__chrome .pill {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
+  padding: 3px 7px; background: var(--accent-soft); color: var(--accent); border-radius: 3px;
+}
+.admin-mock__caption {
+  padding: 14px 18px; font-size: 13.5px; color: var(--text-2);
+  border-top: 1px dashed var(--border-subtle);
+  font-style: italic;
+}
+.admin-mock__body { background: var(--bg); }
+
+/* dashboard hero mock */
+.am-topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 18px; height: 46px; border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.am-topbar .brand-mini { display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; }
+.am-topbar .brand-mini .glyph { width: 18px; height: 18px; border-radius: 4px; background: var(--accent); color: var(--bg); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.am-topbar .nav-links { display: flex; gap: 4px; margin-left: 14px; }
+.am-topbar .nav-links a { padding: 5px 10px; font-size: 12.5px; color: var(--text-2); border-radius: 4px; }
+.am-topbar .nav-links a.active { background: var(--surface-2); color: var(--text); }
+.am-topbar .spacer { flex: 1; }
+.am-topbar .palette {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  padding: 4px 10px; background: var(--surface-2);
+  border: 1px solid var(--border-subtle); border-radius: 5px;
+  color: var(--text-3); display: inline-flex; align-items: center; gap: 8px;
+}
+.am-topbar .palette .kbd { padding: 1px 5px; font-size: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; }
+
+.am-toolbar { padding: 13px 18px; border-bottom: 1px solid var(--border-subtle); }
+.am-search {
+  display: flex; align-items: center; gap: 9px; padding: 7px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+  max-width: 480px;
+}
+.am-search .ph { color: var(--text-3); }
+.am-search .kbd { margin-left: auto; padding: 1px 5px; font-size: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; color: var(--text-3); }
+
+.am-tagrail { display: flex; gap: 6px; padding: 8px 18px 12px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+.am-tagrail .label { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--text-3); margin-right: 6px; align-self: center; }
+.am-chip { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 11px; color: var(--text-2); background: var(--surface); }
+.am-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+.am-thead {
+  display: grid; grid-template-columns: 28px 70px 1.4fr 1.4fr 90px 80px;
+  gap: 14px; padding: 9px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated); font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.1em; color: var(--text-4); text-transform: uppercase;
+}
+.am-row {
+  display: grid; grid-template-columns: 28px 70px 1.4fr 1.4fr 90px 80px;
+  gap: 14px; padding: 11px 18px; border-bottom: 1px solid var(--border-subtle);
+  align-items: center;
+}
+.am-row .ti {
+  width: 22px; height: 22px; border-radius: 5px; font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px; font-weight: 700; color: var(--bg);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.am-row .ti.api_key { background: var(--type-api); }
+.am-row .ti.ssh_key { background: var(--type-ssh); }
+.am-row .ti.server { background: var(--type-server); }
+.am-row .ti.domain { background: var(--type-domain); }
+.am-row .type-label { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--text-3); text-transform: uppercase; }
+.am-row .name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; }
+.am-row .name .tagchips { display: inline-flex; gap: 5px; margin-left: 8px; }
+.am-row .name .tag-mini { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 1px 6px; background: var(--surface-2); border-radius: 7px; color: var(--text-3); }
+.am-row .note { font-family: 'Inter', sans-serif; font-size: 12.5px; color: var(--text-3); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-row .ago { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-4); text-align: right; }
+.am-row .ops { display: flex; gap: 5px; justify-content: flex-end; color: var(--text-3); }
+.am-row .ops span { width: 22px; height: 22px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+
+/* admin grid (4 small cards) */
+.admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+/* entry detail mock */
+.am-detail { padding: 22px 24px; }
+.am-detail__head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.am-detail__head .badge { padding: 2px 8px; border-radius: 11px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(102, 149, 217, 0.16); color: var(--type-server); border: 1px solid rgba(102, 149, 217, 0.34); }
+.am-detail__head .id { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--text-3); margin-left: auto; }
+.am-detail__name { font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600; margin: 4px 0 8px; }
+.am-detail__tags { display: flex; gap: 5px; margin-bottom: 16px; }
+.am-detail__actions { display: flex; gap: 7px; padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 14px; }
+.am-detail__actions .b { padding: 5px 10px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.am-detail__actions .b.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.am-detail__sec { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--text-4); text-transform: uppercase; margin-bottom: 8px; margin-top: 12px; }
+.am-detail__field { display: grid; grid-template-columns: 100px 1fr; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--border-subtle); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.am-detail__field .k { color: var(--text-3); }
+.am-detail__field .v { color: var(--text); }
+.am-refs { padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 5px; display: flex; align-items: center; gap: 10px; margin-top: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+.am-refs .role { color: var(--text-4); width: 60px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.am-refs .arrow { color: var(--text-4); margin-left: auto; }
+.am-refs .target-name { color: var(--text); }
+.am-refs .target-type { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; padding: 1px 5px; background: var(--surface-2); border-radius: 2px; color: var(--text-3); margin-left: 6px; }
+
+/* bulk paste mock */
+.am-bulk { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+.am-bulk__head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); }
+.am-bulk__head h4 { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color: var(--text); }
+.am-bulk__head .crumb { color: var(--text-3); margin-right: 6px; font-weight: 400; }
+.am-bulk__split { display: grid; grid-template-columns: 1fr 1fr; min-height: 220px; }
+.am-bulk__pane { padding: 13px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+.am-bulk__pane + .am-bulk__pane { border-left: 1px solid var(--border-subtle); }
+.am-bulk__pane h5 { margin: 0 0 9px; font-size: 9.5px; letter-spacing: 0.1em; color: var(--text-4); text-transform: uppercase; font-weight: 500; }
+.am-bulk__pane .ln { color: var(--text-2); margin: 2px 0; }
+.am-bulk__pane .ln .key { color: var(--type-server); }
+.am-bulk__pane .ln .secret { color: var(--type-api); }
+.am-bulk__pane .ln .comment { color: var(--text-4); font-style: italic; }
+.am-bulk__pane .ln .tag { color: var(--type-domain); }
+.am-bulk__row {
+  display: grid; grid-template-columns: 14px 22px 1fr auto;
+  gap: 9px; padding: 5px 0;
+}
+.am-bulk__row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); margin-top: 3px; }
+.am-bulk__row .num { color: var(--text-4); font-size: 10.5px; }
+.am-bulk__row .nm { font-weight: 500; }
+.am-bulk__row .info { color: var(--text-3); font-size: 10.5px; text-align: right; }
+
+/* audit mock */
+.am-audit { padding: 18px 22px; }
+.am-audit h4 { margin: 0 0 14px; font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; }
+.am-audit__charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px; }
+.am-audit__chart { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 11px 14px; }
+.am-audit__chart h5 { margin: 0 0 9px; font-size: 9.5px; letter-spacing: 0.1em; color: var(--text-4); text-transform: uppercase; font-weight: 500; }
+.am-bar { display: grid; grid-template-columns: 78px 1fr 28px; gap: 9px; align-items: center; padding: 3px 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.am-bar .n { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.am-bar .track { height: 6px; background: var(--surface-2); border-radius: 1px; overflow: hidden; }
+.am-bar .fill { height: 100%; background: var(--accent); }
+.am-bar .num { color: var(--text-3); font-size: 10.5px; text-align: right; }
+.am-audit__svg { width: 100%; height: 60px; margin-top: 4px; }
+
+/* settings mock */
+.am-set { padding: 22px 24px; }
+.am-set h4 { margin: 0 0 6px; font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 600; }
+.am-set__sub { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-3); margin-bottom: 18px; }
+.am-set__card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px 18px; }
+.am-set__title { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.1em; color: var(--text-4); text-transform: uppercase; margin-bottom: 12px; }
+.am-set__kv { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 6px 0; border-bottom: 1px dashed var(--border-subtle); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.am-set__kv:last-child { border-bottom: none; }
+.am-set__kv .k { color: var(--text-3); }
+.am-set__kv .v { color: var(--text); text-align: right; }
+.am-set__kv .v.danger { color: var(--danger); }
+.am-set__kv .v.success { color: var(--success); }
+.am-set__hint {
+  margin-top: 12px; padding: 10px 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 5px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.55;
+}
+.am-set__hint .cm { color: var(--text-4); display: block; margin-bottom: 3px; }
+.am-set__hint .ev { color: var(--accent); }
+
+/* ──────────────── S5 architecture ─────────────── */
+.arch { padding: 88px var(--gutter); background: linear-gradient(180deg, var(--surface) 0%, transparent 100%); border-top: 1px solid var(--border-subtle); }
+.arch-svg-wrap { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 11px; padding: 36px; box-shadow: var(--shadow-md); }
+.arch-svg { width: 100%; height: auto; max-width: 940px; margin: 0 auto; display: block; }
+.arch-caption { margin-top: 22px; text-align: center; font-size: 14px; color: var(--text-3); font-style: italic; }
+
+/* ──────────────── S6 install ─────────────── */
+.install-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: var(--shadow-md);
+}
+.install-block__head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-3);
+}
+.install-block__head .label { letter-spacing: 0.06em; }
+.install-block__head .copy {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  transition: all 100ms ease;
+}
+.install-block__head .copy:hover { border-color: var(--accent); color: var(--accent); }
+.install-block__head .copy.copied { color: var(--success); border-color: var(--success); }
+.install-block__head .copy svg { width: 12px; height: 12px; stroke: currentColor; }
+.install-block pre {
+  margin: 0; padding: 22px 24px;
+  font-family: 'JetBrains Mono', monospace; font-size: 14px;
+  color: var(--text); line-height: 1.75;
+  overflow-x: auto;
+}
+.install-block pre .comment { color: var(--text-4); }
+.install-block pre .cmd { color: var(--accent); }
+.install-block pre .arg { color: var(--text-2); }
+
+.install-prereq {
+  margin-top: 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+  color: var(--text-3);
+}
+.install-prereq code { background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--text-2); }
+
+.install-fallback {
+  margin-top: 18px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+  color: var(--text-3);
+}
+.install-fallback strong { color: var(--text-2); font-weight: 500; margin-right: 6px; }
+.install-fallback code { background: var(--bg); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+
+/* ──────────────── S7 roadmap ─────────────── */
+.roadmap-list { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 32px; padding: 0; margin: 0; list-style: none; }
+.roadmap-list li {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 11px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  font-family: 'JetBrains Mono', monospace; font-size: 13.5px;
+  color: var(--text-2);
+}
+.roadmap-list .check {
+  display: inline-flex; flex-shrink: 0;
+  width: 18px; height: 18px;
+  border: 1.5px solid var(--text-4);
+  border-radius: 4px;
+  margin-top: 1px;
+}
+.roadmap-list .text strong { color: var(--text); font-weight: 500; }
+.roadmap-cta { margin-top: 24px; font-size: 14px; color: var(--text-3); }
+.roadmap-cta a { color: var(--accent); border-bottom: 1px dashed var(--accent-line); }
+
+/* ──────────────── S8 limitations ─────────────── */
+.limit-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.limit-card { padding: 18px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px; }
+.limit-card h3 { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text); margin-bottom: 8px; line-height: 1.35; }
+.limit-card p { font-size: 13px; color: var(--text-3); line-height: 1.5; margin: 0; }
+
+/* ──────────────── S9 threat ─────────────── */
+.threat { padding: 88px var(--gutter); background: var(--surface); border-top: 1px solid var(--border-subtle); }
+.threat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.threat-block h3 { font-family: 'JetBrains Mono', monospace; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 12px; }
+.threat-block.def h3 { color: var(--success); }
+.threat-block.skip h3 { color: var(--danger); }
+.threat-block p { font-size: 15px; color: var(--text-2); line-height: 1.65; }
+
+/* ──────────────── footer ─────────────── */
+footer.site {
+  padding: 38px var(--gutter) 56px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg);
+}
+footer .row {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-3);
+}
+footer .row .brand { font-size: 13px; }
+footer .row .links { display: flex; gap: 18px; }
+footer .row .author { margin-left: auto; }
+footer .tagline {
+  margin-top: 18px;
+  font-family: 'Inter', sans-serif; font-style: italic; font-size: 14px; color: var(--text-4);
+  text-wrap: pretty; max-width: 640px;
+}
+
+/* ──────────────── responsive ─────────────── */
+@media (max-width: 1024px) {
+  .surface-grid { grid-template-columns: 1fr; }
+  .hero .wrap { gap: 32px; }
+  .limit-cards { grid-template-columns: repeat(3, 1fr); }
+  .roadmap-list { grid-template-columns: 1fr; }
+  nav .links { display: none; }
+}
+@media (max-width: 760px) {
+  section { padding: 64px 22px; }
+  .hero { padding: 40px 22px 56px; }
+  .hero h1 { font-size: 34px; }
+  .hero .sub { font-size: 16px; }
+  .contrast-grid { grid-template-columns: 1fr; }
+  .terminal-mock { grid-template-columns: 1fr; padding: 16px; }
+  .admin-grid { grid-template-columns: 1fr; }
+  .am-thead, .am-row { grid-template-columns: 24px 50px 1fr 80px; gap: 10px; padding: 10px 14px; }
+  .am-thead > :nth-child(4), .am-thead > :nth-child(6),
+  .am-row > :nth-child(4), .am-row > :nth-child(6) { display: none; }
+  .am-bulk__split { grid-template-columns: 1fr; }
+  .am-bulk__pane + .am-bulk__pane { border-left: none; border-top: 1px solid var(--border-subtle); }
+  .am-audit__charts { grid-template-columns: 1fr; }
+  .threat-grid { grid-template-columns: 1fr; }
+  .limit-cards { grid-template-columns: 1fr; }
+  .arch-svg-wrap { padding: 18px; }
+  .arch-svg { font-size: 11px; }
+  footer .row .author { margin-left: 0; width: 100%; }
+}
+
+/* ──────────────── ?dev=1 panel ─────────────── */
+.dev-panel {
+  position: fixed; bottom: 14px; right: 14px;
+  background: var(--bg-elevated); border: 1px solid var(--accent);
+  border-radius: 7px; padding: 12px 16px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-2);
+  box-shadow: var(--shadow-lg); z-index: 100;
+  max-width: 260px;
+}
+.dev-panel h5 { color: var(--accent); margin: 0 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<!-- ──────────────── nav ─────────────── -->
+<nav class="topbar">
+  <div class="inner">
+    <a href="#" class="brand">
+      <span class="glyph">K</span>
+      <span>keys-keeper</span>
+    </a>
+    <div class="links">
+      <a href="#contrast">why</a>
+      <a href="#surface">surface</a>
+      <a href="#admin">admin</a>
+      <a href="#install">install</a>
+      <a href="#roadmap">roadmap</a>
+    </div>
+    <div class="spacer"></div>
+    <a href="https://github.com/kyzdes/keys-keeper" class="stars" target="_blank" rel="noopener" id="stars-badge">
+      <span class="star">★</span>
+      <b id="star-count">—</b>
+      <span>kyzdes/keys-keeper</span>
+    </a>
+  </div>
+</nav>
+
+<main>
+
+<!-- ──────────────── S1 hero ─────────────── -->
+<section class="hero" id="hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <p class="eyebrow">v0.1 · macOS · MIT</p>
+      <h1>a macOS secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
+      <p class="sub">Stores keys in macOS Keychain. Ships with a Claude skill that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, single-binary install.</p>
+      <div class="cta-row">
+        <button class="btn btn-primary" data-copy="git clone https://github.com/kyzdes/keys-keeper.git&#10;cd keys-keeper&#10;pipx install .&#10;./scripts/install_skill.sh" id="hero-copy">
+          <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
+          <span>copy install</span>
+        </button>
+        <a class="btn" href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 00-2.5 15.6c.4.07.55-.17.55-.38v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.05-.5.05-.5.8.06 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.07-.5.27-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.85-2.1-.1-.2-.4-1 .07-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 014 0c1.5-1 2.2-.8 2.2-.8.4 1.1.15 1.9.07 2.1.55.5.85 1.2.85 2.1 0 3-1.8 3.7-3.6 3.9.3.25.55.7.55 1.45v2.15c0 .2.15.45.55.38A8 8 0 008 0z"/></svg>
+          <span>read on github</span>
+        </a>
+      </div>
+      <div class="hero-badges">
+        <span><span class="dot"></span> 103 tests passing</span>
+        <span><span class="dot dot-mit"></span> MIT license</span>
+        <span><span class="dot dot-info"></span> macOS</span>
+        <span><span class="dot dot-warn"></span> Python 3.10+</span>
+        <span><span class="dot"></span> no cloud · no account</span>
+      </div>
+    </div>
+
+    <div class="video-frame" aria-label="30-second demo: AI agent leaks key vs keys-keeper protects it">
+      <div class="video-chrome">
+        <span class="dots"><span></span><span></span><span></span></span>
+        <span class="url"><code>claude.ai/code</code></span>
+        <span class="label">demo · 30 s · placeholder</span>
+      </div>
+      <div class="terminal-mock">
+        <div class="tm-pane bad" aria-hidden="true">
+          <h4>without keys-keeper</h4>
+          <span class="tm-marker bad">leak</span>
+          <div class="tm-line"><span class="prompt">user&gt;</span> <span class="user">add openrouter key to .env: sk-or-v1-DEMO0…</span></div>
+          <div class="tm-line"><span class="prompt">claude&gt;</span> <span class="tool">Edit(file: ".env",</span></div>
+          <div class="tm-line">&nbsp;&nbsp;&nbsp;<span class="tool">new_string: "OPENROUTER_API_KEY=<span class="leak">sk-or-v1-DEMO0…abc</span>"</span></div>
+          <div class="tm-line"><span class="prompt">tool&gt;</span> <span class="tool">file edited (+1 line)</span></div>
+          <div class="tm-line">&nbsp;</div>
+          <div class="tm-line" style="color: var(--danger); font-size: 11.5px; line-height: 1.5;">↑ value is in the transcript, in the model<br/>provider's logs, in your shell history.</div>
+        </div>
+        <div class="tm-pane good" aria-hidden="true">
+          <h4>with keys-keeper</h4>
+          <span class="tm-marker good">safe</span>
+          <div class="tm-line"><span class="prompt">user&gt;</span> <span class="user">add openrouter key from buffer to .env</span></div>
+          <div class="tm-line"><span class="prompt">claude&gt;</span> <span class="tool">Bash(<span class="cmd">keys add openrouter --from-clipboard</span>)</span></div>
+          <div class="tm-line"><span class="prompt">tool&gt;</span> <span class="ok">added api_key 'openrouter'</span></div>
+          <div class="tm-line"><span class="prompt">claude&gt;</span> <span class="tool">Bash(<span class="cmd">keys inject openrouter --file .env --as OPENROUTER_API_KEY</span>)</span></div>
+          <div class="tm-line"><span class="prompt">tool&gt;</span> <span class="ok">injected 1 secret → .env</span></div>
+          <div class="tm-line">&nbsp;</div>
+          <div class="tm-line" style="color: var(--success); font-size: 11.5px; line-height: 1.5;">↑ value lives only in keychain + .env.<br/>transcript stays clean.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S2 contrast ─────────────── -->
+<section class="contrast" id="contrast">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">the diff</p>
+      <h2>the leak vs the fix</h2>
+      <p>The leak isn't where the key is stored — it's where the agent can <em>see</em> it. Storage vaults like 1Password CLI / doppler / vault all make the value flow through the agent's context window the moment you ask for it. keys-keeper gives the agent a different verb.</p>
+    </div>
+    <div class="contrast-grid">
+      <div class="contrast-col bad">
+        <div class="contrast-col__header">
+          <span>without keys-keeper</span>
+          <span class="pill">LEAKED</span>
+        </div>
+        <div class="contrast-col__body">
+          <div class="tx-line"><span class="role role-user">user</span><span>"add the openrouter key sk-or-v1-DEMO0…abc to .env"</span></div>
+          <div class="tx-line"><span class="role">tool</span><span class="tool">Edit(.env,</span></div>
+          <div class="tx-line indent">old_string: "OTHER=foo"</div>
+          <div class="tx-line indent">new_string: "OTHER=foo\nOPENROUTER_API_KEY=<span class="leak">sk-or-v1-DEMO0…abc</span>"</div>
+          <div class="tx-line"><span class="role">tool</span><span class="tool">)</span></div>
+          <div class="tx-line"><span class="role">←</span><span class="ok">file edited</span></div>
+        </div>
+        <div class="contrast-col__caption">
+          The full key is now in the agent's transcript, in the model provider's request logs, in <strong>every replay of this conversation</strong> for the lifetime of your account, and likely in your shell history if you typed it. Treating storage as the security boundary misses the actual leak surface.
+        </div>
+      </div>
+
+      <div class="contrast-col good">
+        <div class="contrast-col__header">
+          <span>with keys-keeper</span>
+          <span class="pill">CLEAN</span>
+        </div>
+        <div class="contrast-col__body">
+          <div class="tx-line"><span class="role role-user">user</span><span>"add openrouter key from buffer, into .env as OPENROUTER_API_KEY"</span></div>
+          <div class="tx-line"><span class="role">tool</span><span class="tool">Bash(<span class="cmd">keys add openrouter --from-clipboard --type api_key</span>)</span></div>
+          <div class="tx-line"><span class="role">←</span><span class="ok">added api_key 'openrouter' (id=kk:7f3a…)</span></div>
+          <div class="tx-line"><span class="role">tool</span><span class="tool">Bash(<span class="cmd">keys inject openrouter --file .env --as OPENROUTER_API_KEY</span>)</span></div>
+          <div class="tx-line"><span class="role">←</span><span class="ok">injected openrouter → .env</span></div>
+        </div>
+        <div class="contrast-col__caption">
+          The agent never possessed the value. The CLI read from <code class="mono" style="color:var(--accent);">pbpaste</code>, wrote to keychain, then wrote into <code class="mono" style="color:var(--accent);">.env</code> directly. The transcript holds <strong>only the operation</strong>. The value lives in macOS Keychain (Touch-ID protected) and in the file you wanted it in. Nowhere else.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S3 surface ─────────────── -->
+<section id="surface">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">the design</p>
+      <h2>command surface, by design</h2>
+      <p>The split is structural, not a convention. The shipped Claude skill markdown enumerates exactly which commands the agent may use. The one command that prints plaintext to stdout — <code class="mono" style="color:var(--accent);">keys reveal</code> — refuses to run unless an explicit env-var is set, which the skill never sets and the agent has no path to set. The structural guard fires before any prose can override it.</p>
+    </div>
+
+    <div class="surface-grid">
+      <div class="surface-col safe">
+        <div class="surface-col__header">
+          <span class="label">for Claude · safe</span>
+          <span class="badge">never returns plaintext</span>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys add NAME --from-clipboard / --from-file / --stdin</code>
+            <div class="desc">Read value from a side-channel that bypasses the chat. Stored to Keychain.</div>
+          </div>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys list / info / audit</code>
+            <div class="desc">Names, types, tags, refs, and access metadata. No values.</div>
+          </div>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys copy NAME</code>
+            <div class="desc">Pipes value to <code style="font-family:'JetBrains Mono',monospace">pbcopy</code>; auto-clears in 30 s with SHA-256 check so it doesn't wipe unrelated content.</div>
+          </div>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys inject NAME --file F --as ENV</code>
+            <div class="desc">Appends <code style="font-family:'JetBrains Mono',monospace">ENV=value</code> to the file. The CLI writes; the agent never sees.</div>
+          </div>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys resolve PATH</code>
+            <div class="desc">Substitutes <code style="font-family:'JetBrains Mono',monospace">__KEYS:name__</code> placeholders in-place. Works on <code style="font-family:'JetBrains Mono',monospace">.env.template</code>, deploy scripts, anything text.</div>
+          </div>
+        </div>
+        <div class="surface-row">
+          <span class="check">✓</span>
+          <div>
+            <code>keys ssh NAME</code>
+            <div class="desc">Resolves a server entry, shells out to <code style="font-family:'JetBrains Mono',monospace">ssh -i &lt;tempfile&gt;</code>, shreds the tempfile on exit.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="surface-col gated">
+        <div class="surface-col__header">
+          <span class="label">for shell · gated</span>
+          <span class="badge">⚠ env-var required</span>
+        </div>
+        <div class="surface-row warn">
+          <span class="check">⚠</span>
+          <div>
+            <code>keys reveal NAME</code>
+            <div class="desc">Refuses to run unless <code style="font-family:'JetBrains Mono',monospace; font-size:12px;">KEYS_KEEPER_ALLOW_REVEAL=1</code> is in env. Most users never set it; agents have no path to set it. This is the structural guard that fires before any prose can override it.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <blockquote class="surface-callout">
+      The shipped skill markdown tells Claude: <strong>"You MUST NOT run <code>keys reveal</code>. You CAN use <code>keys copy / inject / resolve / ssh</code>."</strong> The env-var gate makes that instruction <em>structural</em>. Even if the agent tried, the CLI itself refuses.
+    </blockquote>
+  </div>
+</section>
+
+<!-- ──────────────── S4 admin tour ─────────────── -->
+<section class="admin-section" id="admin">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">and a local admin</p>
+      <h2>so you can browse 50+ keys without losing your mind</h2>
+      <p>Run <code class="mono" style="color:var(--accent);">keys serve</code> and a localhost-only admin opens at <code class="mono" style="color:var(--accent);">127.0.0.1:7777</code>. Token in the URL, stripped via <code class="mono" style="color:var(--text-2);">history.replaceState</code>, then a session cookie. No cloud, no account, no telemetry. Five screens, terminal-density.</p>
+    </div>
+
+    <div class="admin-tour">
+      <!-- HERO: dashboard mock -->
+      <div class="admin-mock">
+        <div class="admin-mock__chrome">
+          <span class="dots"><span></span><span></span><span></span></span>
+          <span class="url">127.0.0.1:7777/</span>
+          <span class="pill">DASHBOARD</span>
+        </div>
+        <div class="admin-mock__body">
+          <div class="am-topbar">
+            <div class="brand-mini"><span class="glyph">K</span><span>keys-keeper</span></div>
+            <div class="nav-links">
+              <a class="active">Dashboard</a>
+              <a>Audit</a>
+              <a>Settings</a>
+            </div>
+            <div class="spacer"></div>
+            <div class="palette"><span>Jump to entry…</span><span class="kbd">⌘K</span></div>
+          </div>
+          <div class="am-toolbar">
+            <div class="am-search"><span class="ph">Search by name, tag, or note · / to focus</span><span class="kbd">/</span></div>
+          </div>
+          <div class="am-tagrail">
+            <span class="label">FILTER</span>
+            <span class="am-chip active">llm <span style="color: var(--text-4);">×</span></span>
+            <span class="am-chip">personal</span>
+            <span class="am-chip">prod</span>
+            <span class="am-chip">dev</span>
+            <span class="am-chip">do</span>
+            <span class="am-chip">payments</span>
+            <span class="am-chip">infra</span>
+          </div>
+          <div class="am-thead">
+            <span></span>
+            <span>type</span>
+            <span>name · tags</span>
+            <span>note</span>
+            <span>last access</span>
+            <span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti api_key">AP</span>
+            <span class="type-label">api_key</span>
+            <span class="name">openrouter-claude<span class="tagchips"><span class="tag-mini">llm</span><span class="tag-mini">personal</span></span></span>
+            <span class="note">main Claude Code LLM key</span>
+            <span class="ago">2 min ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti api_key">AP</span>
+            <span class="type-label">api_key</span>
+            <span class="name">stripe-test<span class="tagchips"><span class="tag-mini">payments</span><span class="tag-mini">dev</span></span></span>
+            <span class="note">Test mode for the side project</span>
+            <span class="ago">1 hr ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti api_key">AP</span>
+            <span class="type-label">api_key</span>
+            <span class="name">github-token-cli<span class="tagchips"><span class="tag-mini">dev</span><span class="tag-mini">personal</span></span></span>
+            <span class="note">fine-grained, repo:write</span>
+            <span class="ago">6 hr ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti ssh_key">SSH</span>
+            <span class="type-label">ssh_key</span>
+            <span class="name">my-do-key<span class="tagchips"><span class="tag-mini">personal</span><span class="tag-mini">do</span></span></span>
+            <span class="note">main key for DigitalOcean droplets</span>
+            <span class="ago">38 min ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti server">SV</span>
+            <span class="type-label">server</span>
+            <span class="name">do-prod-droplet<span class="tagchips"><span class="tag-mini">prod</span><span class="tag-mini">do</span></span></span>
+            <span class="note">main app server, prod stack</span>
+            <span class="ago">12 d ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+          <div class="am-row">
+            <span class="ti domain">DM</span>
+            <span class="type-label">domain</span>
+            <span class="name">mysite.com<span class="tagchips"><span class="tag-mini">prod</span></span></span>
+            <span class="note">primary domain · cloudflare</span>
+            <span class="ago">30 d ago</span>
+            <span class="ops"><span>📋</span><span>↗</span></span>
+          </div>
+        </div>
+        <div class="admin-mock__caption">everything in one searchable list — fuzzy by name/tag/note, tag chips additive, copy without seeing.</div>
+      </div>
+
+      <div class="admin-grid">
+        <!-- Entry detail -->
+        <div class="admin-mock">
+          <div class="admin-mock__chrome">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="url">127.0.0.1:7777/entry/do-prod-droplet</span>
+            <span class="pill">ENTRY</span>
+          </div>
+          <div class="am-detail">
+            <div class="am-detail__head">
+              <span class="badge">server</span>
+              <span class="id">id: kk:e2f9-…</span>
+            </div>
+            <div class="am-detail__name">do-prod-droplet</div>
+            <div class="am-detail__tags">
+              <span class="am-chip">prod</span>
+              <span class="am-chip">do</span>
+            </div>
+            <div class="am-detail__actions">
+              <button class="b primary">Copy value</button>
+              <button class="b">Edit</button>
+              <button class="b">Replace secret</button>
+            </div>
+            <div class="am-detail__sec">Fields</div>
+            <div class="am-detail__field"><span class="k">host</span><span class="v">165.232.1.1</span></div>
+            <div class="am-detail__field"><span class="k">user</span><span class="v">root</span></div>
+            <div class="am-detail__field"><span class="k">port</span><span class="v">22</span></div>
+            <div class="am-detail__field"><span class="k">auth</span><span class="v">ssh_key <span style="color:var(--text-3);">(via ref)</span></span></div>
+            <div class="am-detail__sec">Linked entries</div>
+            <a class="am-refs">
+              <span class="role">ssh_key</span>
+              <span class="target-name">my-do-key</span>
+              <span class="target-type">ssh_key</span>
+              <span class="arrow">→</span>
+            </a>
+          </div>
+          <div class="admin-mock__caption">type-aware fields, linked entries, mini-audit per entry.</div>
+        </div>
+
+        <!-- Bulk paste -->
+        <div class="admin-mock">
+          <div class="admin-mock__chrome">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="url">127.0.0.1:7777/paste</span>
+            <span class="pill">BULK</span>
+          </div>
+          <div class="am-bulk">
+            <div class="am-bulk__head">
+              <h4><span class="crumb">/paste</span> Bulk import</h4>
+            </div>
+            <div class="am-bulk__split">
+              <div class="am-bulk__pane">
+                <h5>SOURCE</h5>
+                <div class="ln"><span class="comment"># LLM keys</span></div>
+                <div class="ln"><span class="key">openrouter-claude</span> = <span class="secret">sk-or-v1-DEMO…claude</span> <span class="tag">[llm,personal]</span></div>
+                <div class="ln"><span class="key">openrouter-roo</span>: <span class="secret">sk-or-v1-DEMO…roo000</span> <span class="tag">[llm]</span></div>
+                <div class="ln"><span class="comment"># payments</span></div>
+                <div class="ln"><span class="key">stripe-test</span> = <span class="secret">sk_test_DEMO…test</span> <span class="tag">[payments,dev]</span></div>
+              </div>
+              <div class="am-bulk__pane">
+                <h5>PREVIEW · 4 entries · 0 errors</h5>
+                <div class="am-bulk__row"><span class="dot"></span><span class="num">2</span><span class="nm">openrouter-claude</span><span class="info">46 chars · llm,personal</span></div>
+                <div class="am-bulk__row"><span class="dot"></span><span class="num">3</span><span class="nm">openrouter-roo</span><span class="info">46 chars · llm</span></div>
+                <div class="am-bulk__row"><span class="dot"></span><span class="num">5</span><span class="nm">stripe-test</span><span class="info">32 chars · payments,dev</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="admin-mock__caption">import 50 keys from your old notes file in one paste — live-parsed preview.</div>
+        </div>
+
+        <!-- Audit -->
+        <div class="admin-mock">
+          <div class="admin-mock__chrome">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="url">127.0.0.1:7777/audit</span>
+            <span class="pill">AUDIT</span>
+          </div>
+          <div class="am-audit">
+            <div class="am-audit__charts">
+              <div class="am-audit__chart">
+                <h5>top entries · last 7 d</h5>
+                <div class="am-bar"><span class="n">openrouter-claude</span><span class="track"><span class="fill" style="width:90%"></span></span><span class="num">47</span></div>
+                <div class="am-bar"><span class="n">my-do-key</span><span class="track"><span class="fill" style="width:74%"></span></span><span class="num">38</span></div>
+                <div class="am-bar"><span class="n">do-prod-droplet</span><span class="track"><span class="fill" style="width:55%"></span></span><span class="num">28</span></div>
+                <div class="am-bar"><span class="n">github-token-cli</span><span class="track"><span class="fill" style="width:43%"></span></span><span class="num">22</span></div>
+              </div>
+              <div class="am-audit__chart">
+                <h5>daily activity · last 30 d</h5>
+                <svg viewBox="0 0 300 60" preserveAspectRatio="none" class="am-audit__svg">
+                  <rect x="0"   y="44" width="9" height="16" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="11"  y="36" width="9" height="24" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="22"  y="50" width="9" height="10" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="33"  y="22" width="9" height="38" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="44"  y="10" width="9" height="50" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="55"  y="40" width="9" height="20" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="66"  y="30" width="9" height="30" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="77"  y="20" width="9" height="40" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="88"  y="6"  width="9" height="54" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="99"  y="36" width="9" height="24" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="110" y="14" width="9" height="46" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="121" y="28" width="9" height="32" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="132" y="42" width="9" height="18" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="143" y="20" width="9" height="40" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="154" y="8"  width="9" height="52" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="165" y="24" width="9" height="36" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="176" y="14" width="9" height="46" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="187" y="40" width="9" height="20" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="198" y="32" width="9" height="28" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="209" y="22" width="9" height="38" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="220" y="12" width="9" height="48" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="231" y="26" width="9" height="34" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="242" y="38" width="9" height="22" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="253" y="18" width="9" height="42" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="264" y="6"  width="9" height="54" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="275" y="20" width="9" height="40" fill="var(--accent)" opacity="0.85"/>
+                  <rect x="286" y="34" width="9" height="26" fill="var(--accent)" opacity="0.85"/>
+                  <line x1="0" y1="59.5" x2="300" y2="59.5" stroke="var(--border-subtle)" stroke-width="0.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="admin-mock__caption">every op logged · every chart inline-SVG · never a third-party tracker.</div>
+        </div>
+
+        <!-- Settings -->
+        <div class="admin-mock">
+          <div class="admin-mock__chrome">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="url">127.0.0.1:7777/settings</span>
+            <span class="pill">SETTINGS</span>
+          </div>
+          <div class="am-set">
+            <h4>Settings</h4>
+            <div class="am-set__sub">Server status, security, and maintenance</div>
+            <div class="am-set__card">
+              <div class="am-set__title">Security</div>
+              <div class="am-set__kv"><span class="k">KEYS_KEEPER_ALLOW_REVEAL</span><span class="v danger">✗ not set</span></div>
+              <div class="am-set__kv"><span class="k">URL token</span><span class="v success">✓ active</span></div>
+              <div class="am-set__kv"><span class="k">Auto-shutdown</span><span class="v">15 min idle</span></div>
+              <div class="am-set__hint">
+                <span class="cm"># add to ~/.zshrc to enable shell-side reveal</span>
+                <span class="ev">export KEYS_KEEPER_ALLOW_REVEAL=1</span>
+              </div>
+            </div>
+          </div>
+          <div class="admin-mock__caption">the env-var gate, plain to see — and the URL token's session, not persistent.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S5 architecture ─────────────── -->
+<section class="arch" id="architecture">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">how it fits together</p>
+      <h2>two-layer storage. one process. zero network.</h2>
+      <p>Secrets live in the macOS Keychain — Touch-ID protected, tied to your login session. Metadata (names, tags, refs, audit log) lives in <code class="mono" style="color:var(--accent);">~/.config/keys-keeper/</code> as boring JSON you can back up or diff. The CLI mediates both. The admin is the same process exposing localhost HTTP.</p>
+    </div>
+
+    <div class="arch-svg-wrap">
+      <svg class="arch-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--text-3)"/>
+          </marker>
+          <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- top row: sources -->
+        <g>
+          <rect x="60" y="30" width="240" height="68" rx="8" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+          <text x="180" y="56" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">Claude Code</text>
+          <text x="180" y="78" fill="var(--text-3)" font-size="11" text-anchor="middle">via shipped skill (forbids reveal)</text>
+
+          <rect x="640" y="30" width="240" height="68" rx="8" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+          <text x="760" y="56" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">Shell · scripts</text>
+          <text x="760" y="78" fill="var(--text-3)" font-size="11" text-anchor="middle">your zsh, deploy CI, other agents</text>
+        </g>
+
+        <!-- arrows down to CLI -->
+        <line x1="180" y1="98" x2="380" y2="170" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="760" y1="98" x2="560" y2="170" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- center CLI -->
+        <rect x="280" y="170" width="380" height="100" rx="10" fill="var(--bg-elevated)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="470" y="200" fill="var(--accent)" font-size="16" font-weight="700" text-anchor="middle">~/.local/bin/keys</text>
+        <text x="470" y="222" fill="var(--text-2)" font-size="11.5" text-anchor="middle">add · list · info · copy · inject · resolve · ssh</text>
+        <text x="470" y="240" fill="var(--text-2)" font-size="11.5" text-anchor="middle">edit · rm · serve · audit · doctor · export · import</text>
+        <text x="470" y="260" fill="var(--text-3)" font-size="10.5" text-anchor="middle" font-style="italic">reveal · gated by KEYS_KEEPER_ALLOW_REVEAL=1</text>
+
+        <!-- side: web admin -->
+        <rect x="700" y="170" width="200" height="100" rx="10" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+        <text x="800" y="200" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">Web admin</text>
+        <text x="800" y="222" fill="var(--text-3)" font-size="11" text-anchor="middle">127.0.0.1:7777</text>
+        <text x="800" y="240" fill="var(--text-3)" font-size="11" text-anchor="middle">token + cookie auth</text>
+        <text x="800" y="260" fill="var(--text-4)" font-size="10" text-anchor="middle">Jinja2 + vanilla JS</text>
+        <line x1="660" y1="220" x2="700" y2="220" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- arrows down to storage -->
+        <line x1="380" y1="270" x2="240" y2="340" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="560" y1="270" x2="660" y2="340" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- bottom: storage -->
+        <rect x="60" y="340" width="360" height="80" rx="10" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+        <text x="240" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">macOS Keychain</text>
+        <text x="240" y="390" fill="var(--text-3)" font-size="11.5" text-anchor="middle">via security CLI · service "keys-keeper"</text>
+        <text x="240" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">Touch-ID protected · tied to login session</text>
+
+        <rect x="480" y="340" width="360" height="80" rx="10" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
+        <text x="660" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">~/.config/keys-keeper/</text>
+        <text x="660" y="390" fill="var(--text-3)" font-size="11.5" text-anchor="middle">data.json · audit.jsonl · config.toml</text>
+        <text x="660" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">atomic write + fcntl flock · Time Machine friendly</text>
+
+        <!-- caption -->
+        <text x="470" y="448" fill="var(--text-3)" font-size="11.5" text-anchor="middle" font-style="italic">secrets in keychain · metadata in JSON · admin reads both · network never touched</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S6 install ─────────────── -->
+<section id="install">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">install in 5 minutes</p>
+      <h2>five lines of bash. zero account.</h2>
+      <p>Single binary on PATH after pipx. The skill install is a separate command so you can say no to it (e.g. you're trying it from the CLI before adding the Claude integration).</p>
+    </div>
+
+    <div class="install-block">
+      <div class="install-block__head">
+        <span class="label">$ install</span>
+        <button class="copy" id="install-copy">
+          <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
+          <span>copy</span>
+        </button>
+      </div>
+<pre id="install-pre"><span class="cmd">git clone</span> <span class="arg">https://github.com/kyzdes/keys-keeper.git</span>
+<span class="cmd">cd</span> <span class="arg">keys-keeper</span>
+<span class="cmd">pipx install</span> <span class="arg">.</span>
+<span class="cmd">./scripts/install_skill.sh</span></pre>
+    </div>
+
+    <p class="install-prereq">requires <code>Python 3.10+</code> and <code>macOS</code>. Linux/Windows backends are on the roadmap below.</p>
+
+    <div class="install-fallback">
+      <strong>no pipx?</strong> <code>brew install pipx && pipx ensurepath</code> — one line, restart your shell.
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S7 roadmap ─────────────── -->
+<section id="roadmap" style="background: var(--surface); border-top: 1px solid var(--border-subtle);">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">roadmap</p>
+      <h2>open source · accepting PRs</h2>
+      <p>Owner is one developer with a day job. The list below is what's planned but not yet shipped — pull-request bingo welcome.</p>
+    </div>
+    <ul class="roadmap-list">
+      <li><span class="check"></span><span class="text"><strong>Linux backend</strong> via secret-tool (libsecret) — KeychainBackend interface already abstracted</span></li>
+      <li><span class="check"></span><span class="text"><strong>Windows backend</strong> via Credential Manager (with chunking for SSH keys; CredMan has a 2560-byte cap)</span></li>
+      <li><span class="check"></span><span class="text"><strong>Touch-ID-gated reveal in admin</strong> with auto-wipe from DOM after 10 s</span></li>
+      <li><span class="check"></span><span class="text"><strong>Cursor / Aider / Cline rule-file generators</strong> beyond the Claude skill format</span></li>
+      <li><span class="check"></span><span class="text"><strong>CSV export from /audit</strong> (already CLI-only via <code style="font-family:'JetBrains Mono',monospace; color:var(--accent);">keys audit > file.csv</code>)</span></li>
+      <li><span class="check"></span><span class="text"><strong>Bulk-paste parser extension</strong> for ssh_key / server / domain (currently clean only for api_key)</span></li>
+      <li><span class="check"></span><span class="text"><strong>Light theme polish</strong> — CSS tokens exist; not all surfaces tested</span></li>
+      <li><span class="check"></span><span class="text"><strong>Cmd+K action palette</strong> beyond navigation — "copy openrouter" as a one-shot</span></li>
+    </ul>
+    <p class="roadmap-cta">PRs welcome. Start at <a href="https://github.com/kyzdes/keys-keeper/issues" target="_blank" rel="noopener">github.com/kyzdes/keys-keeper/issues</a> — or just open one with the rough idea.</p>
+  </div>
+</section>
+
+<!-- ──────────────── S8 limitations ─────────────── -->
+<section id="limitations">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">honest limitations</p>
+      <h2>what v0.1 is not.</h2>
+      <p>If any of these is a dealbreaker, that's fine — none of them are theoretically hard, they're just not done yet. Tracking on the roadmap above.</p>
+    </div>
+    <div class="limit-cards">
+      <div class="limit-card">
+        <h3>macOS only</h3>
+        <p>Keychain backend is the only one shipped. Linux/Windows are on the roadmap.</p>
+      </div>
+      <div class="limit-card">
+        <h3>single user</h3>
+        <p>No team / multi-user / sharing. This is a personal tool.</p>
+      </div>
+      <div class="limit-card">
+        <h3>no cloud sync</h3>
+        <p>Use <code style="font-family:'JetBrains Mono',monospace;">keys export</code> + your encrypted-file sync route.</p>
+      </div>
+      <div class="limit-card">
+        <h3>bulk paste = api_key</h3>
+        <p>Other types via <code style="font-family:'JetBrains Mono',monospace;">+ New</code> form in the admin for now.</p>
+      </div>
+      <div class="limit-card">
+        <h3>caller_path is best-effort</h3>
+        <p>From <code style="font-family:'JetBrains Mono',monospace;">ps -o command=</code>. Forensics-level, not court evidence.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────── S9 threat model ─────────────── -->
+<section class="threat" id="threat">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">threat model</p>
+      <h2>what this defends against. and what it doesn't.</h2>
+      <p>If you're considering keys-keeper, you should know the boundaries. Vague claims help no one — here's the explicit shape of the protection.</p>
+    </div>
+    <div class="threat-grid">
+      <div class="threat-block def">
+        <h3>defends against</h3>
+        <p>AI agents extracting plaintext into transcripts (the original motivation), accidental <code style="font-family:'JetBrains Mono',monospace; color:var(--text-2);">git add</code> of <code style="font-family:'JetBrains Mono',monospace; color:var(--text-2);">.env</code> files, plaintext clipboard residue past the auto-clear window, ad-hoc shell scripts that need a key without you retyping it.</p>
+      </div>
+      <div class="threat-block skip">
+        <h3>does not defend against</h3>
+        <p>A root-level adversary on your Mac, malware with full keychain access, screen-recording on a compromised host, or network attackers (the admin is localhost-only and never reachable from outside the loopback interface anyway).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ──────────────── footer ─────────────── -->
+<footer class="site" id="footer">
+  <div class="wrap">
+    <div class="row">
+      <a class="brand" href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">
+        <span class="glyph">K</span>
+        <span>keys-keeper · v0.1.0</span>
+      </a>
+      <div class="links">
+        <a href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/kyzdes/keys-keeper/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/kyzdes/keys-keeper/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+      <span class="author">@kyzdes</span>
+    </div>
+    <div class="tagline">designed by an over-caffeinated dev who got tired of redacting agent transcripts.</div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  // ── copy buttons ──
+  const handleCopy = (btn, text) => {
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch {}
+      ta.remove();
+    };
+    const done = () => {
+      const orig = btn.querySelector('span:last-child') || btn;
+      const origText = orig.textContent;
+      orig.textContent = '✓ copied';
+      btn.classList.add('copied');
+      setTimeout(() => { orig.textContent = origText; btn.classList.remove('copied'); }, 1800);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { fallback(); done(); });
+    } else { fallback(); done(); }
+  };
+
+  document.querySelectorAll('[data-copy]').forEach(btn => {
+    btn.addEventListener('click', () => handleCopy(btn, btn.dataset.copy));
+  });
+
+  const installCopyBtn = document.getElementById('install-copy');
+  if (installCopyBtn) {
+    installCopyBtn.addEventListener('click', () => {
+      const lines = document.getElementById('install-pre').textContent.trim();
+      handleCopy(installCopyBtn, lines);
+    });
+  }
+
+  // ── github stars badge ──
+  const cached = (() => {
+    try {
+      const raw = localStorage.getItem('kk_stars');
+      if (!raw) return null;
+      const { v, t } = JSON.parse(raw);
+      if (Date.now() - t > 3600_000) return null;
+      return v;
+    } catch { return null; }
+  })();
+  const renderStars = (n) => {
+    const el = document.getElementById('star-count');
+    if (el) el.textContent = typeof n === 'number' ? n.toLocaleString() : '—';
+  };
+  if (cached !== null) renderStars(cached);
+  else {
+    fetch('https://api.github.com/repos/kyzdes/keys-keeper')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        renderStars(d.stargazers_count);
+        try { localStorage.setItem('kk_stars', JSON.stringify({ v: d.stargazers_count, t: Date.now() })); } catch {}
+      })
+      .catch(() => renderStars(null));
+  }
+
+  // ── /-keyboard shortcut: focus the github CTA (small ergonomic win) ──
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+      e.preventDefault();
+      document.getElementById('hero-copy')?.focus();
+    }
+  });
+
+  // ── ?dev=1 panel — exposes the CSS variable inventory for inspection ──
+  if (new URLSearchParams(location.search).get('dev') === '1') {
+    const panel = document.createElement('div');
+    panel.className = 'dev-panel';
+    const root = getComputedStyle(document.documentElement);
+    const vars = ['--bg','--surface','--border','--text','--text-2','--accent','--success','--danger','--warning'];
+    panel.innerHTML = '<h5>tokens (?dev=1)</h5>' + vars.map(v => `<div>${v}: <span style="color:${root.getPropertyValue(v).trim()}">${root.getPropertyValue(v).trim()}</span></div>`).join('');
+    document.body.appendChild(panel);
+  }
+})();
+</script>
+
+</body>
+</html>

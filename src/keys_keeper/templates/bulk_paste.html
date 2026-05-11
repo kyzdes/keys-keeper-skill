@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="bulk-shell" id="bulk-shell">
+  <div class="bulk-header">
+    <span class="h1"><span class="crumb">/paste</span> Bulk import</span>
+    <a class="format-link" id="format-toggle">format reference ↓</a>
+  </div>
+  <div id="format-help" hidden style="padding:10px 24px;background:var(--surface);border-bottom:1px solid var(--border-subtle);font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:var(--text-2)"><strong>Grammar:</strong>  <code>name [(type)] = value [tags]</code> · separators <code>=</code> or <code>:</code> · multi-line via <code>"""...."""</code> · <code>#</code> = comment.</div>
+  <div class="bulk-split horizontal">
+    <div class="bulk-pane">
+      <div class="bulk-pane-header"><span>SOURCE</span><span id="line-count">0 lines</span></div>
+      <textarea class="bulk-textarea" id="bulk-input" placeholder="# OpenRouter
+openrouter-cline = sk-or-v1-...
+openrouter-roo: sk-or-v1-... [llm,personal]
+
+# Multi-line SSH key
+my-key (ssh_key) = &quot;&quot;&quot;
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+&quot;&quot;&quot; [personal,do]"></textarea>
+    </div>
+    <div class="bulk-pane">
+      <div class="bulk-pane-header"><span>PREVIEW</span><span id="preview-count">0 entries · 0 errors</span></div>
+      <div class="bulk-preview-table" id="preview-table">
+        <div class="bulk-preview-row header">
+          <span></span><span>#</span><span>name</span><span>type</span><span>value · tags</span><span></span><span></span>
+        </div>
+        <div id="preview-rows"></div>
+      </div>
+    </div>
+  </div>
+  <div class="bulk-savebar">
+    <span class="summary" id="bulk-summary">Paste content to begin</span>
+    <div class="row gap-4">
+      <a class="btn btn-ghost" href="/">Cancel</a>
+      <button class="btn btn-primary" id="bulk-save" disabled>Save all</button>
+    </div>
+  </div>
+</div>
+{% endblock %}

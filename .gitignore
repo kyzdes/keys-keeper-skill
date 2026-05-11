@@ -1,2 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+.coverage
+htmlcov/
 .DS_Store
-*.swp
+
+# Project memory for AI agents — never commit (may contain operational notes)
+context-map-*/
+
+# Demo recording master — committed exports go in docs/landing/{demo.mp4,demo.gif}
+docs/landing/demo-source.mp4
+docs/landing/.palette.png

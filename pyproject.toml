@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "keys-keeper"
+version = "0.2.0"
+description = "Cross-platform (macOS + Windows) secrets manager that AI coding agents architecturally cannot leak from — CLI + local web admin + Claude skill"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Viacheslav Kuznetsov"}]
+keywords = ["secrets", "keychain", "macOS", "cli", "claude", "ai-agents", "security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "jinja2>=3.1",
+    "cryptography>=41.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kyzdes/keys-keeper-skill"
+Repository = "https://github.com/kyzdes/keys-keeper-skill"
+Issues = "https://github.com/kyzdes/keys-keeper-skill/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+
+[project.scripts]
+keys = "keys_keeper.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/keys_keeper"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/keys_keeper/templates" = "keys_keeper/templates"
+"src/keys_keeper/static" = "keys_keeper/static"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --strict-markers"

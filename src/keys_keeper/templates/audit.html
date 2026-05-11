@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="audit-shell" id="audit-shell">
+  <div class="charts-row">
+    <div class="chart-card" id="chart-top">
+      <div class="chart-title"><span>Top entries · last 7 d</span><span class="meta">by access count</span></div>
+      <div id="top-bars">Loading…</div>
+    </div>
+    <div class="chart-card" id="chart-daily">
+      <div class="chart-title"><span>Daily activity · last 30 d</span><span class="meta" id="daily-total"></span></div>
+      <div id="daily-svg"></div>
+    </div>
+    <div class="chart-card" id="chart-ops">
+      <div class="chart-title"><span>Op-type · last 7 d</span><span class="meta" id="ops-total"></span></div>
+      <div id="ops-bars"></div>
+    </div>
+  </div>
+  <div class="audit-filters" id="audit-filters">
+    <div class="group">
+      <span class="group-label">RANGE</span>
+      <button class="preset-btn" data-range="24h">24h</button>
+      <button class="preset-btn active" data-range="7d">7d</button>
+      <button class="preset-btn" data-range="30d">30d</button>
+    </div>
+    <div class="group">
+      <span class="group-label">OPS</span>
+      <span class="tag-chip op-filter" data-op="inject">inject</span>
+      <span class="tag-chip op-filter" data-op="copy">copy</span>
+      <span class="tag-chip op-filter" data-op="resolve">resolve</span>
+      <span class="tag-chip op-filter" data-op="reveal">reveal</span>
+      <span class="tag-chip op-filter" data-op="add">add</span>
+      <span class="tag-chip op-filter" data-op="delete">delete</span>
+    </div>
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden;margin-top:12px">
+    <table class="audit-table">
+      <thead><tr><th>Timestamp</th><th>Op</th><th>Name</th><th>Caller</th><th>File</th><th>OK</th></tr></thead>
+      <tbody id="audit-rows"><tr><td colspan="6">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

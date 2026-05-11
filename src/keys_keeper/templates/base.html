@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="rust">
+<head>
+<meta charset="UTF-8">
+<title>{% block title %}keys-keeper · admin{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app-shell" data-density="comfortable" data-palette="header">
+  {% block topbar %}
+  <div class="app-topbar">
+    <div class="app-brand"><span class="glyph">K</span><span>keys-keeper</span></div>
+    <div class="app-nav">
+      <a href="/" class="{% if active_nav == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/audit" class="{% if active_nav == 'audit' %}active{% endif %}">Audit</a>
+      <a href="/settings" class="{% if active_nav == 'settings' %}active{% endif %}">Settings</a>
+    </div>
+    <div class="app-spacer"></div>
+    <div class="app-cmdk-trigger" id="cmdk-trigger">
+      <span>Jump to entry…</span>
+      <span class="kbd" style="margin-left:auto">⌘K</span>
+    </div>
+    <div class="app-actions">
+      <a href="/paste" class="btn btn-ghost">Bulk import</a>
+      <a href="/new" class="btn btn-primary">+ New</a>
+    </div>
+  </div>
+  {% endblock %}
+  {% block content %}{% endblock %}
+</div>
+<div id="cmdk-overlay" hidden>
+  <div class="cmdk-modal">
+    <input id="cmdk-input" placeholder="Jump to entry · type to filter" autocomplete="off">
+    <div id="cmdk-results"></div>
+    <div class="cmdk-footer">
+      <span class="kbd">↑↓</span> navigate <span class="kbd">↵</span> open <span class="kbd">Esc</span> close
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const t = params.get('t');
+  if (t) {
+    sessionStorage.setItem('kk_token', t);
+    history.replaceState({}, '', location.pathname);
+  }
+  window.KK_TOKEN = sessionStorage.getItem('kk_token') || '';
+})();
+</script>
+<script src="/static/app.js"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
