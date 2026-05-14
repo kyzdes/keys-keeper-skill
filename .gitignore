@@ -16,3 +16,7 @@ context-map-*/
 # Demo recording master — committed exports go in docs/landing/{demo.mp4,demo.gif}
 docs/landing/demo-source.mp4
 docs/landing/.palette.png
+
+# Marketing concept scratch (AI-art generation outputs + run metadata).
+# Lives locally; do not version-control (binary churn + privacy of run logs).
+promo-concepts/
