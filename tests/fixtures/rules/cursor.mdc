@@ -1,6 +1,7 @@
 ---
-name: keys-keeper
-description: Securely save/retrieve API keys, SSH keys, server credentials, and domain info using the OS-native credential store (macOS Keychain / Windows Credential Manager) via the `keys` CLI. Use when the user mentions saving, getting, or referencing secrets, API keys, tokens, SSH keys, server addresses, or domain configs. Never produces plaintext secret values in output — uses CLI commands that handle files and clipboard directly.
+description: keys-keeper: never expose secret values to the chat. Use the `keys` CLI's sink commands (copy, inject, resolve) instead of printing values.
+globs: ["**/*"]
+alwaysApply: true
 ---
 <!-- generated from src/keys_keeper/agent_rules/canonical.py; regenerate with `keys init <target> --force`, do not edit by hand -->
 
@@ -50,10 +51,6 @@ Examples:
 - `keys ssh NAME` to actually connect — the CLI handles key material itself.
 - For deploy scripts that need ENV vars from `keys`: write `__KEYS:name__` placeholders, then `keys resolve PATH` at runtime.
 
-### User opens the admin
-
-- `keys serve` — opens a browser to a tokenized URL. The token migrates from `?t=` into an `HttpOnly` session cookie on the first hit; subsequent navigations don't carry it in the URL. The server idle-shuts-down after 15 min, or via the Settings → Shutdown button.
-
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
@@ -69,7 +66,3 @@ Examples:
 ## Structural defenses (informational)
 
 Even if you accidentally bypass the rules above by importing the Python package directly (e.g. running `python -c "from keys_keeper.composition import build_backend; print(build_backend().get('kk:...'))"`), the keychain backend returns a `Sealed` wrapper whose `__repr__`/`__str__` is `"<sealed>"` — a bare `print` / f-string / log statement renders `<sealed>`, not the value. The only path to plaintext is an explicit `.unseal()` call. This is defense-in-depth, not a license to try; the rules above still apply.
-
-## When in doubt
-
-If you're not sure whether an operation might leak a value, **ask the user first** rather than guess. The cost of asking is one round-trip; the cost of leaking is permanent.

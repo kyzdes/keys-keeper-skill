@@ -6,6 +6,15 @@ from pathlib import Path
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--regen",
+        action="store_true",
+        default=False,
+        help="rewrite golden fixtures (tests/fixtures/rules/*) from current render output",
+    )
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "macos: requires macOS (keychain, pbcopy, etc.)")
     config.addinivalue_line("markers", "windows: requires Windows (Credential Manager, etc.)")

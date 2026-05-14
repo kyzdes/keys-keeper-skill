@@ -1,0 +1,163 @@
+"""Per-target rule-file renderers — pure functions, no I/O.
+
+Each function returns a string. Writers (in init_cmd.py) take that string
+and write it to the target's conventional location, with target-specific
+write modes (single-file overwrite, marker-append, stdout).
+
+Marker-append targets (aider, codex) return the *body* of the keys-keeper
+section only — the begin/end HTML-comment markers are added by the writer
+so that pre-existing user content in CONVENTIONS.md / AGENTS.md is
+preserved verbatim outside the markers.
+"""
+from __future__ import annotations
+
+from keys_keeper.agent_rules.canonical import (
+    MCP_INSTRUCTIONS,
+    common_body,
+)
+
+
+# Default frontmatter values for the shipped Claude SKILL.md. The writer
+# preserves these from disk if the user has customized them; otherwise it
+# falls back to these.
+CLAUDE_SKILL_NAME = "keys-keeper"
+CLAUDE_SKILL_DESCRIPTION = (
+    "Securely save/retrieve API keys, SSH keys, server credentials, and domain "
+    "info using the OS-native credential store (macOS Keychain / Windows "
+    "Credential Manager) via the `keys` CLI. Use when the user mentions "
+    "saving, getting, or referencing secrets, API keys, tokens, SSH keys, "
+    "server addresses, or domain configs. Never produces plaintext secret "
+    "values in output — uses CLI commands that handle files and clipboard "
+    "directly."
+)
+
+# Cursor MDC frontmatter values. alwaysApply=true makes the rule fire on
+# every conversation; globs="**/*" keeps it from being filtered by file type.
+# Body is kept compact because alwaysApply rules consume context every turn.
+CURSOR_DESCRIPTION = (
+    "keys-keeper: never expose secret values to the chat. Use the `keys` "
+    "CLI's sink commands (copy, inject, resolve) instead of printing values."
+)
+
+# Marker tokens used by marker-append writers. Kept as module constants so
+# tests and the writer reference the same strings.
+MARKER_BEGIN = "<!-- keys-keeper:begin -->"
+MARKER_END = "<!-- keys-keeper:end -->"
+
+# Generator comment dropped into single-file renders so a human opening
+# the file sees they should not hand-edit.
+GENERATED_NOTE = (
+    "<!-- generated from src/keys_keeper/agent_rules/canonical.py; "
+    "regenerate with `keys init <target> --force`, do not edit by hand -->"
+)
+
+
+def render_claude_skill_md(
+    name: str = CLAUDE_SKILL_NAME,
+    description: str = CLAUDE_SKILL_DESCRIPTION,
+) -> str:
+    """Full SKILL.md content including YAML frontmatter.
+
+    The Claude skill ABI requires `name` and `description` at the top.
+    Callers (init_cmd) may preserve user-customized frontmatter by reading
+    those fields from the existing file and passing them in.
+    """
+    return (
+        "---\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        "---\n"
+        f"{GENERATED_NOTE}\n"
+        "\n"
+        f"# {name}\n"
+        "\n"
+        f"{common_body()}"
+    )
+
+
+def render_cursor_mdc() -> str:
+    """`.cursor/rules/keys-keeper.mdc` — MDC frontmatter + markdown body.
+
+    Cursor evaluates `alwaysApply: true` rules on every conversation, so
+    the body is kept as compact as the canonical common_body permits.
+    """
+    return (
+        "---\n"
+        f"description: {CURSOR_DESCRIPTION}\n"
+        'globs: ["**/*"]\n'
+        "alwaysApply: true\n"
+        "---\n"
+        f"{GENERATED_NOTE}\n"
+        "\n"
+        "# keys-keeper\n"
+        "\n"
+        f"{common_body(include_admin=False, include_when_in_doubt=False)}"
+    )
+
+
+def render_aider_conventions() -> str:
+    """Body of the `keys-keeper` section appended into CONVENTIONS.md.
+
+    Returned WITHOUT begin/end markers — the writer adds those.
+
+    NOTE: Aider does not auto-discover this file. The init writer prints
+    a stderr hint telling the user to wire it in via `aider --read
+    CONVENTIONS.md` or `.aider.conf.yml: read: CONVENTIONS.md`.
+    """
+    return (
+        "## keys-keeper\n"
+        "\n"
+        f"{common_body()}"
+    )
+
+
+def render_codex_agents() -> str:
+    """Body of the `keys-keeper` section appended into AGENTS.md.
+
+    Returned WITHOUT begin/end markers — the writer adds those.
+
+    AGENTS.md is read auto by Codex CLI and (in 2026) by Cursor, Amp,
+    Jules, and other agents following the AGENTS.md open spec.
+    """
+    return (
+        "## keys-keeper\n"
+        "\n"
+        f"{common_body()}"
+    )
+
+
+def render_cline_md() -> str:
+    """`.clinerules/00-keys-keeper.md` — plain markdown.
+
+    Cline concatenates files in `.clinerules/` alphabetically. The `00-`
+    prefix ensures the keys-keeper rules load first.
+    """
+    return (
+        f"{GENERATED_NOTE}\n"
+        "\n"
+        "# keys-keeper\n"
+        "\n"
+        f"{common_body()}"
+    )
+
+
+def render_generic() -> str:
+    """For any agent not in the registry — plain markdown with a hint.
+
+    Written to stdout by default; the user redirects to wherever their
+    agent reads rules from.
+    """
+    return (
+        "<!-- generated by `keys init generic`; redirect this output to "
+        "wherever your AI agent reads project rules from. -->\n"
+        "\n"
+        "# keys-keeper\n"
+        "\n"
+        f"{common_body()}"
+    )
+
+
+def render_mcp_instructions() -> str:
+    """The paragraph passed to `FastMCP(instructions=...)` so MCP clients
+    can surface the same safety contract when listing the server."""
+    return MCP_INSTRUCTIONS

@@ -739,6 +739,19 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument("--tail", action="store_true")
     au.set_defaults(func=cmd_audit)
 
+    # init — emit an agent rule file for a given target
+    from keys_keeper.init_cmd import TARGETS as _INIT_TARGETS, cmd_init
+    init = sub.add_parser(
+        "init",
+        help="emit an agent rule file (claude / cursor / aider / codex / cline / generic)",
+    )
+    init.add_argument("target", choices=list(_INIT_TARGETS.keys()))
+    init.add_argument("--out", help="override default destination path")
+    init.add_argument("--force", action="store_true", help="overwrite existing file")
+    init.add_argument("--check", action="store_true", help="exit non-zero on drift (CI hook)")
+    init.add_argument("--stdout", action="store_true", help="write to stdout instead of file")
+    init.set_defaults(func=cmd_init)
+
     return p
 
 

@@ -1,10 +1,4 @@
----
-name: keys-keeper
-description: Securely save/retrieve API keys, SSH keys, server credentials, and domain info using the OS-native credential store (macOS Keychain / Windows Credential Manager) via the `keys` CLI. Use when the user mentions saving, getting, or referencing secrets, API keys, tokens, SSH keys, server addresses, or domain configs. Never produces plaintext secret values in output — uses CLI commands that handle files and clipboard directly.
----
-<!-- generated from src/keys_keeper/agent_rules/canonical.py; regenerate with `keys init <target> --force`, do not edit by hand -->
-
-# keys-keeper
+## keys-keeper
 
 Storage CLI is `keys` (run `which keys` / `Get-Command keys` to find the install path; typically wherever pipx installed it). Run `keys --help` for the full surface.
 
