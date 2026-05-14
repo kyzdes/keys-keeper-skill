@@ -1,0 +1,14 @@
+# Force LF line endings for files compared byte-for-byte across platforms.
+# Windows CI runner must not auto-CRLF the rule-generator golden fixtures
+# nor the regenerated SKILL.md, or `keys init claude --check` will fail
+# with phantom diffs.
+
+*.md            text eol=lf
+*.mdc           text eol=lf
+*.py            text eol=lf
+*.toml          text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+tests/fixtures/rules/*  text eol=lf

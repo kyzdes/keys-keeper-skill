@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>keys-keeper · a macOS secrets manager AI agents architecturally cannot leak from</title>
-<meta name="description" content="Stores keys in macOS Keychain. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value. Free, MIT, OSS.">
+<title>keys-keeper · a cross-platform secrets manager AI agents architecturally cannot leak from</title>
+<meta name="description" content="Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value. Free, MIT, OSS.">
 <meta name="theme-color" content="#0a0b0c">
 <meta property="og:title" content="keys-keeper · the secrets manager AI agents can't leak from">
-<meta property="og:description" content="Stores keys in macOS Keychain. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value.">
-<meta property="og:url" content="https://github.com/kyzdes/keys-keeper">
+<meta property="og:description" content="Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value.">
+<meta property="og:url" content="https://github.com/kyzdes/keys-keeper-skill">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -674,10 +674,10 @@ footer .tagline {
       <a href="#roadmap">roadmap</a>
     </div>
     <div class="spacer"></div>
-    <a href="https://github.com/kyzdes/keys-keeper" class="stars" target="_blank" rel="noopener" id="stars-badge">
+    <a href="https://github.com/kyzdes/keys-keeper-skill" class="stars" target="_blank" rel="noopener" id="stars-badge">
       <span class="star">★</span>
       <b id="star-count">—</b>
-      <span>kyzdes/keys-keeper</span>
+      <span>kyzdes/keys-keeper-skill</span>
     </a>
   </div>
 </nav>
@@ -688,23 +688,23 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.1 · macOS · MIT</p>
-      <h1>a macOS secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
-      <p class="sub">Stores keys in macOS Keychain. Ships with a Claude skill that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, single-binary install.</p>
+      <p class="eyebrow">v0.2 · macOS + Windows · MIT</p>
+      <h1>a cross-platform secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
+      <p class="sub">Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
       <div class="cta-row">
-        <button class="btn btn-primary" data-copy="git clone https://github.com/kyzdes/keys-keeper.git&#10;cd keys-keeper&#10;pipx install .&#10;./scripts/install_skill.sh" id="hero-copy">
+        <button class="btn btn-primary" data-copy="/plugin marketplace add kyzdes/claude-skills&#10;/plugin install keys-keeper@claude-skills" id="hero-copy">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
           <span>copy install</span>
         </button>
-        <a class="btn" href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">
+        <a class="btn" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 00-2.5 15.6c.4.07.55-.17.55-.38v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.05-.5.05-.5.8.06 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.07-.5.27-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.85-2.1-.1-.2-.4-1 .07-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 014 0c1.5-1 2.2-.8 2.2-.8.4 1.1.15 1.9.07 2.1.55.5.85 1.2.85 2.1 0 3-1.8 3.7-3.6 3.9.3.25.55.7.55 1.45v2.15c0 .2.15.45.55.38A8 8 0 008 0z"/></svg>
           <span>read on github</span>
         </a>
       </div>
       <div class="hero-badges">
-        <span><span class="dot"></span> 103 tests passing</span>
+        <span><span class="dot"></span> 150 tests passing</span>
         <span><span class="dot dot-mit"></span> MIT license</span>
-        <span><span class="dot dot-info"></span> macOS</span>
+        <span><span class="dot dot-info"></span> macOS + Windows</span>
         <span><span class="dot dot-warn"></span> Python 3.10+</span>
         <span><span class="dot"></span> no cloud · no account</span>
       </div>
@@ -783,7 +783,7 @@ footer .tagline {
           <div class="tx-line"><span class="role">←</span><span class="ok">injected openrouter → .env</span></div>
         </div>
         <div class="contrast-col__caption">
-          The agent never possessed the value. The CLI read from <code class="mono" style="color:var(--accent);">pbpaste</code>, wrote to keychain, then wrote into <code class="mono" style="color:var(--accent);">.env</code> directly. The transcript holds <strong>only the operation</strong>. The value lives in macOS Keychain (Touch-ID protected) and in the file you wanted it in. Nowhere else.
+          The agent never possessed the value. The CLI read it from the system clipboard, wrote to your OS credential store, then wrote into <code class="mono" style="color:var(--accent);">.env</code> directly. The transcript holds <strong>only the operation</strong>. The value lives in the macOS Keychain (Touch-ID protected) or Windows Credential Manager (DPAPI-bound) and in the file you wanted it in. Nowhere else.
         </div>
       </div>
     </div>
@@ -1129,7 +1129,7 @@ footer .tagline {
     <div class="section-head">
       <p class="eyebrow">how it fits together</p>
       <h2>two-layer storage. one process. zero network.</h2>
-      <p>Secrets live in the macOS Keychain — Touch-ID protected, tied to your login session. Metadata (names, tags, refs, audit log) lives in <code class="mono" style="color:var(--accent);">~/.config/keys-keeper/</code> as boring JSON you can back up or diff. The CLI mediates both. The admin is the same process exposing localhost HTTP.</p>
+      <p>Secrets live in your OS credential store — macOS Keychain (Touch-ID protected) or Windows Credential Manager (DPAPI-bound to your login). Metadata (names, tags, refs, audit log) lives in <code class="mono" style="color:var(--accent);">~/.config/keys-keeper/</code> or <code class="mono" style="color:var(--accent);">%APPDATA%\keys-keeper\</code> as boring JSON you can back up or diff. The CLI mediates both. The admin is the same process exposing localhost HTTP.</p>
     </div>
 
     <div class="arch-svg-wrap">
@@ -1179,14 +1179,14 @@ footer .tagline {
 
         <!-- bottom: storage -->
         <rect x="60" y="340" width="360" height="80" rx="10" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
-        <text x="240" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">macOS Keychain</text>
-        <text x="240" y="390" fill="var(--text-3)" font-size="11.5" text-anchor="middle">via security CLI · service "keys-keeper"</text>
-        <text x="240" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">Touch-ID protected · tied to login session</text>
+        <text x="240" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">macOS Keychain · Windows Cred Mgr</text>
+        <text x="240" y="390" fill="var(--text-3)" font-size="11.5" text-anchor="middle">security CLI on Mac · advapi32 ctypes on Win</text>
+        <text x="240" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">Touch-ID / DPAPI · tied to login session</text>
 
         <rect x="480" y="340" width="360" height="80" rx="10" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
-        <text x="660" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">~/.config/keys-keeper/</text>
+        <text x="660" y="370" fill="var(--text)" font-size="14" font-weight="600" text-anchor="middle">~/.config/keys-keeper · %APPDATA%</text>
         <text x="660" y="390" fill="var(--text-3)" font-size="11.5" text-anchor="middle">data.json · audit.jsonl · config.toml</text>
-        <text x="660" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">atomic write + fcntl flock · Time Machine friendly</text>
+        <text x="660" y="408" fill="var(--text-4)" font-size="10.5" text-anchor="middle" font-style="italic">atomic write + cross-platform flock · backup-friendly</text>
 
         <!-- caption -->
         <text x="470" y="448" fill="var(--text-3)" font-size="11.5" text-anchor="middle" font-style="italic">secrets in keychain · metadata in JSON · admin reads both · network never touched</text>
@@ -1199,29 +1199,52 @@ footer .tagline {
 <section id="install">
   <div class="wrap">
     <div class="section-head">
-      <p class="eyebrow">install in 5 minutes</p>
-      <h2>five lines of bash. zero account.</h2>
-      <p>Single binary on PATH after pipx. The skill install is a separate command so you can say no to it (e.g. you're trying it from the CLI before adding the Claude integration).</p>
+      <p class="eyebrow">install in 2 minutes</p>
+      <h2>two lines in Claude Code. auto-updates.</h2>
+      <p>The Claude Code plugin is the recommended path — adds the skill and a SessionStart hook that pulls new releases via <code class="mono" style="color:var(--accent);">claude plugin update</code> automatically. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
     </div>
 
     <div class="install-block">
       <div class="install-block__head">
-        <span class="label">$ install</span>
+        <span class="label">/ claude code · recommended</span>
         <button class="copy" id="install-copy">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
           <span>copy</span>
         </button>
       </div>
-<pre id="install-pre"><span class="cmd">git clone</span> <span class="arg">https://github.com/kyzdes/keys-keeper.git</span>
-<span class="cmd">cd</span> <span class="arg">keys-keeper</span>
-<span class="cmd">pipx install</span> <span class="arg">.</span>
-<span class="cmd">./scripts/install_skill.sh</span></pre>
+<pre id="install-pre"><span class="cmd">/plugin marketplace add</span> <span class="arg">kyzdes/claude-skills</span>
+<span class="cmd">/plugin install</span> <span class="arg">keys-keeper@claude-skills</span></pre>
     </div>
 
-    <p class="install-prereq">requires <code>Python 3.10+</code> and <code>macOS</code>. Linux/Windows backends are on the roadmap below.</p>
+    <div class="install-block" style="margin-top: 24px;">
+      <div class="install-block__head">
+        <span class="label">$ pipx · cli only</span>
+        <button class="copy" id="install-copy-pipx">
+          <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
+          <span>copy</span>
+        </button>
+      </div>
+<pre id="install-pre-pipx"><span class="cmd">git clone</span> <span class="arg">https://github.com/kyzdes/keys-keeper-skill.git</span>
+<span class="cmd">cd</span> <span class="arg">keys-keeper-skill</span>
+<span class="cmd">pipx install</span> <span class="arg">.</span></pre>
+    </div>
+
+    <div class="install-block" style="margin-top: 24px;">
+      <div class="install-block__head">
+        <span class="label">$ other agents · cursor / aider / codex / cline</span>
+      </div>
+<pre><span style="color:var(--text-3);">// after pipx install, run inside your project:</span>
+<span class="cmd">keys init</span> <span class="arg">cursor</span>     <span style="color:var(--text-3);"># .cursor/rules/keys-keeper.mdc</span>
+<span class="cmd">keys init</span> <span class="arg">aider</span>      <span style="color:var(--text-3);"># CONVENTIONS.md (then `aider --read CONVENTIONS.md`)</span>
+<span class="cmd">keys init</span> <span class="arg">codex</span>      <span style="color:var(--text-3);"># AGENTS.md (also read by Cursor / Amp / Jules)</span>
+<span class="cmd">keys init</span> <span class="arg">cline</span>      <span style="color:var(--text-3);"># .clinerules/00-keys-keeper.md</span>
+<span class="cmd">keys init</span> <span class="arg">generic</span>    <span style="color:var(--text-3);"># prints to stdout — pipe wherever your agent reads rules</span></pre>
+    </div>
+
+    <p class="install-prereq">requires <code>Python 3.10+</code> and <code>macOS</code> or <code>Windows</code>. Linux backend is on the roadmap below.</p>
 
     <div class="install-fallback">
-      <strong>no pipx?</strong> <code>brew install pipx && pipx ensurepath</code> — one line, restart your shell.
+      <strong>no pipx?</strong> macOS: <code>brew install pipx && pipx ensurepath</code>. Windows: <code>python -m pip install --user pipx && python -m pipx ensurepath</code> — one line, restart your shell.
     </div>
   </div>
 </section>
@@ -1236,15 +1259,14 @@ footer .tagline {
     </div>
     <ul class="roadmap-list">
       <li><span class="check"></span><span class="text"><strong>Linux backend</strong> via secret-tool (libsecret) — KeychainBackend interface already abstracted</span></li>
-      <li><span class="check"></span><span class="text"><strong>Windows backend</strong> via Credential Manager (with chunking for SSH keys; CredMan has a 2560-byte cap)</span></li>
+      <li><span class="check"></span><span class="text"><strong>MCP stdio server</strong> (<code style="font-family:'JetBrains Mono',monospace; color:var(--accent);">keys mcp</code>) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)</span></li>
       <li><span class="check"></span><span class="text"><strong>Touch-ID-gated reveal in admin</strong> with auto-wipe from DOM after 10 s</span></li>
-      <li><span class="check"></span><span class="text"><strong>Cursor / Aider / Cline rule-file generators</strong> beyond the Claude skill format</span></li>
       <li><span class="check"></span><span class="text"><strong>CSV export from /audit</strong> (already CLI-only via <code style="font-family:'JetBrains Mono',monospace; color:var(--accent);">keys audit > file.csv</code>)</span></li>
       <li><span class="check"></span><span class="text"><strong>Bulk-paste parser extension</strong> for ssh_key / server / domain (currently clean only for api_key)</span></li>
       <li><span class="check"></span><span class="text"><strong>Light theme polish</strong> — CSS tokens exist; not all surfaces tested</span></li>
       <li><span class="check"></span><span class="text"><strong>Cmd+K action palette</strong> beyond navigation — "copy openrouter" as a one-shot</span></li>
     </ul>
-    <p class="roadmap-cta">PRs welcome. Start at <a href="https://github.com/kyzdes/keys-keeper/issues" target="_blank" rel="noopener">github.com/kyzdes/keys-keeper/issues</a> — or just open one with the rough idea.</p>
+    <p class="roadmap-cta">PRs welcome. Start at <a href="https://github.com/kyzdes/keys-keeper-skill/issues" target="_blank" rel="noopener">github.com/kyzdes/keys-keeper-skill/issues</a> — or just open one with the rough idea.</p>
   </div>
 </section>
 
@@ -1253,13 +1275,13 @@ footer .tagline {
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">honest limitations</p>
-      <h2>what v0.1 is not.</h2>
+      <h2>what v0.2 is not.</h2>
       <p>If any of these is a dealbreaker, that's fine — none of them are theoretically hard, they're just not done yet. Tracking on the roadmap above.</p>
     </div>
     <div class="limit-cards">
       <div class="limit-card">
-        <h3>macOS only</h3>
-        <p>Keychain backend is the only one shipped. Linux/Windows are on the roadmap.</p>
+        <h3>no Linux yet</h3>
+        <p>macOS Keychain and Windows Credential Manager are shipped. Linux via libsecret is on the roadmap.</p>
       </div>
       <div class="limit-card">
         <h3>single user</h3>
@@ -1308,14 +1330,14 @@ footer .tagline {
 <footer class="site" id="footer">
   <div class="wrap">
     <div class="row">
-      <a class="brand" href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">
+      <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.1.0</span>
+        <span>keys-keeper · v0.2.0</span>
       </a>
       <div class="links">
-        <a href="https://github.com/kyzdes/keys-keeper" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/kyzdes/keys-keeper/issues" target="_blank" rel="noopener">Issues</a>
-        <a href="https://github.com/kyzdes/keys-keeper/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/kyzdes/keys-keeper-skill/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/kyzdes/keys-keeper-skill/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
       </div>
       <span class="author">@kyzdes</span>
     </div>
@@ -1353,13 +1375,14 @@ footer .tagline {
     btn.addEventListener('click', () => handleCopy(btn, btn.dataset.copy));
   });
 
-  const installCopyBtn = document.getElementById('install-copy');
-  if (installCopyBtn) {
-    installCopyBtn.addEventListener('click', () => {
-      const lines = document.getElementById('install-pre').textContent.trim();
-      handleCopy(installCopyBtn, lines);
-    });
-  }
+  const wireInstallCopy = (btnId, preId) => {
+    const btn = document.getElementById(btnId);
+    const pre = document.getElementById(preId);
+    if (!btn || !pre) return;
+    btn.addEventListener('click', () => handleCopy(btn, pre.textContent.trim()));
+  };
+  wireInstallCopy('install-copy', 'install-pre');
+  wireInstallCopy('install-copy-pipx', 'install-pre-pipx');
 
   // ── github stars badge ──
   const cached = (() => {
@@ -1377,7 +1400,7 @@ footer .tagline {
   };
   if (cached !== null) renderStars(cached);
   else {
-    fetch('https://api.github.com/repos/kyzdes/keys-keeper')
+    fetch('https://api.github.com/repos/kyzdes/keys-keeper-skill')
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
         renderStars(d.stargazers_count);

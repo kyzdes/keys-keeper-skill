@@ -28,3 +28,6 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      - name: Check SKILL.md is in sync with canonical prose
+        run: keys init claude --check

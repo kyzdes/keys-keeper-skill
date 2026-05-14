@@ -4,7 +4,7 @@
 
 > **A secrets manager AI coding agents architecturally cannot leak from.**
 
-Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain on macOS, Credential Manager on Windows). Ships with a Claude skill that lets agents *put* secrets into your files without ever *seeing* the value.
+Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain on macOS, Credential Manager on Windows). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. All variants share one safety contract: the agent can *put* secrets into your files without ever *seeing* the value.
 
 **Status:** v0.2.0 · macOS + Windows · single-user · MIT license
 
@@ -34,46 +34,41 @@ It's not a policy. It's the command surface.
 
 ## Install
 
-### Claude Code plugin (recommended — auto-updates)
-
-```
-/plugin marketplace add kyzdes/claude-skills
-/plugin install keys-keeper@kyzdes-claude-skills
-```
-
-Then install the CLI (the plugin requires it):
+### 1. Install the `keys` CLI
 
 ```bash
 pipx install git+https://github.com/kyzdes/keys-keeper-skill.git
+keys doctor                                            # smoke check
 ```
 
-### Standalone (no marketplace)
+No pipx? macOS: `brew install pipx && pipx ensurepath`. Windows: `python -m pip install --user pipx && python -m pipx ensurepath`.
 
-#### macOS
+### 2. Wire it into your AI agent
+
+Pick whichever agents you use — run inside the project directory you want the agent to use it in:
+
+| Agent | Command | What it does |
+|---|---|---|
+| **Claude Code** | `/plugin marketplace add kyzdes/claude-skills`<br>`/plugin install keys-keeper@kyzdes-claude-skills` | Marketplace plugin: skill + SessionStart auto-update hook |
+| **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
+| **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
+| **Codex CLI** | `keys init codex` | Writes `AGENTS.md` (also read by Cursor / Amp / Jules in 2026 per the AGENTS.md open spec) |
+| **Cline** | `keys init cline` | Writes `.clinerules/00-keys-keeper.md` |
+| **Any other agent** | `keys init generic` | Prints to stdout — redirect wherever your agent reads rules from |
+
+You can mix targets — `keys init cursor` and `keys init codex` in the same project both work and stay consistent. The `aider`/`codex` writes use HTML-comment markers so re-running just refreshes the keys-keeper section and leaves the rest of the file alone.
+
+Run `keys init claude --check` from your CI to fail builds on prose drift.
+
+### 3. Optional shell config
 
 ```bash
-git clone https://github.com/kyzdes/keys-keeper-skill.git
-cd keys-keeper-skill
-pipx install .
-
-keys doctor                                            # creates ~/.config/keys-keeper/, probes keychain
-echo 'export KEYS_KEEPER_ALLOW_REVEAL=1' >> ~/.zshrc   # optional — lets shell users print plaintext
-./scripts/install_skill.sh                             # copies the Claude skill into ~/.claude/skills/
+# Lets shell users print plaintext via `keys reveal` (env-gated, agents can't override)
+echo 'export KEYS_KEEPER_ALLOW_REVEAL=1' >> ~/.zshrc   # macOS / Linux
+setx KEYS_KEEPER_ALLOW_REVEAL 1                        # Windows (effective in new shells)
 ```
 
-#### Windows
-
-```powershell
-git clone https://github.com/kyzdes/keys-keeper-skill.git
-cd keys-keeper-skill
-pipx install .
-
-keys doctor                                            # creates %APPDATA%\keys-keeper\, probes Credential Manager
-setx KEYS_KEEPER_ALLOW_REVEAL 1                        # optional — effective in NEW shells
-.\scripts\install_skill.ps1                            # copies the Claude skill into %USERPROFILE%\.claude\skills\
-```
-
-Requires Python 3.10+ (Linux backend is on the roadmap).
+Requires Python 3.10+ on macOS or Windows (Linux backend via libsecret is on the roadmap).
 
 ## Quick start
 
@@ -162,8 +157,9 @@ Open source, accepting PRs.
 
 - [ ] **Linux backend** via `secret-tool` (libsecret) — `KeychainBackend` interface already abstracted
 - [x] ~~**Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)~~ — shipped in v0.2
+- [x] ~~**Cursor / Aider / Codex / Cline rule-file generators** beyond the Claude skill format~~ — shipped in v0.3 (`keys init <target>`)
+- [ ] **MCP stdio server** (`keys mcp`) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)
 - [ ] **Touch ID-gated reveal in admin** with auto-wipe from DOM after 10s
-- [ ] **Cursor / Aider / Cline rule-file generators** beyond the Claude skill format
 - [ ] **CSV export from `/audit`** (already CLI-only via `keys audit > file.csv`)
 - [ ] **Bulk-paste parser extension** for ssh_key / server / domain (currently clean only for api_key)
 - [ ] **Light theme polish** (CSS tokens exist; not all surfaces tested)
@@ -185,7 +181,7 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 
 ## Contributing
 
-Issues and PRs welcome. The repo is reasonably well-tested (103 tests, fixtures use real isolated macOS keychains via `security create-keychain`). Run `pytest -q` after any change.
+Issues and PRs welcome. The repo is reasonably well-tested (146 tests + 9 Windows-only auto-skipped on macOS; fixtures use real isolated macOS keychains via `security create-keychain`). Run `pytest -q` after any change.
 
 The implementation plan is at [`docs/superpowers/plans/2026-05-04-keys-keeper-plan.md`](docs/superpowers/plans/2026-05-04-keys-keeper-plan.md). The interactive design canvas (a Tailwind/React playground showing the locked UX choices) is at [`keys-keeper-admin-canvas.html`](keys-keeper-admin-canvas.html) — open it in your browser.
 
