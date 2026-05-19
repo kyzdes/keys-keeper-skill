@@ -6,6 +6,25 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.4.0] — 2026-05-19
+
+### Added
+
+- **`keys app install` / `keys app uninstall` — OS-native quick-launch shortcut.** On macOS, drops `Keys Keeper.app` into `~/Applications` (`--system` for `/Applications`) so the admin can be opened from Spotlight (Cmd+Space → "Keys Keeper") without a terminal. On Windows, creates a `Keys Keeper.lnk` in the per-user Start Menu Programs folder.
+- **Sub-second launcher.** The macOS bundle ships an `/bin/sh` launcher that skips `~/.zshrc` and calls the pipx venv binary directly — ~0.7s cold-start vs ~7s for naive `zsh -l` wrappers (measured on a machine with conda init in zshrc). Logs to `~/Library/Logs/keys-keeper.log`.
+- **"Already running" guard.** Re-triggering the shortcut while `keys serve` is already listening on :7777 surfaces a Notification Center toast instead of failing on bind.
+- **Shipped icon.** Bundled `keys-keeper.icns` (navy rounded square + warm-gold key glyph, 10 size variants) — generator script at `scripts/build-icon.py` is pure stdlib + macOS-preinstalled `sips` / `iconutil`, no Pillow dep.
+- **First-run tip after `keys serve`.** On macOS, when the shortcut is not yet installed, the CLI prints a one-line tip suggesting `keys app install`. Tip disappears once the bundle is present (idempotent — no nag state to track).
+- **Skill / agent rules updated.** Added `FLOW_APP_INSTALL` section to `canonical.py` so Claude / Cursor / Aider / Codex / Cline rule files all surface the command. Golden fixtures regenerated.
+
+### Internal
+
+- `src/keys_keeper/macos_app.py` and `src/keys_keeper/windows_app.py` follow the existing `backend.py` / `backend_windows.py` split convention.
+- `tests/test_app_install.py` covers bundle layout, Info.plist parsing, executable bits, icon embedding, force-overwrite semantics, CLI dispatch, serve-tip idempotency, and Windows path resolution (running on macOS via stdlib mocks).
+- Test count: 171 passing + 9 Windows-skipped on macOS.
+
+---
+
 ## [0.3.0] — 2026-05-14
 
 ### Added
