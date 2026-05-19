@@ -526,6 +526,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     server = AdminServer(paths=paths, port=args.port, idle_timeout_sec=15 * 60)
     url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
     print(f"keys-keeper admin starting on {url}")
+    _maybe_suggest_app_install()
     if not args.no_open:
         webbrowser.open(url)
     try:
@@ -533,6 +534,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         server.stop()
     return 0
+
+
+def _maybe_suggest_app_install() -> None:
+    """Hint about `keys app install` if the shortcut isn't there yet."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from keys_keeper import macos_app
+        if not macos_app.is_installed():
+            print('tip: run `keys app install` to add a Spotlight launcher (Cmd+Space → "Keys Keeper")')
+    except Exception:
+        pass
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -628,6 +641,79 @@ def cmd_audit(args: argparse.Namespace) -> int:
     for ev in events:
         print(f"{ev['ts']}  {ev['op']:8s}  {ev['name']:24s}  {ev.get('file_target') or '-'}")
     return 0
+
+
+# ----- app install/uninstall -----
+
+def cmd_app_install(args: argparse.Namespace) -> int:
+    if sys.platform == "darwin":
+        from keys_keeper import macos_app
+        target = macos_app.system_dir() if args.system else macos_app.default_user_dir()
+        try:
+            result = macos_app.install_app(target, force=args.force)
+        except FileExistsError as ex:
+            sys.stderr.write(
+                f"already installed at {ex.args[0]}. Re-run with --force to overwrite.\n"
+            )
+            return 1
+        except PermissionError as ex:
+            sys.stderr.write(
+                f"permission denied writing to {target} — try without --system, or run with sudo.\n  ({ex})\n"
+            )
+            return 1
+        verb = "installed" if result.created else "reinstalled"
+        print(f"{verb} {result.bundle_path}")
+        print('hit Cmd+Space → "Keys Keeper" to launch')
+        return 0
+    if sys.platform == "win32":
+        from keys_keeper import windows_app
+        if args.system:
+            sys.stderr.write("--system is macOS-only; on Windows the shortcut goes into the per-user Start Menu.\n")
+            return 1
+        try:
+            result = windows_app.install_app(force=args.force)
+        except FileExistsError as ex:
+            sys.stderr.write(
+                f"already installed at {ex.args[0]}. Re-run with --force to overwrite.\n"
+            )
+            return 1
+        except FileNotFoundError as ex:
+            sys.stderr.write(f"{ex}\n")
+            return 1
+        except subprocess.CalledProcessError as ex:
+            sys.stderr.write(
+                f"PowerShell failed to create the shortcut (exit {ex.returncode}).\n"
+                f"  stderr: {ex.stderr.decode(errors='replace').strip() if ex.stderr else '(empty)'}\n"
+            )
+            return 1
+        verb = "installed" if result.created else "reinstalled"
+        print(f"{verb} {result.bundle_path}")
+        print('search "Keys Keeper" in the Start Menu to launch')
+        return 0
+    sys.stderr.write(f"`keys app install` is not supported on platform '{sys.platform}'.\n")
+    return 1
+
+
+def cmd_app_uninstall(args: argparse.Namespace) -> int:
+    if sys.platform == "darwin":
+        from keys_keeper import macos_app
+        target = macos_app.system_dir() if args.system else macos_app.default_user_dir()
+        removed = macos_app.uninstall_app(target)
+        if removed:
+            print(f"removed {target / macos_app.BUNDLE_NAME}")
+            return 0
+        sys.stderr.write(f"nothing to remove at {target / macos_app.BUNDLE_NAME}\n")
+        return 1
+    if sys.platform == "win32":
+        from keys_keeper import windows_app
+        removed = windows_app.uninstall_app()
+        if removed:
+            print(f"removed {windows_app.default_user_dir() / windows_app.SHORTCUT_NAME}")
+            return 0
+        sys.stderr.write("nothing to remove\n")
+        return 1
+    sys.stderr.write(f"`keys app uninstall` is not supported on platform '{sys.platform}'.\n")
+    return 1
 
 
 # ----- top-level parser -----
@@ -751,6 +837,17 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--check", action="store_true", help="exit non-zero on drift (CI hook)")
     init.add_argument("--stdout", action="store_true", help="write to stdout instead of file")
     init.set_defaults(func=cmd_init)
+
+    # app — OS-native quick-launch shortcut (Spotlight-app on macOS, Start Menu .lnk on Windows)
+    app_p = sub.add_parser("app", help="install/uninstall the OS quick-launch shortcut")
+    app_sub = app_p.add_subparsers(dest="app_command", required=True)
+    app_install = app_sub.add_parser("install", help="install a Spotlight/Start-Menu shortcut for `keys serve`")
+    app_install.add_argument("--force", action="store_true", help="overwrite if already installed")
+    app_install.add_argument("--system", action="store_true", help="install to /Applications (macOS only, may need sudo)")
+    app_install.set_defaults(func=cmd_app_install)
+    app_uninstall = app_sub.add_parser("uninstall", help="remove the shortcut")
+    app_uninstall.add_argument("--system", action="store_true", help="remove from /Applications (macOS only)")
+    app_uninstall.set_defaults(func=cmd_app_uninstall)
 
     return p
 

@@ -48,6 +48,14 @@ Examples:
 
 - `keys serve` — opens a browser to a tokenized URL. The token migrates from `?t=` into an `HttpOnly` session cookie on the first hit; subsequent navigations don't carry it in the URL. The server idle-shuts-down after 15 min, or via the Settings → Shutdown button.
 
+### User wants a quick-launch shortcut (Spotlight / Start Menu)
+
+- `keys app install` — drops an OS-native shortcut so the user can launch `keys serve` without a terminal. On macOS: a Spotlight-searchable `Keys Keeper.app` in `~/Applications` (Cmd+Space → "Keys Keeper"). On Windows: a `Keys Keeper.lnk` in the per-user Start Menu Programs folder.
+- `--force` overwrites an existing install. `--system` (macOS only) targets `/Applications` and may need sudo.
+- `keys app uninstall` removes it.
+- The macOS launcher detects port 7777 already bound and emits a Notification Center toast instead of failing — safe to re-trigger. Logs go to `~/Library/Logs/keys-keeper.log`.
+- After the first successful `keys serve`, the CLI prints a one-line tip suggesting this command; once installed, the tip stops showing.
+
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
