@@ -1,6 +1,6 @@
 {
   "name": "keys-keeper",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Cross-platform (macOS + Windows) secrets manager skill: stores API keys, SSH keys, server creds, and domain info in the OS-native credential store (macOS Keychain / Windows Credential Manager) via the `keys` CLI. Agents architecturally cannot reveal plaintext (Sealed wrapper + env-gated reveal). First-class Claude Code skill; `keys init` emits equivalent rule files for Cursor, Aider, Codex CLI, and Cline.",
   "author": {
     "name": "kyzdes"
