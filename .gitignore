@@ -20,3 +20,7 @@ docs/landing/.palette.png
 # Marketing concept scratch (AI-art generation outputs + run metadata).
 # Lives locally; do not version-control (binary churn + privacy of run logs).
 promo-concepts/
+
+# Local tooling scratch (Antigravity CLI state, Playwright MCP session dirs).
+.antigravitycli/
+.playwright-mcp/

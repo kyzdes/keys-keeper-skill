@@ -527,13 +527,38 @@ def cmd_serve(args: argparse.Namespace) -> int:
     url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
     print(f"keys-keeper admin starting on {url}")
     _maybe_suggest_app_install()
+    _write_serve_url(paths, url)
     if not args.no_open:
         webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         server.stop()
+    finally:
+        _clear_serve_url(paths)
     return 0
+
+
+def _write_serve_url(paths: Paths, url: str) -> None:
+    """Persist the live admin URL (with token) so the macOS quick-launch app can
+    re-open the running server's tab. Best-effort; 0600; removed on shutdown."""
+    try:
+        f = paths.serve_url_file
+        f.write_text(url, encoding="utf-8")
+        try:
+            f.chmod(0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _clear_serve_url(paths: Paths) -> None:
+    """Remove the persisted admin URL on shutdown (best-effort)."""
+    try:
+        paths.serve_url_file.unlink()
+    except OSError:
+        pass
 
 
 def _maybe_suggest_app_install() -> None:

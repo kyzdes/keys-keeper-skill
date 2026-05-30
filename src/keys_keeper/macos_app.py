@@ -80,6 +80,9 @@ _LAUNCHER_SH = r"""#!/bin/sh
 
 LOG="${HOME}/Library/Logs/keys-keeper.log"
 mkdir -p "${HOME}/Library/Logs"
+# `keys serve` writes its live tokened URL here so a second launch can re-open
+# the running admin tab (the token is per-session and known only to the server).
+URL_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/keys-keeper/serve-url"
 
 KEYS_BIN="${HOME}/.local/pipx/venvs/keys-keeper/bin/keys"
 if [ ! -x "${KEYS_BIN}" ]; then
@@ -91,15 +94,26 @@ if [ -z "${KEYS_BIN}" ] || [ ! -x "${KEYS_BIN}" ]; then
     exit 1
 fi
 
-# Already running? Show a notification instead of failing on bind.
+# Already running? Re-open the live admin tab instead of starting a second
+# server (binding :7777 again would just error with EADDRINUSE).
 if /usr/sbin/lsof -nP -iTCP:7777 -sTCP:LISTEN >/dev/null 2>&1; then
-    printf '[%s] server already running on :7777, skipping\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "${LOG}"
-    /usr/bin/osascript -e 'display notification "Already running on 127.0.0.1:7777 — check your existing browser tab." with title "Keys Keeper"' >/dev/null 2>&1
+    printf '[%s] server already running on :7777, reopening\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "${LOG}"
+    if [ -r "${URL_FILE}" ]; then
+        /usr/bin/open "$(cat "${URL_FILE}")" >/dev/null 2>&1
+    else
+        /usr/bin/osascript -e 'display notification "Already running on 127.0.0.1:7777 — check your existing browser tab." with title "Keys Keeper"' >/dev/null 2>&1
+    fi
     exit 0
 fi
 
+# Run `keys serve` as a CHILD of this script — NOT via `exec`. The bundle's own
+# /bin/sh process is what LaunchServices registered for this .app; exec-ing the
+# pipx Python (which lives OUTSIDE the bundle, under /opt/homebrew) makes
+# LaunchServices deregister the app — it pops "…is no longer open" AND silently
+# breaks the server's own webbrowser.open(). Staying as the parent keeps the
+# registration valid for as long as the server runs.
 printf '[%s] launching: %s serve\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${KEYS_BIN}" >> "${LOG}"
-exec "${KEYS_BIN}" serve >> "${LOG}" 2>&1
+PYTHONUNBUFFERED=1 "${KEYS_BIN}" serve >> "${LOG}" 2>&1
 """
 
 

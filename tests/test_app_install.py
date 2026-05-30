@@ -63,6 +63,28 @@ def test_launcher_skips_zshrc_and_uses_abs_path(tmp_path):
 
 
 @pytest.mark.macos
+def test_launcher_does_not_exec_foreign_binary(tmp_path):
+    """Regression: exec-ing the out-of-bundle pipx Python makes LaunchServices
+    deregister the app ("…is no longer open" alert) and silently breaks the
+    server's webbrowser.open(). The launcher must run keys serve as a *child*,
+    never via `exec`."""
+    macos_app.install_app(tmp_path)
+    body = (tmp_path / "Keys Keeper.app" / "Contents" / "MacOS" / "keys-keeper-launcher").read_text()
+    assert "exec " not in body, "launcher must not exec a non-bundle binary"
+    assert '"${KEYS_BIN}" serve' in body  # it still actually runs the server
+
+
+@pytest.mark.macos
+def test_launcher_reopens_running_server_via_url_file(tmp_path):
+    """When a server is already up, the shortcut should re-open the live tokened
+    URL the server persisted (via /usr/bin/open), not just notify."""
+    macos_app.install_app(tmp_path)
+    body = (tmp_path / "Keys Keeper.app" / "Contents" / "MacOS" / "keys-keeper-launcher").read_text()
+    assert "serve-url" in body
+    assert "/usr/bin/open" in body
+
+
+@pytest.mark.macos
 def test_install_refuses_to_overwrite_without_force(tmp_path):
     macos_app.install_app(tmp_path)
     with pytest.raises(FileExistsError):

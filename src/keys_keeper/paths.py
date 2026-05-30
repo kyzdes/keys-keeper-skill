@@ -39,6 +39,13 @@ class Paths:
     def config_toml(self) -> Path:
         return self.root / "config.toml"
 
+    @property
+    def serve_url_file(self) -> Path:
+        # Live admin URL (with session token) of a running `keys serve`, so the
+        # macOS quick-launch app can re-open the tab. Written on start, removed
+        # on shutdown. See cli._write_serve_url and the macos_app launcher.
+        return self.root / "serve-url"
+
     def audit_archive(self, year_month: str) -> Path:
         return self.root / f"audit.{year_month}.jsonl.gz"
 

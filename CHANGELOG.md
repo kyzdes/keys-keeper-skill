@@ -6,6 +6,21 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.4.1] — 2026-05-30
+
+### Fixed
+
+- **macOS quick-launch app showed "Keys Keeper is no longer open" and didn't open the browser.** The `keys app install` launcher ended with `exec "${KEYS_BIN}" serve`, which replaced the bundle's `/bin/sh` process with the pipx Python interpreter living *outside* the `.app`. LaunchServices saw the running process leave the bundle, deregistered the app (the "…is no longer open" alert), and the same deregistration silently broke the server's own `webbrowser.open()` — even though `keys serve` kept running in the background. The launcher now runs `keys serve` as a **child** (no `exec`), so the bundle-resident process stays registered for as long as the server runs.
+- **Re-launching the shortcut while a server is already running now re-opens the admin tab** instead of only firing a "check your existing tab" notification. `keys serve` persists its tokened URL to `~/.config/keys-keeper/serve-url` (`0600`, removed on shutdown) and the launcher's already-running branch opens that URL via `/usr/bin/open`.
+
+### Internal
+
+- `tests/test_serve_url.py` (URL-file round-trip, `0600` perms, missing-file safety) + two launcher regression tests in `tests/test_app_install.py` (`test_launcher_does_not_exec_foreign_binary`, `test_launcher_reopens_running_server_via_url_file`). Test count: 180 passing + Windows-skipped on macOS.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.4.0...v0.4.1)
+
+---
+
 ## [0.4.0] — 2026-05-19
 
 ### Added
@@ -117,7 +132,9 @@ Initial public release. macOS-only.
 
 ---
 
-[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.1
+[0.4.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.0
 [0.3.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.3.0
 [0.2.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.1.0
