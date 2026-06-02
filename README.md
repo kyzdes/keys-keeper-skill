@@ -49,7 +49,7 @@ Pick whichever agents you use — run inside the project directory you want the 
 
 | Agent | Command | What it does |
 |---|---|---|
-| **Claude Code** | `/plugin marketplace add kyzdes/claude-skills`<br>`/plugin install keys-keeper@kyzdes-claude-skills` | Marketplace plugin: skill + SessionStart auto-update hook |
+| **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + SessionStart auto-update hook |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
 | **Codex CLI** | `keys init codex` | Writes `AGENTS.md` (also read by Cursor / Amp / Jules in 2026 per the AGENTS.md open spec) |

@@ -692,10 +692,10 @@ footer .tagline {
       <h1>a cross-platform secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
       <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
       <div class="cta-row">
-        <button class="btn btn-primary" data-copy="/plugin marketplace add kyzdes/claude-skills&#10;/plugin install keys-keeper@claude-skills" id="hero-copy">
+        <a class="btn btn-primary" href="#install" id="hero-copy">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
-          <span>copy install</span>
-        </button>
+          <span>install</span>
+        </a>
         <a class="btn" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 00-2.5 15.6c.4.07.55-.17.55-.38v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.05-.5.05-.5.8.06 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.07-.5.27-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.85-2.1-.1-.2-.4-1 .07-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 014 0c1.5-1 2.2-.8 2.2-.8.4 1.1.15 1.9.07 2.1.55.5.85 1.2.85 2.1 0 3-1.8 3.7-3.6 3.9.3.25.55.7.55 1.45v2.15c0 .2.15.45.55.38A8 8 0 008 0z"/></svg>
           <span>read on github</span>
@@ -1204,16 +1204,28 @@ footer .tagline {
       <p>The Claude Code plugin is the recommended path — adds the skill and a SessionStart hook that pulls new releases via <code class="mono" style="color:var(--accent);">claude plugin update</code> automatically. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
     </div>
 
+    <p class="install-note" style="margin: 0 0 12px; color: var(--text-3); font-size: 14px;">Run these as <strong>two separate slash commands</strong> in Claude Code — paste step 1, press Enter, then paste step 2. (Claude Code runs one slash command at a time.)</p>
+
     <div class="install-block">
       <div class="install-block__head">
-        <span class="label">/ claude code · recommended</span>
-        <button class="copy" id="install-copy">
+        <span class="label">/ claude code · step 1 — add the marketplace</span>
+        <button class="copy" id="install-copy-step1">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
           <span>copy</span>
         </button>
       </div>
-<pre id="install-pre"><span class="cmd">/plugin marketplace add</span> <span class="arg">kyzdes/claude-skills</span>
-<span class="cmd">/plugin install</span> <span class="arg">keys-keeper@claude-skills</span></pre>
+<pre id="install-pre-step1"><span class="cmd">/plugin marketplace add</span> <span class="arg">kyzdes/claude-skills</span></pre>
+    </div>
+
+    <div class="install-block" style="margin-top: 16px;">
+      <div class="install-block__head">
+        <span class="label">/ claude code · step 2 — install the plugin</span>
+        <button class="copy" id="install-copy-step2">
+          <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
+          <span>copy</span>
+        </button>
+      </div>
+<pre id="install-pre-step2"><span class="cmd">/plugin install</span> <span class="arg">keys-keeper@claude-skills</span></pre>
     </div>
 
     <div class="install-block" style="margin-top: 24px;">
@@ -1380,7 +1392,8 @@ footer .tagline {
     if (!btn || !pre) return;
     btn.addEventListener('click', () => handleCopy(btn, pre.textContent.trim()));
   };
-  wireInstallCopy('install-copy', 'install-pre');
+  wireInstallCopy('install-copy-step1', 'install-pre-step1');
+  wireInstallCopy('install-copy-step2', 'install-pre-step2');
   wireInstallCopy('install-copy-pipx', 'install-pre-pipx');
 
   // ── github stars badge ──
