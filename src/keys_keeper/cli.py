@@ -13,6 +13,7 @@ from pathlib import Path
 
 from keys_keeper import __version__, clipboard
 from keys_keeper.audit import AuditLog
+from keys_keeper.backend import KeychainError
 from keys_keeper.composition import build_backend
 from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
 from keys_keeper.paths import Paths
@@ -688,19 +689,40 @@ def cmd_import(args: argparse.Namespace) -> int:
     for rec in payload["entries"]:
         secret = rec.pop("_secret", None)
         passphrase = rec.pop("_secret_passphrase", None)
-        from keys_keeper.models import Entry
         e = Entry.from_dict(rec)
-        if e.name in existing:
-            if args.replace:
-                store.replace_by_name(e)
-            else:
-                continue
-        else:
+        fresh = e.name not in existing
+        if not fresh and not args.replace:
+            continue
+        if fresh:
             store.add(e)
-        if secret:
-            backend.set(e.id, secret)
-        if passphrase:
-            backend.set(e.id + ":passphrase", passphrase)
+        else:
+            store.replace_by_name(e)
+        try:
+            if secret:
+                backend.set(e.id, secret)
+            if passphrase:
+                backend.set(e.id + ":passphrase", passphrase)
+        except KeychainError as ex:
+            # The secret didn't land. Roll back the metadata we just added so a
+            # re-run (after the user fixes the cause) retries this entry cleanly
+            # instead of skipping it as "already imported". Stop here: the most
+            # common cause (Windows' per-app credential cap) fails every
+            # subsequent write too, so one clear message beats a flood.
+            if fresh:
+                try:
+                    store.delete_by_name(e.name)
+                except Exception:
+                    pass
+            audit.record(op="import", name=e.name, id_=e.id,
+                         file_target=args.file, success=False)
+            sys.stderr.write(
+                f"error: stored {imported} entr{'y' if imported == 1 else 'ies'}, "
+                f"then failed on {e.name!r}:\n{ex}\n"
+                f"Fix the cause, then re-run `keys import` — already-stored "
+                f"entries are skipped and the rest resume.\n"
+            )
+            return 1
+        existing.add(e.name)
         imported += 1
     audit.record(op="import", name="<all>", id_="-", file_target=args.file, success=True)
     print(f"imported {imported} entries")

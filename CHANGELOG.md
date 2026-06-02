@@ -6,6 +6,21 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.5.1] — 2026-06-02
+
+### Fixed
+
+- **Windows migration crashed past ~20 secrets with a cryptic `WinError 8`.** A real macOS→Windows `keys import` died at the 21st entry with `KeychainError: CredWriteW failed ... WinError 8` — on a 64-byte value, so not a size issue. Root cause: Windows Credential Manager enforces a **20-credentials-per-app** cap (`HKLM\…\Vault\MaxPerAppCredentialNumber`, default 20), and keys-keeper stores one credential per secret (chunked SSH keys cost several). CredMan reports the cap as the misleadingly-named `ERROR_NOT_ENOUGH_MEMORY` (8). `backend_windows._write_blob` now maps error 8 to an actionable message — raise `MaxPerAppCredentialNumber`, reboot, retry — with the docs link, instead of a raw traceback. Distinct from the 2560-byte blob cap (KI-016 / error 24). (KI-021)
+- **`keys import` is now resumable.** Previously a mid-import keychain write failure left orphan metadata (entry added to `data.json`, secret never stored) and aborted with a traceback; re-running skipped the orphan as "already imported", so its secret was lost. Import now rolls back the failed entry's metadata and stops with a clear "fix the cause, then re-run — already-stored entries are skipped and the rest resume" message. A re-run (default `--merge`) completes the migration.
+
+### Internal
+
+- `backend_windows.py` guards its advapi32 ctypes bindings behind `sys.platform == "win32"`, so the module imports on any OS. This keeps the pure `_credwrite_error` helper unit-testable off-Windows (new `test_backend_windows_errors.py`) and adds a cross-platform resumable-import regression test (`test_cli_export.py`). Test count: 220 passing + 13 platform-gated skips on macOS.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.0...v0.5.1)
+
+---
+
 ## [0.5.0] — 2026-06-02
 
 ### Fixed

@@ -42,6 +42,7 @@ crash mid-write at step 2 looks like "not yet written" to readers.
 from __future__ import annotations
 import ctypes
 import json
+import sys
 from ctypes import wintypes
 
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
@@ -53,6 +54,10 @@ _CRED_TYPE_GENERIC = 1
 _CRED_PERSIST_LOCAL_MACHINE = 2
 _ERROR_NOT_FOUND = 1168
 _ERROR_BAD_LENGTH = 24
+# CredWriteW reports the per-application credential cap (default 20) as
+# ERROR_NOT_ENOUGH_MEMORY — a misleading name; the vault isn't out of RAM,
+# it's refusing the 21st credential for this app. See `_credwrite_error`.
+_ERROR_NOT_ENOUGH_MEMORY = 8
 
 _CHUNK_THRESHOLD = 2000  # UTF-8 bytes
 _FMT_RAW = 0x01
@@ -99,33 +104,72 @@ class _CREDENTIALW(ctypes.Structure):
 
 # ---------- bindings ----------
 
-_advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+# advapi32 only exists on Windows. Guard the load so this module imports on any
+# platform (composition.py only ever instantiates the backend on win32). That
+# keeps the pure helpers below — e.g. `_credwrite_error` — importable, and
+# unit-testable, off-Windows. The Cred* names stay None elsewhere; any code path
+# that touches them off-Windows is a bug, not a silent no-op.
+_advapi32 = None
+_CredWriteW = _CredReadW = _CredDeleteW = _CredEnumerateW = _CredFree = None
 
-_CredWriteW = _advapi32.CredWriteW
-_CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIALW), wintypes.DWORD]
-_CredWriteW.restype = wintypes.BOOL
+if sys.platform == "win32":
+    _advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
 
-_CredReadW = _advapi32.CredReadW
-_CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                       ctypes.POINTER(ctypes.POINTER(_CREDENTIALW))]
-_CredReadW.restype = wintypes.BOOL
+    _CredWriteW = _advapi32.CredWriteW
+    _CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIALW), wintypes.DWORD]
+    _CredWriteW.restype = wintypes.BOOL
 
-_CredDeleteW = _advapi32.CredDeleteW
-_CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
-_CredDeleteW.restype = wintypes.BOOL
+    _CredReadW = _advapi32.CredReadW
+    _CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           ctypes.POINTER(ctypes.POINTER(_CREDENTIALW))]
+    _CredReadW.restype = wintypes.BOOL
 
-_CredEnumerateW = _advapi32.CredEnumerateW
-_CredEnumerateW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
-                            ctypes.POINTER(wintypes.DWORD),
-                            ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(_CREDENTIALW)))]
-_CredEnumerateW.restype = wintypes.BOOL
+    _CredDeleteW = _advapi32.CredDeleteW
+    _CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    _CredDeleteW.restype = wintypes.BOOL
 
-_CredFree = _advapi32.CredFree
-_CredFree.argtypes = [ctypes.c_void_p]
-_CredFree.restype = None
+    _CredEnumerateW = _advapi32.CredEnumerateW
+    _CredEnumerateW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                ctypes.POINTER(wintypes.DWORD),
+                                ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(_CREDENTIALW)))]
+    _CredEnumerateW.restype = wintypes.BOOL
+
+    _CredFree = _advapi32.CredFree
+    _CredFree.argtypes = [ctypes.c_void_p]
+    _CredFree.restype = None
 
 
 # ---------- low-level helpers ----------
+
+def _credwrite_error(err: int, target_name: str, blob_len: int) -> KeychainError:
+    """Map a CredWriteW WinError into an actionable KeychainError.
+
+    Pure (no ctypes) so it can be unit-tested off-Windows.
+    """
+    if err == _ERROR_BAD_LENGTH:
+        return KeychainError(
+            f"CredWriteW: blob too large for {target_name!r} "
+            f"({blob_len} bytes; CredMan limit ~2560)"
+        )
+    if err == _ERROR_NOT_ENOUGH_MEMORY:
+        # Not actually an out-of-memory condition — this is Windows' hard
+        # cap of 20 credentials per application. keys-keeper stores one
+        # credential per secret, so a vault with >20 keys trips it.
+        return KeychainError(
+            f"Windows Credential Manager refused to store {target_name!r} "
+            f"(WinError 8). This is the 20-credentials-per-app limit, not a "
+            f"size problem — keys-keeper keeps one credential per secret. "
+            f"Raise the cap: open PowerShell as Administrator and run\n"
+            f"  New-ItemProperty -Path "
+            f"'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Vault' "
+            f"-Name MaxPerAppCredentialNumber -Value 500 -PropertyType DWord "
+            f"-Force\n"
+            f"then reboot and re-run the command. Docs: "
+            f"https://learn.microsoft.com/troubleshoot/windows-server/remote/"
+            f"credential-limit-per-app"
+        )
+    return KeychainError(f"CredWriteW failed for {target_name!r}: WinError {err}")
+
 
 def _write_blob(target_name: str, blob: bytes) -> None:
     """Write a raw blob to CredMan under the given TargetName. Raises on failure."""
@@ -145,12 +189,7 @@ def _write_blob(target_name: str, blob: bytes) -> None:
     cred.UserName = None
     if not _CredWriteW(ctypes.byref(cred), 0):
         err = ctypes.get_last_error()
-        if err == _ERROR_BAD_LENGTH:
-            raise KeychainError(
-                f"CredWriteW: blob too large for {target_name!r} "
-                f"({len(blob)} bytes; CredMan limit ~2560)"
-            )
-        raise KeychainError(f"CredWriteW failed for {target_name!r}: WinError {err}")
+        raise _credwrite_error(err, target_name, len(blob))
 
 
 def _read_blob(target_name: str) -> bytes:
