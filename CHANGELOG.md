@@ -14,6 +14,9 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ### Added
 
+- **`keys quickstart` — friendly onboarding.** A read-only getting-started command that shows the config dir, entry count, the four core commands, and a first-key walkthrough — and never prints a secret value. On an empty store `keys list` now points new users to it ("no entries yet — run `keys quickstart` …"), while a filtered no-match says "no entries match those filters" instead.
+- **`FLOW_SETUP` onboarding section in the agent rules.** Claude / Cursor / Aider / Codex / Cline now get an explicit, opt-in setup flow: detect whether the CLI is installed, OFFER to install and wait for the user's OK (correct per-platform `pipx` commands), then orient via `keys quickstart`. It explicitly forbids silent installs and unprompted bulk-migration of existing secrets — fixing a first-run experience where the agent jumped straight to migrating keys and fumbled the install.
+
 - **Linux support — third platform.** `pipx install` + `keys` now works on Ubuntu (desktop and server). The `KeychainBackend` interface gains two Linux implementations, selected automatically:
   - **`SecretToolBackend`** (`backend_linux.py`) — the OS-native **Secret Service** (GNOME Keyring / KWallet) driven via the `secret-tool` CLI, mirroring how macOS shells out to `security`. No new Python dependency (`secret-tool` is a system package — `sudo apt install libsecret-tools`). Secret values are passed via **stdin**, never argv.
   - **`EncryptedFileBackend`** (`backend_file.py`) — for headless servers with no D-Bus / keyring daemon. A single AES-256-GCM blob at `~/.config/keys-keeper/secrets.enc`, unlocked by `KEYS_KEEPER_MASTER_KEY`. Reuses the existing `crypto.encrypt_blob`/`decrypt_blob` (AES-256-GCM + PBKDF2-600k) and the cross-platform advisory lock — still zero new dependencies.
@@ -30,7 +33,7 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 - `composition.py` stays the sole `sys.platform` dispatch (D-017): the Linux branch lives there.
 - `ssh_runner.py` unchanged — its POSIX `chmod 0600` path already covers Linux.
 - `EncryptedFileBackend` does its read-modify-write fully under the advisory lock (re-reading from disk, not a cached copy), so parallel `keys` processes serialize and can't lose each other's updates — same guarantee as `MetadataStore`. Covered by a concurrency regression test.
-- New tests: `test_backend_file.py` (incl. multi-instance concurrency + corruption), `test_backend_linux.py` (live tests runtime-skip without a keyring), `test_composition_linux.py`, `test_clipboard_linux.py`; `linux` pytest marker added. Test count: 211 passing + 13 platform-gated skips on macOS.
+- New tests: `test_backend_file.py` (incl. multi-instance concurrency + corruption), `test_backend_linux.py` (live tests runtime-skip without a keyring), `test_composition_linux.py`, `test_clipboard_linux.py`; `linux` pytest marker added. Test count: 216 passing + 13 platform-gated skips on macOS.
 
 [Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.4.1...v0.5.0)
 

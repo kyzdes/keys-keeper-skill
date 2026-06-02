@@ -20,8 +20,36 @@ You CAN:
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
 - `keys doctor` — paths + keychain sync check, useful when a value is missing
+- `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values
 
 ## Common flows
+
+### First-time setup / onboarding
+
+Only run this flow when the user explicitly asks to set up, install, or get
+started with keys-keeper (or invokes the skill directly). Do NOT volunteer to
+migrate existing secrets or restructure their setup unprompted.
+
+1. **Check whether the CLI is already there.** Run `keys --version` (or
+   `which keys` / `Get-Command keys`). If it works → skip to step 4.
+2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
+   silently. One line on what it is, then the platform command:
+   - macOS / Linux: `pipx install git+https://github.com/kyzdes/keys-keeper-skill.git`
+     (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
+     `python3 -m pip install --user pipx && pipx ensurepath`)
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git"`
+   - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
+3. **After install, note that `keys` may need a fresh terminal** for PATH to
+   pick it up. Re-check with `keys --version`.
+4. **Orient the user — run `keys quickstart`.** It's read-only, shows no secret
+   values, and prints the config dir, entry count, the core commands, and a
+   first-key walkthrough. Then offer concrete next steps and let the user pick:
+   (a) add their first key, (b) open the admin with `keys serve`, (c) install a
+   quick-launch shortcut with `keys app install`.
+5. **Never bulk-migrate existing secrets on your own.** If the user has a pile
+   of plaintext keys somewhere, prepare the `keys add NAME --from-clipboard …`
+   commands for them to run, and remind them any value already pasted into this
+   chat is compromised and should be rotated.
 
 ### User wants to save a secret
 

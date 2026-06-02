@@ -190,7 +190,7 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 
 ## Contributing
 
-Issues and PRs welcome. The repo is reasonably well-tested (211 passing + 13 platform-gated tests auto-skipped on macOS; fixtures use real isolated macOS keychains via `security create-keychain`, and the Linux CI job exercises the real `secret-tool` keyring under `dbus-run-session`). Run `pytest -q` after any change.
+Issues and PRs welcome. The repo is reasonably well-tested (216 passing + 13 platform-gated tests auto-skipped on macOS; fixtures use real isolated macOS keychains via `security create-keychain`, and the Linux CI job exercises the real `secret-tool` keyring under `dbus-run-session`). Run `pytest -q` after any change.
 
 The implementation plan is at [`docs/superpowers/plans/2026-05-04-keys-keeper-plan.md`](docs/superpowers/plans/2026-05-04-keys-keeper-plan.md). The interactive design canvas (a Tailwind/React playground showing the locked UX choices) is at [`keys-keeper-admin-canvas.html`](keys-keeper-admin-canvas.html) — open it in your browser.
 

@@ -132,7 +132,12 @@ def cmd_list(args: argparse.Namespace) -> int:
         q = args.search.lower()
         entries = [e for e in entries if q in e.name.lower() or q in (e.note or "").lower()]
     if not entries:
-        print("no entries")
+        # Distinguish "store is empty" from "filters matched nothing" so a new
+        # user gets pointed at quickstart instead of a dead end.
+        if not (args.type or args.tag or args.search):
+            print("no entries yet — run `keys quickstart` to add your first key")
+        else:
+            print("no entries match those filters")
         return 0
     for e in entries:
         tag_str = "[" + ",".join(e.tags) + "]" if e.tags else ""
@@ -510,6 +515,48 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_quickstart(args: argparse.Namespace) -> int:
+    """Friendly getting-started: orient a brand-new user without ever touching
+    a secret value. Safe to run any time — read-only, no plaintext."""
+    paths = Paths()
+    try:
+        n = len(MetadataStore(paths).list())
+    except Exception:
+        n = 0
+
+    print("┌─ keys-keeper · quickstart ──────────────────────────────┐")
+    print("│ A secrets vault your AI agent can use but never read.    │")
+    print("└─────────────────────────────────────────────────────────┘")
+    print()
+    print(f"  version:    keys-keeper {__version__}")
+    print(f"  config dir: {paths.root}")
+    print(f"  entries:    {n}")
+    print()
+    print("The 4 commands you'll use most (none of these ever print a value):")
+    print("  keys add NAME --from-clipboard --type api_key   save a secret you copied")
+    print("  keys list                                       see what's stored (names only)")
+    print("  keys inject NAME --file .env --as ENV_VAR        write a secret into a file")
+    print("  keys serve                                      open the web admin in a browser")
+    print()
+
+    if n == 0:
+        print("Looks empty — let's add your first key:")
+        print("  1. Copy the secret to your clipboard (Cmd/Ctrl-C from wherever it lives).")
+        print("  2. Run:  keys add my-first-key --from-clipboard --type api_key --tag demo")
+        print("  3. Check it landed:  keys list")
+        print("  4. Use it:  keys inject my-first-key --file .env --as MY_FIRST_KEY")
+        print()
+        print("Why the clipboard and not just typing the value? So the secret never")
+        print("passes through a terminal, an AI transcript, or your shell history.")
+    else:
+        print(f"You already have {n} {'entry' if n == 1 else 'entries'}.")
+        print("  browse:  keys list          inspect:  keys info NAME")
+        print("  admin:   keys serve         shortcut: keys app install")
+    print()
+    print("Full command surface:  keys --help     ·     health check:  keys doctor")
+    return 0
+
+
 def cmd_ssh(args: argparse.Namespace) -> int:
     from keys_keeper.ssh_runner import run_ssh
     paths = Paths()
@@ -831,6 +878,9 @@ def build_parser() -> argparse.ArgumentParser:
     # doctor
     dr = sub.add_parser("doctor", help="health check + paths")
     dr.set_defaults(func=cmd_doctor)
+
+    qs = sub.add_parser("quickstart", help="friendly getting-started (no secrets shown)")
+    qs.set_defaults(func=cmd_quickstart)
 
     sh = sub.add_parser("ssh", help="open ssh session to a server entry")
     sh.add_argument("name")
