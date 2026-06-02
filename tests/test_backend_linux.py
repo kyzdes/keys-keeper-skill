@@ -48,6 +48,31 @@ def test_parse_accounts_ignores_secret_lines():
     assert _parse_accounts(out) == ["real-id"]
 
 
+def test_parse_accounts_dedupes_preserving_order():
+    # the same account can appear in both stderr and stdout once we concat them
+    out = "attribute.account = kk:a\nattribute.account = kk:b\nattribute.account = kk:a\n"
+    assert _parse_accounts(out) == ["kk:a", "kk:b"]
+
+
+def test_list_ids_reads_stderr(monkeypatch):
+    """Regression (CI Ubuntu): `secret-tool search` prints the item dump with
+    `attribute.account =` to STDERR, while stdout carries only secret values.
+    list_ids() must parse stderr — parsing stdout alone returned []."""
+    class _R:
+        returncode = 0
+        stdout = "sk-secret-value\n"   # secret on stdout — must be ignored
+        stderr = (
+            "[/org/freedesktop/secrets/collection/login/1]\n"
+            "attribute.account = kk:a\n"
+            "attribute.service = keys-keeper\n"
+            "attribute.account = kk:b\n"
+        )
+    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", lambda *a, **k: _R())
+    ids = SecretToolBackend(service="keys-keeper").list_ids()
+    assert sorted(ids) == ["kk:a", "kk:b"]
+    assert "sk-secret-value" not in ids
+
+
 def test_availability_false_when_secret_tool_absent(monkeypatch):
     monkeypatch.setattr("keys_keeper.backend_linux.shutil.which", lambda _n: None)
     assert secret_service_available() is False

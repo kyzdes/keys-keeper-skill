@@ -44,17 +44,27 @@ def secret_service_available(service: str = "keys-keeper") -> bool:
     return result.returncode in (0, 1)
 
 
-def _parse_accounts(stdout: str) -> list[str]:
+def _parse_accounts(output: str) -> list[str]:
     """Extract entry ids from `secret-tool search --all` output.
 
     Each match prints a block including a line `attribute.account = <id>`.
     We read only those lines and ignore everything else (notably `secret = ...`).
+
+    NOTE: `secret-tool search` writes the human-readable item dump (labels,
+    attributes, created/modified) to **stderr**; stdout carries only the secret
+    value(s). Callers must therefore pass stderr (or stderr+stdout) here, not
+    stdout alone — see list_ids(). A duplicate id (same account listed in both
+    streams) is de-duped while preserving first-seen order.
     """
     ids: list[str] = []
-    for line in stdout.splitlines():
+    seen: set[str] = set()
+    for line in output.splitlines():
         line = line.strip()
         if line.startswith("attribute.account = "):
-            ids.append(line[len("attribute.account = "):])
+            acct = line[len("attribute.account = "):]
+            if acct not in seen:
+                seen.add(acct)
+                ids.append(acct)
     return ids
 
 
@@ -105,4 +115,7 @@ class SecretToolBackend(KeychainBackend):
             raise KeychainError(
                 f"secret-tool search failed: {result.stderr.strip()}"
             )
-        return _parse_accounts(result.stdout)
+        # `secret-tool search` prints the item dump (with `attribute.account =`)
+        # to stderr; stdout holds only secret values. Parse stderr first, then
+        # stdout as a fallback for libsecret builds that route it differently.
+        return _parse_accounts(result.stderr + "\n" + result.stdout)

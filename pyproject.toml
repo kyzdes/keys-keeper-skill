@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keys-keeper"
-version = "0.5.1"
+version = "0.5.2"
 description = "Cross-platform (macOS + Windows + Linux) secrets manager that AI coding agents architecturally cannot leak from — CLI + local web admin + Claude skill"
 readme = "README.md"
 license = {text = "MIT"}

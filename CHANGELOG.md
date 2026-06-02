@@ -6,6 +6,16 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.5.2] — 2026-06-02
+
+### Fixed
+
+- **Linux `keys doctor` reported the keyring as empty even when it wasn't.** `SecretToolBackend.list_ids()` parsed only `secret-tool search`'s stdout, but `secret-tool` writes its item dump (the `attribute.account = …` lines) to **stderr** — stdout carries only the secret value. So `list_ids()` always returned `[]` on a real keyring, which made `keys doctor`'s keychain/metadata sync check misreport. `set`/`get`/`delete` were unaffected. Now parses stderr (plus stdout as a fallback) and de-dupes. Caught by the `ubuntu-latest` CI job's live `secret-tool` tests; added an off-keyring regression test so it's covered on every platform.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.1...v0.5.2)
+
+---
+
 ## [0.5.1] — 2026-06-02
 
 ### Fixed
