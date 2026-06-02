@@ -6,7 +6,11 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
-## [0.5.0] — 2026-06-01
+## [0.5.0] — 2026-06-02
+
+### Fixed
+
+- **`pipx install` was broken on up-to-date toolchains.** `pyproject.toml` declared a `force-include` for `templates/` and `static/` that are already shipped by `packages = ["src/keys_keeper"]`, so the wheel build mapped those files twice. hatchling ≥1.19 rejects the duplicate (`ValueError: A second file is being added to the wheel archive at the same path: keys_keeper/static/app.css`), making every clean `pipx install git+https://github.com/kyzdes/keys-keeper-skill.git` fail. Older hatchling silently deduped, which masked the bug locally. Removed the redundant `force-include`; verified the wheel builds, still contains templates/static/icons, and installs cleanly.
 
 ### Added
 

@@ -48,11 +48,13 @@ dev = [
 keys = "keys_keeper.cli:main"
 
 [tool.hatch.build.targets.wheel]
+# `packages` already ships every tracked file under src/keys_keeper — including
+# templates/, static/, and static/icons/. Do NOT add a force-include for those:
+# it maps the same files to the same wheel paths twice, and hatchling >=1.19
+# treats the duplicate as a hard error ("A second file is being added to the
+# wheel archive at the same path: keys_keeper/static/app.css") which breaks
+# `pipx install` on any up-to-date toolchain. (KI-020)
 packages = ["src/keys_keeper"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/keys_keeper/templates" = "keys_keeper/templates"
-"src/keys_keeper/static" = "keys_keeper/static"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
