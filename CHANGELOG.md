@@ -6,6 +6,32 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.5.0] — 2026-06-01
+
+### Added
+
+- **Linux support — third platform.** `pipx install` + `keys` now works on Ubuntu (desktop and server). The `KeychainBackend` interface gains two Linux implementations, selected automatically:
+  - **`SecretToolBackend`** (`backend_linux.py`) — the OS-native **Secret Service** (GNOME Keyring / KWallet) driven via the `secret-tool` CLI, mirroring how macOS shells out to `security`. No new Python dependency (`secret-tool` is a system package — `sudo apt install libsecret-tools`). Secret values are passed via **stdin**, never argv.
+  - **`EncryptedFileBackend`** (`backend_file.py`) — for headless servers with no D-Bus / keyring daemon. A single AES-256-GCM blob at `~/.config/keys-keeper/secrets.enc`, unlocked by `KEYS_KEEPER_MASTER_KEY`. Reuses the existing `crypto.encrypt_blob`/`decrypt_blob` (AES-256-GCM + PBKDF2-600k) and the cross-platform advisory lock — still zero new dependencies.
+- **Auto-detection + override.** On Linux, keys-keeper uses the keyring when a live Secret Service answers, else the encrypted file. `KEYS_KEEPER_BACKEND=secret-tool|file` forces a choice. `keys doctor` now prints the active backend (and whether `KEYS_KEEPER_MASTER_KEY` is set for the file backend).
+- **Linux clipboard.** `keys copy` shells out to `wl-copy` (Wayland) → `xclip` → `xsel` (X11). On a headless host with none present, it fails with a clear "use `keys inject`/`resolve`" message instead of a traceback.
+
+### Changed
+
+- All user-facing copy updated to "macOS + Windows + Linux" — README, landing page, `pyproject.toml` (added `Operating System :: POSIX :: Linux` classifier), `plugin.json`, and the generated agent rule files (`canonical.py` / `render.py`; goldens regenerated).
+- CI matrix adds `ubuntu-latest`. The Linux job installs `gnome-keyring` + `dbus-x11` and runs the suite under `dbus-run-session` with an unlocked keyring, so the real `secret-tool` path is exercised — not just the file fallback.
+
+### Internal
+
+- `composition.py` stays the sole `sys.platform` dispatch (D-017): the Linux branch lives there.
+- `ssh_runner.py` unchanged — its POSIX `chmod 0600` path already covers Linux.
+- `EncryptedFileBackend` does its read-modify-write fully under the advisory lock (re-reading from disk, not a cached copy), so parallel `keys` processes serialize and can't lose each other's updates — same guarantee as `MetadataStore`. Covered by a concurrency regression test.
+- New tests: `test_backend_file.py` (incl. multi-instance concurrency + corruption), `test_backend_linux.py` (live tests runtime-skip without a keyring), `test_composition_linux.py`, `test_clipboard_linux.py`; `linux` pytest marker added. Test count: 211 passing + 13 platform-gated skips on macOS.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.4.1...v0.5.0)
+
+---
+
 ## [0.4.1] — 2026-05-30
 
 ### Fixed
@@ -132,7 +158,8 @@ Initial public release. macOS-only.
 
 ---
 
-[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.5.0
 [0.4.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.1
 [0.4.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.0
 [0.3.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.3.0

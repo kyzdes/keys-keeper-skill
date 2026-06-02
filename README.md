@@ -4,9 +4,9 @@
 
 > **A secrets manager AI coding agents architecturally cannot leak from.**
 
-Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain on macOS, Credential Manager on Windows). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. All variants share one safety contract: the agent can *put* secrets into your files without ever *seeing* the value.
+Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. All variants share one safety contract: the agent can *put* secrets into your files without ever *seeing* the value.
 
-**Status:** v0.2.0 · macOS + Windows · single-user · MIT license
+**Status:** v0.5.0 · macOS + Windows + Linux · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -68,7 +68,16 @@ echo 'export KEYS_KEEPER_ALLOW_REVEAL=1' >> ~/.zshrc   # macOS / Linux
 setx KEYS_KEEPER_ALLOW_REVEAL 1                        # Windows (effective in new shells)
 ```
 
-Requires Python 3.10+ on macOS or Windows (Linux backend via libsecret is on the roadmap).
+Requires Python 3.10+ on macOS, Windows, or Linux.
+
+#### Linux backend selection
+
+On Linux, keys-keeper picks storage automatically:
+
+- **Desktop** (GNOME / KDE with a running keyring): uses the OS-native **Secret Service** via `secret-tool`. Install it once with `sudo apt install libsecret-tools` (Debian/Ubuntu) if it's missing.
+- **Headless server** (no D-Bus / no keyring daemon): falls back to an **encrypted file** (`~/.config/keys-keeper/secrets.enc`, AES-256-GCM) unlocked by `KEYS_KEEPER_MASTER_KEY` in your environment.
+
+Force a backend explicitly with `KEYS_KEEPER_BACKEND=secret-tool` or `KEYS_KEEPER_BACKEND=file`. `keys doctor` prints which backend is active.
 
 ## Quick start
 
@@ -155,7 +164,7 @@ Encrypted backup via `keys export` (AES-256-GCM with PBKDF2-HMAC-SHA256, 600k it
 
 Open source, accepting PRs.
 
-- [ ] **Linux backend** via `secret-tool` (libsecret) — `KeychainBackend` interface already abstracted
+- [x] ~~**Linux backend** via `secret-tool` (libsecret), with an encrypted-file fallback for headless servers~~ — shipped in v0.5
 - [x] ~~**Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)~~ — shipped in v0.2
 - [x] ~~**Cursor / Aider / Codex / Cline rule-file generators** beyond the Claude skill format~~ — shipped in v0.3 (`keys init <target>`)
 - [ ] **MCP stdio server** (`keys mcp`) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)
@@ -168,7 +177,7 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 
 ## Honest limitations
 
-- **macOS + Windows only.** Linux (libsecret) backend is on the roadmap.
+- **macOS, Windows, Linux.** On a headless Linux server without a keyring daemon, the encrypted-file backend needs `KEYS_KEEPER_MASTER_KEY` in the environment to unlock.
 - **Single user, single machine.** No team / multi-user / sharing.
 - **No cloud sync.** Use `keys export` + your favorite encrypted-file-sync route if you need it.
 - **Bulk paste cleanly handles `api_key` only.** Other types need their type-specific fields filled by hand or via `+ New` in the admin.
@@ -177,11 +186,11 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 ## Threat model
 
 - **Defends against:** AI agents extracting plaintext into transcripts (the original motivation), accidental `git add` of `.env` files, plaintext clipboard residue, ad-hoc shell scripts that need a key without the user retyping it.
-- **Does NOT defend against:** A root-level adversary on your Mac, malware that has your full keychain access, screen-recording on a compromised host, network attackers (the admin is localhost-only and never reachable from outside the loopback interface anyway).
+- **Does NOT defend against:** A root-level adversary on your machine, malware that has your full keychain/keyring access (or your `KEYS_KEEPER_MASTER_KEY` on a headless host), screen-recording on a compromised host, network attackers (the admin is localhost-only and never reachable from outside the loopback interface anyway).
 
 ## Contributing
 
-Issues and PRs welcome. The repo is reasonably well-tested (146 tests + 9 Windows-only auto-skipped on macOS; fixtures use real isolated macOS keychains via `security create-keychain`). Run `pytest -q` after any change.
+Issues and PRs welcome. The repo is reasonably well-tested (211 passing + 13 platform-gated tests auto-skipped on macOS; fixtures use real isolated macOS keychains via `security create-keychain`, and the Linux CI job exercises the real `secret-tool` keyring under `dbus-run-session`). Run `pytest -q` after any change.
 
 The implementation plan is at [`docs/superpowers/plans/2026-05-04-keys-keeper-plan.md`](docs/superpowers/plans/2026-05-04-keys-keeper-plan.md). The interactive design canvas (a Tailwind/React playground showing the locked UX choices) is at [`keys-keeper-admin-canvas.html`](keys-keeper-admin-canvas.html) — open it in your browser.
 

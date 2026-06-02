@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
         python: ["3.12"]
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +23,36 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # Linux needs the Secret Service stack so the real `secret-tool` backend
+      # path is exercised (not just the encrypted-file fallback).
+      - name: Install Secret Service stack (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
+
       - name: Install
         run: pip install -e ".[dev]"
 
+      # Linux: run under a fresh D-Bus session with an unlocked login keyring so
+      # `secret-tool` can store/lookup. We GATE on the keyring actually working
+      # (store+lookup round-trip) so the live secret-tool tests can't silently
+      # skip and leave a green-but-untested job. Other OSes run pytest directly.
+      - name: Test (Linux, with keyring)
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c '
+            set -e
+            eval "$(echo "" | gnome-keyring-daemon --unlock --components=secrets)"
+            export GNOME_KEYRING_CONTROL SSH_AUTH_SOCK
+            # Fail the job if the Secret Service is not actually answering —
+            # otherwise the live tests would skip and hide a broken keyring path.
+            echo "ci-probe" | secret-tool store --label=ci service ci-probe account p
+            test "$(secret-tool lookup service ci-probe account p)" = "ci-probe"
+            secret-tool clear service ci-probe account p
+            pytest -q
+          '
+
       - name: Test
+        if: runner.os != 'Linux'
         run: pytest -q
 
       - name: Check SKILL.md is in sync with canonical prose

@@ -46,6 +46,12 @@ class Paths:
         # on shutdown. See cli._write_serve_url and the macos_app launcher.
         return self.root / "serve-url"
 
+    @property
+    def secrets_enc(self) -> Path:
+        # Encrypted secret blob for the Linux headless (no-keyring) backend.
+        # AES-256-GCM, unlocked by KEYS_KEEPER_MASTER_KEY. See backend_file.py.
+        return self.root / "secrets.enc"
+
     def audit_archive(self, year_month: str) -> Path:
         return self.root / f"audit.{year_month}.jsonl.gz"
 

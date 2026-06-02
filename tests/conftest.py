@@ -18,17 +18,21 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     config.addinivalue_line("markers", "macos: requires macOS (keychain, pbcopy, etc.)")
     config.addinivalue_line("markers", "windows: requires Windows (Credential Manager, etc.)")
+    config.addinivalue_line("markers", "linux: requires Linux (Secret Service, xclip, etc.)")
 
 
 def pytest_collection_modifyitems(config, items):
     plat = sys.platform
     skip_macos = pytest.mark.skip(reason="macOS-only test")
     skip_windows = pytest.mark.skip(reason="Windows-only test")
+    skip_linux = pytest.mark.skip(reason="Linux-only test")
     for item in items:
         if "macos" in item.keywords and plat != "darwin":
             item.add_marker(skip_macos)
         if "windows" in item.keywords and plat != "win32":
             item.add_marker(skip_windows)
+        if "linux" in item.keywords and not plat.startswith("linux"):
+            item.add_marker(skip_linux)
 
 
 @pytest.fixture

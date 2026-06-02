@@ -688,9 +688,9 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.4 · macOS + Windows · MIT</p>
+      <p class="eyebrow">v0.5 · macOS + Windows + Linux · MIT</p>
       <h1>a cross-platform secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
-      <p class="sub">Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
+      <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
       <div class="cta-row">
         <button class="btn btn-primary" data-copy="/plugin marketplace add kyzdes/claude-skills&#10;/plugin install keys-keeper@claude-skills" id="hero-copy">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
@@ -702,9 +702,9 @@ footer .tagline {
         </a>
       </div>
       <div class="hero-badges">
-        <span><span class="dot"></span> 171 tests passing</span>
+        <span><span class="dot"></span> 211 tests passing</span>
         <span><span class="dot dot-mit"></span> MIT license</span>
-        <span><span class="dot dot-info"></span> macOS + Windows</span>
+        <span><span class="dot dot-info"></span> macOS + Windows + Linux</span>
         <span><span class="dot dot-warn"></span> Python 3.10+</span>
         <span><span class="dot"></span> no cloud · no account</span>
       </div>
@@ -1241,7 +1241,7 @@ footer .tagline {
 <span class="cmd">keys init</span> <span class="arg">generic</span>    <span style="color:var(--text-3);"># prints to stdout — pipe wherever your agent reads rules</span></pre>
     </div>
 
-    <p class="install-prereq">requires <code>Python 3.10+</code> and <code>macOS</code> or <code>Windows</code>. Linux backend is on the roadmap below.</p>
+    <p class="install-prereq">requires <code>Python 3.10+</code> on <code>macOS</code>, <code>Windows</code>, or <code>Linux</code>. On a headless Linux server set <code>KEYS_KEEPER_MASTER_KEY</code> for the encrypted-file backend.</p>
 
     <div class="install-fallback">
       <strong>no pipx?</strong> macOS: <code>brew install pipx && pipx ensurepath</code>. Windows: <code>python -m pip install --user pipx && python -m pipx ensurepath</code> — one line, restart your shell.
@@ -1258,7 +1258,6 @@ footer .tagline {
       <p>Owner is one developer with a day job. The list below is what's planned but not yet shipped — pull-request bingo welcome.</p>
     </div>
     <ul class="roadmap-list">
-      <li><span class="check"></span><span class="text"><strong>Linux backend</strong> via secret-tool (libsecret) — KeychainBackend interface already abstracted</span></li>
       <li><span class="check"></span><span class="text"><strong>MCP stdio server</strong> (<code style="font-family:'JetBrains Mono',monospace; color:var(--accent);">keys mcp</code>) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)</span></li>
       <li><span class="check"></span><span class="text"><strong>Touch-ID-gated reveal in admin</strong> with auto-wipe from DOM after 10 s</span></li>
       <li><span class="check"></span><span class="text"><strong>CSV export from /audit</strong> (already CLI-only via <code style="font-family:'JetBrains Mono',monospace; color:var(--accent);">keys audit > file.csv</code>)</span></li>
@@ -1275,13 +1274,13 @@ footer .tagline {
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">honest limitations</p>
-      <h2>what v0.4 is not.</h2>
+      <h2>what v0.5 is not.</h2>
       <p>If any of these is a dealbreaker, that's fine — none of them are theoretically hard, they're just not done yet. Tracking on the roadmap above.</p>
     </div>
     <div class="limit-cards">
       <div class="limit-card">
-        <h3>no Linux yet</h3>
-        <p>macOS Keychain and Windows Credential Manager are shipped. Linux via libsecret is on the roadmap.</p>
+        <h3>headless Linux needs a master key</h3>
+        <p>Desktop Linux uses the OS keyring via secret-tool. A headless server has no keyring daemon, so the encrypted-file backend needs <code>KEYS_KEEPER_MASTER_KEY</code> in the environment to unlock.</p>
       </div>
       <div class="limit-card">
         <h3>single user</h3>
@@ -1332,7 +1331,7 @@ footer .tagline {
     <div class="row">
       <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.4.0</span>
+        <span>keys-keeper · v0.5.0</span>
       </a>
       <div class="links">
         <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>

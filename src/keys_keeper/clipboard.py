@@ -8,13 +8,56 @@ fits keys-keeper's "values go to a target, not to stdout" pattern.
 - Windows uses ctypes against user32.dll + kernel32.dll directly. We
   deliberately avoid `clip.exe` (UTF-8 vs OEM codepage issues) and
   PowerShell `Get-Clipboard -Raw` (adds trailing CRLF via stdout writer).
+- Linux shells out to whichever clipboard tool is present: `wl-copy`/`wl-paste`
+  (Wayland) preferred, then `xclip`, then `xsel` (X11). A headless server has
+  none — `keys copy` then fails with a clear "use inject/resolve" message
+  rather than a traceback.
 """
 from __future__ import annotations
+import shutil
 import subprocess
 import sys
 import time
 
 __all__ = ["read", "write", "clear", "spawn_clear_after"]
+
+
+class ClipboardUnavailable(RuntimeError):
+    """No clipboard tool/backend on this host (typically a headless server)."""
+
+
+# Linux clipboard tool resolution. Defined unconditionally (not inside the
+# platform branch) so it's unit-testable on any OS via shutil.which mocking.
+# Preference order: Wayland (wl-clipboard) → X11 (xclip) → X11 (xsel).
+_LINUX_COPY = {
+    "wl-copy": ["wl-copy"],
+    "xclip": ["xclip", "-selection", "clipboard"],
+    "xsel": ["xsel", "--clipboard", "--input"],
+}
+_LINUX_PASTE = {
+    "wl-copy": ["wl-paste", "--no-newline"],
+    "xclip": ["xclip", "-selection", "clipboard", "-o"],
+    "xsel": ["xsel", "--clipboard", "--output"],
+}
+_LINUX_PRIORITY = ("wl-copy", "xclip", "xsel")
+_HEADLESS_MSG = (
+    "clipboard unavailable on this host (no wl-copy/xclip/xsel found). "
+    "Use `keys inject` or `keys resolve` to place the secret into a file instead."
+)
+
+
+def _linux_copy_cmd() -> list[str]:
+    for tool in _LINUX_PRIORITY:
+        if shutil.which(tool):
+            return _LINUX_COPY[tool]
+    raise ClipboardUnavailable(_HEADLESS_MSG)
+
+
+def _linux_paste_cmd() -> list[str]:
+    for tool in _LINUX_PRIORITY:
+        if shutil.which(tool):
+            return _LINUX_PASTE[tool]
+    raise ClipboardUnavailable(_HEADLESS_MSG)
 
 
 if sys.platform == "win32":
@@ -139,6 +182,19 @@ elif sys.platform == "darwin":
 
     def clear() -> None:
         subprocess.run(["pbcopy"], input="", text=True)
+
+elif sys.platform.startswith("linux"):
+
+    def read() -> str:
+        result = subprocess.run(_linux_paste_cmd(), capture_output=True, text=True)
+        return result.stdout
+
+    def write(value: str) -> bool:
+        proc = subprocess.run(_linux_copy_cmd(), input=value, text=True)
+        return proc.returncode == 0
+
+    def clear() -> None:
+        subprocess.run(_linux_copy_cmd(), input="", text=True)
 
 else:
     def read() -> str:

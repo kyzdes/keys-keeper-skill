@@ -434,8 +434,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"  audit.jsonl:  {'exists' if paths.audit_jsonl.exists() else '(none yet)'}")
     print(f"  config.toml:  {'exists' if paths.config_toml.exists() else '(default)'}")
     # keychain access probe
+    backend = None
     try:
         backend = build_backend()
+        print(f"backend:      {type(backend).__name__}")
+        # Match by class name (not isinstance) so cli.py doesn't import the
+        # Linux-only backend module on macOS/Windows — keeps platform specifics
+        # confined to composition.py (D-017).
+        if type(backend).__name__ == "EncryptedFileBackend":
+            if os.environ.get("KEYS_KEEPER_MASTER_KEY"):
+                print("  KEYS_KEEPER_MASTER_KEY: ✓ set (file backend unlockable)")
+            else:
+                print("  KEYS_KEEPER_MASTER_KEY: ⚠ not set — file backend can't decrypt/store")
         backend.list_ids()
         print("keychain:     ✓ accessible")
     except Exception as ex:
@@ -482,7 +492,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # keychain orphans (account exists but no metadata) and missing (metadata but no keychain)
     try:
-        kc_ids = set(build_backend().list_ids())
+        kc_ids = set((backend or build_backend()).list_ids())
     except Exception:
         kc_ids = None
     if kc_ids is not None:

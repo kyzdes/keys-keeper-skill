@@ -15,7 +15,7 @@ You CAN:
 - `keys inject NAME --file PATH --as ENV` — value goes directly to file
 - `keys resolve PATH` — placeholder substitution in file (writes back to the same path)
 - `keys add NAME --from-clipboard` / `--from-file PATH` / `--stdin` (when the user already piped)
-- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS, icacls user-restricted ACL on Windows)
+- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS/Linux, icacls user-restricted ACL on Windows)
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log

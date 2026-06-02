@@ -1,6 +1,6 @@
 ---
 name: keys-keeper
-description: Securely save/retrieve API keys, SSH keys, server credentials, and domain info using the OS-native credential store (macOS Keychain / Windows Credential Manager) via the `keys` CLI. Use when the user mentions saving, getting, or referencing secrets, API keys, tokens, SSH keys, server addresses, or domain configs. Never produces plaintext secret values in output — uses CLI commands that handle files and clipboard directly.
+description: Securely save/retrieve API keys, SSH keys, server credentials, and domain info using the OS-native credential store (macOS Keychain / Windows Credential Manager / Linux Secret Service, with an encrypted-file fallback on headless servers) via the `keys` CLI. Use when the user mentions saving, getting, or referencing secrets, API keys, tokens, SSH keys, server addresses, or domain configs. Never produces plaintext secret values in output — uses CLI commands that handle files and clipboard directly.
 ---
 <!-- generated from src/keys_keeper/agent_rules/canonical.py; regenerate with `keys init <target> --force`, do not edit by hand -->
 
@@ -21,7 +21,7 @@ You CAN:
 - `keys inject NAME --file PATH --as ENV` — value goes directly to file
 - `keys resolve PATH` — placeholder substitution in file (writes back to the same path)
 - `keys add NAME --from-clipboard` / `--from-file PATH` / `--stdin` (when the user already piped)
-- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS, icacls user-restricted ACL on Windows)
+- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS/Linux, icacls user-restricted ACL on Windows)
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
