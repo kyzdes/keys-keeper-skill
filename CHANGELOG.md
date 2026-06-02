@@ -12,6 +12,10 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 - **Linux `keys doctor` reported the keyring as empty even when it wasn't.** `SecretToolBackend.list_ids()` parsed only `secret-tool search`'s stdout, but `secret-tool` writes its item dump (the `attribute.account = …` lines) to **stderr** — stdout carries only the secret value. So `list_ids()` always returned `[]` on a real keyring, which made `keys doctor`'s keychain/metadata sync check misreport. `set`/`get`/`delete` were unaffected. Now parses stderr (plus stdout as a fallback) and de-dupes. Caught by the `ubuntu-latest` CI job's live `secret-tool` tests; added an off-keyring regression test so it's covered on every platform.
 
+### Internal
+
+- **Marketplace description stays in sync automatically.** `scripts/sync-marketplace.sh` mirrors `plugin.json`'s `description` into the `kyzdes/claude-skills` marketplace manifest (versions already auto-sync — the marketplace sources the plugin by git URL). A maintainer-local `PostToolUse` hook on `git commit` (`.claude/settings.local.json`, gitignored) runs it after every skill commit; it no-ops cleanly for contributors who don't have the marketplace clone. Marketplace clone path overridable via `KEYS_KEEPER_MARKETPLACE_DIR`.
+
 [Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.1...v0.5.2)
 
 ---
