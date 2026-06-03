@@ -6,6 +6,30 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.6.0] — 2026-06-03
+
+### Added
+
+- **S3 cloud sync — back up and sync your vault across machines.** `keys sync setup/push/pull/status/mode/rollback`, plus an opt-in auto-sync on session start. Connect any S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi); the whole vault is encrypted into a single AES-256-GCM blob (the same format as `keys export`) before it ever leaves the machine.
+  - **Git-like versioned snapshots.** Each push writes an immutable `snapshots/NNNNNN-<device>.kk` blob and a plaintext `versions/NNNNNN.json` commit (`{version, parent, device, ts, snapshot, entries_hash}` — never an entry field or secret), with a `HEAD` cache. `keys sync rollback <version>` restores any earlier snapshot and republishes it so peers converge.
+  - **Id-keyed merge, no duplicates.** Entries merge by their UUID `id` (not name) with last-write-wins on `updated_at` and a deterministic content tiebreak, so re-pulling is idempotent and two machines converge without dupes. Deletes propagate via new **soft-delete tombstones** (`data.json` schema **v1→v2**, auto-migrated with a `.bak`) instead of being resurrected by an older peer snapshot.
+  - **Portable optimistic concurrency.** Commits use `PUT … If-None-Match:*` (create-if-absent) with bounded re-pull/re-merge/retry. Providers that ignore the precondition (older MinIO/B2) are detected at setup and fall back to a read-back-after-write check; a CAS-capable provider is recommended and noted in `keys sync setup`.
+  - **Auto mode.** `keys sync mode auto` enables a non-interactive SessionStart hook (`scripts/sync-hook.sh`) that pulls+pushes in a debounced, backgrounded, **fail-open** worker — any missing credential or network error exits 0 and never blocks or noises up a session. The encryption passphrase is read from the OS keychain (set once at setup); manual mode prompts.
+  - **Web `/settings` Sync panel.** Status, mode toggle, and Pull / “Sync now” buttons. By design there is **no secret entry in the browser** — first-time setup (which stores the S3 access key id, secret key, and passphrase in the OS keychain under reserved `kk:sync-*` accounts) stays in the CLI.
+  - **Zero new dependencies.** AWS Signature V4 is hand-rolled over the stdlib (`urllib`/`hashlib`/`hmac`) — no boto3 — and locked to the official AWS `get-vanilla` known-answer test vector. `config.toml` (non-secret settings only) is read/written by a tiny hand-rolled flat-TOML parser since the Python floor is 3.10 (no `tomllib`).
+
+### Security
+
+- Snapshots are uploaded only after passing `encrypt_blob` (asserted `KK1` magic before every PUT); the S3 secret key never leaves its `Sealed` envelope except as the derived SigV4 signing key, and is never placed in a header, URL, log, or exception. S3 provider error bodies (which can echo the access key id / StringToSign) are deliberately **not** spliced into exception messages. `versions/`/`HEAD` carry no entry data. `config.toml`, `sync-state.json`, and `sync.log` are written `0600` on POSIX. A full adversarial multi-agent review (security/leak · correctness/concurrency · requirements · SigV4/S3 protocol) plus a dedicated security-review pass were run; all confirmed findings fixed.
+
+### Internal
+
+- New modules: `config.py`, `sync_remote.py` (SigV4 + S3 verbs), `sync.py` (merge engine + version chain), `cli_sync.py` (commands + web API + auto hook). `store.py` gains tombstones + the v2 migration + `apply_merge`; `paths.py` gains `sync_state_json`; `api.py`/`settings.html`/`hooks.json` gain the sync surface. ~70 new tests (SigV4 vector, transport, merge/CAS/rollback/GC, migration, CLI, auto, web API, hooks). Test count: 295 passing + 13 platform-gated skips on macOS.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.2...v0.6.0)
+
+---
+
 ## [0.5.2] — 2026-06-02
 
 ### Fixed

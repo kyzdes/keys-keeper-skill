@@ -9,11 +9,13 @@ from typing import Iterator
 from contextlib import contextmanager
 
 from keys_keeper._locking import lock_exclusive, unlock
-from keys_keeper.models import Entry, EntryType
+from keys_keeper.models import Entry, EntryType, now_iso
 from keys_keeper.paths import Paths
 
 
-SCHEMA_VERSION = 1
+# v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
+# S3 sync instead of being resurrected by an older peer snapshot. See sync.py.
+SCHEMA_VERSION = 2
 
 
 class StoreError(RuntimeError):
@@ -86,17 +88,39 @@ class MetadataStore:
         with self._locked_write() as data:
             for i, d in enumerate(data["entries"]):
                 if d["name"] == name:
-                    return Entry.from_dict(data["entries"].pop(i))
+                    entry = Entry.from_dict(data["entries"].pop(i))
+                    # Soft-delete: record a tombstone so the deletion survives a
+                    # round-trip through an older peer's snapshot (F10/F18).
+                    data.setdefault("tombstones", []).append(
+                        {"id": entry.id, "name": entry.name, "deleted_at": now_iso()}
+                    )
+                    return entry
             raise NotFound(f"no entry with name {name!r}")
+
+    def tombstones(self) -> list[dict]:
+        """Soft-delete records: [{'id', 'name', 'deleted_at'}]. Read-only copy."""
+        return list(self._read().get("tombstones", []))
+
+    def apply_merge(self, entries: list[Entry], tombstones: list[dict]) -> None:
+        """Atomically replace the whole metadata set (entries + tombstones).
+
+        Used by the sync engine after it has computed the merged state and
+        written the corresponding secrets to the keychain. One `_locked_write`
+        keeps the swap atomic under the same flock as every other mutation
+        (N6/N8) — an interrupted apply leaves the prior consistent file intact.
+        """
+        with self._locked_write() as data:
+            data["entries"] = [e.to_dict() for e in entries]
+            data["tombstones"] = list(tombstones)
 
     # ---------- internal ----------
 
     def _read(self) -> dict:
         if not self.paths.data_json.exists():
-            return {"schema_version": SCHEMA_VERSION, "entries": []}
+            return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
         raw = self.paths.data_json.read_text()
         if not raw.strip():
-            return {"schema_version": SCHEMA_VERSION, "entries": []}
+            return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
         data = json.loads(raw)
         sv = data.get("schema_version", 0)
         if sv > SCHEMA_VERSION:
@@ -106,14 +130,19 @@ class MetadataStore:
             )
         if sv < SCHEMA_VERSION:
             data = self._migrate(data, sv)
+        data.setdefault("tombstones", [])
         return data
 
     def _migrate(self, data: dict, from_version: int) -> dict:
-        # No older versions exist yet; reserved for future schema bumps.
-        # Keep a backup on any migration.
+        # Back up the pre-migration file ONCE (guarded by existence), so the
+        # lock-free reads that call _read() don't re-copy on every call. The
+        # actual v2 persistence happens on the next _locked_write.
         bak = self.paths.root / f"data.v{from_version}.json.bak"
-        if self.paths.data_json.exists():
+        if self.paths.data_json.exists() and not bak.exists():
             shutil.copy2(self.paths.data_json, bak)
+        # 1 -> 2: introduce the tombstones container (lossless; entries unchanged).
+        if from_version < 2:
+            data.setdefault("tombstones", [])
         data["schema_version"] = SCHEMA_VERSION
         return data
 

@@ -82,7 +82,39 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/env-names" and method == "GET":
         return _env_names(handler)
 
+    if route == "/api/sync/status" and method == "GET":
+        return _sync_action(handler, lambda: _sync_mod().web_status(paths))
+    if route == "/api/sync/push" and method == "POST":
+        return _sync_action(handler, lambda: _sync_mod().web_push(paths))
+    if route == "/api/sync/pull" and method == "POST":
+        return _sync_action(handler, lambda: _sync_mod().web_pull(paths))
+    if route == "/api/sync/mode" and method == "POST":
+        mode = (json.loads(body or b"{}").get("mode") or "")
+        return _sync_action(handler, lambda: _sync_mod().web_set_mode(paths, mode))
+
     handler._send_json(404, {"error": "not found"})
+
+
+def _sync_mod():
+    from keys_keeper import cli_sync
+    return cli_sync
+
+
+def _sync_action(handler, fn) -> None:
+    """Run a sync web action; map expected failures to safe JSON errors.
+
+    Error strings here are our own (endpoint/exception-type), never a secret.
+    """
+    from keys_keeper.config import SyncConfigError
+    from keys_keeper.backend import KeychainError
+    from keys_keeper.crypto import BadPassword
+    from keys_keeper.sync_remote import AuthError, TransportError
+    try:
+        handler._send_json(200, fn())
+    except (SyncConfigError, KeychainError) as e:
+        handler._send_json(400, {"error": str(e)})
+    except (AuthError, TransportError, BadPassword) as e:
+        handler._send_json(502, {"error": str(e)})
 
 
 def _env_names(handler) -> None:

@@ -52,6 +52,12 @@ class Paths:
         # AES-256-GCM, unlocked by KEYS_KEEPER_MASTER_KEY. See backend_file.py.
         return self.root / "secrets.enc"
 
+    @property
+    def sync_state_json(self) -> Path:
+        # Non-secret sync bookkeeping (last-synced version, last-sync/auto times)
+        # for `keys sync status` + the auto-hook debounce. Never holds secrets.
+        return self.root / "sync-state.json"
+
     def audit_archive(self, year_month: str) -> Path:
         return self.root / f"audit.{year_month}.jsonl.gz"
 

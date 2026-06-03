@@ -956,6 +956,10 @@ def build_parser() -> argparse.ArgumentParser:
     app_uninstall.add_argument("--system", action="store_true", help="remove from /Applications (macOS only)")
     app_uninstall.set_defaults(func=cmd_app_uninstall)
 
+    # sync — S3 cloud backup/sync
+    from keys_keeper.cli_sync import register_sync
+    register_sync(sub)
+
     return p
 
 
