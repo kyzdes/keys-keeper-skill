@@ -112,3 +112,30 @@ def test_no_secret_in_any_sync_api_response(sync_web):
     joined = "\n".join(blobs)
     for s in (AKID, S3SECRET, PW, "sk-AAA"):
         assert s not in joined
+
+
+def test_web_setup_configures_and_stores_secrets(sync_web):
+    import json
+    from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_SECRET
+    body = json.dumps({
+        "endpoint": "https://s3.example.com", "bucket": "b",
+        "access_key_id": AKID, "secret_key": S3SECRET, "passphrase": PW,
+        "region": "auto", "prefix": "kk", "mode": "manual",
+    }).encode()
+    h = _call("POST", "/api/sync/setup", body=body)
+    assert h.status == 200 and h.body["ok"] is True
+    # secrets landed in the keychain, not the response or config
+    assert sync_web.backend.get(SYNC_SECRET).unseal() == S3SECRET
+    assert sync_web.backend.get(SYNC_ACCESS).unseal() == AKID
+    cfg = load_sync_config(Paths())
+    assert cfg.mode == "manual" and cfg.bucket == "b" and cfg.region == "auto"
+    raw = str(h.body) + Paths().config_toml.read_text()
+    for s in (S3SECRET, PW, AKID):
+        assert s not in raw
+
+
+def test_web_setup_missing_fields_is_400(sync_web):
+    import json
+    h = _call("POST", "/api/sync/setup",
+              body=json.dumps({"endpoint": "https://x", "bucket": "b"}).encode())
+    assert h.status == 400 and "error" in h.body

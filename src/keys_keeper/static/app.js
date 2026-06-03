@@ -759,5 +759,110 @@
       await api('/api/shutdown', { method: 'POST' });
       document.body.innerHTML = '<div class="curtain"><div class="glyph">K</div><div class="title">Server stopped</div><div class="sub">Re-run <span class="mono">keys serve</span> to restart.</div></div>';
     };
+
+    // --- cloud sync (S3) ---
+    const syncBody = document.getElementById('sync-body');
+    const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const SYNC_MODES = ['off', 'manual', 'auto'];
+    const modeOpts = sel => SYNC_MODES.map(m => `<option value="${m}"${m === sel ? ' selected' : ''}>${m}</option>`).join('');
+    const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : null });
+    const trimVal = id => (document.getElementById(id).value || '').trim();
+    const rawVal = id => document.getElementById(id).value || '';  // secrets: never trim
+    const setSyncMsg = t => { const m = document.getElementById('sync-msg'); if (m) m.textContent = t; };
+
+    function syncFormHTML(p) {
+      p = p || {};
+      return `
+        <div class="field-section-title">${p.configured ? 'reconfigure' : 'connect an s3 bucket'}</div>
+        <div class="form-row"><div class="label">endpoint <span class="req">*</span></div>
+          <input class="text-input" id="sf-endpoint" placeholder="https://<acct>.r2.cloudflarestorage.com" value="${escH(p.endpoint)}"></div>
+        <div class="form-row"><div class="label">bucket <span class="req">*</span></div>
+          <input class="text-input" id="sf-bucket" value="${escH(p.bucket)}"></div>
+        <div class="form-row"><div class="label">access key id <span class="req">*</span></div>
+          <input class="text-input" id="sf-akid" autocomplete="off" value="${escH(p.akid)}"></div>
+        <div class="form-row"><div class="label">secret key <span class="req">*</span></div>
+          <input class="text-input" id="sf-secret" type="password" autocomplete="new-password"></div>
+        <div class="form-row"><div class="label">passphrase <span class="req">*</span></div>
+          <input class="text-input" id="sf-pass" type="password" autocomplete="new-password" placeholder="encrypts the cloud copy"></div>
+        <div class="form-row"><div class="label">region</div>
+          <input class="text-input" id="sf-region" value="${escH(p.region || 'us-east-1')}"></div>
+        <div class="form-row"><div class="label">prefix</div>
+          <input class="text-input" id="sf-prefix" value="${escH(p.prefix || 'keys-keeper')}"></div>
+        <div class="form-row"><div class="label">addressing</div>
+          <select class="text-input" id="sf-addr"><option value="path"${(p.addressing || 'path') === 'path' ? ' selected' : ''}>path</option><option value="virtual"${p.addressing === 'virtual' ? ' selected' : ''}>virtual</option></select></div>
+        <div class="form-row"><div class="label">mode</div>
+          <select class="text-input" id="sf-mode">${modeOpts(p.mode || 'manual')}</select></div>
+        <div class="row gap-4 sync-actions">
+          <button class="btn btn-primary" id="sf-connect">${p.configured ? 'Save' : 'Connect'}</button>
+          ${p.configured ? '<button class="btn btn-ghost btn-sm" id="sf-cancel">Cancel</button>' : ''}
+          <span class="mono sync-msg" id="sync-msg"></span>
+        </div>
+        <div class="sync-note">Credentials go straight to your OS keychain over this loopback-only admin — never written to config or shown again.</div>`;
+    }
+
+    function syncStatusHTML(s) {
+      const rv = s.remote_version == null ? '—' : s.remote_version;
+      const lv = s.local_synced == null ? '—' : s.local_synced;
+      return `
+        <div class="kv-row"><span class="key">mode</span><span class="val">${escH(s.mode)}</span></div>
+        <div class="kv-row"><span class="key">bucket</span><span class="val">${escH(s.bucket)}</span></div>
+        <div class="kv-row"><span class="key">endpoint</span><span class="val mono">${escH(s.endpoint)}</span></div>
+        <div class="kv-row"><span class="key">remote version</span><span class="val">${rv}</span></div>
+        <div class="kv-row"><span class="key">local synced</span><span class="val">${lv}</span></div>
+        <div class="kv-row"><span class="key">local changes</span><span class="val ${s.dirty ? 'danger' : 'success'}">${s.dirty ? 'yes — push to publish' : 'in sync'}</span></div>
+        ${s.reachable === false ? `<div class="kv-row"><span class="key">remote</span><span class="val danger">unreachable (${escH(s.note)})</span></div>` : ''}
+        <div class="row gap-4 sync-actions">
+          <select class="text-input sync-mode-sel" id="sync-mode">${modeOpts(s.mode)}</select>
+          <button class="btn" id="sync-pull">Pull</button>
+          <button class="btn btn-primary" id="sync-push">Sync now</button>
+          <button class="btn btn-ghost btn-sm" id="sync-reconfig">Reconfigure</button>
+          <span class="mono sync-msg" id="sync-msg"></span>
+        </div>`;
+    }
+
+    async function syncRefresh() {
+      let s;
+      try { s = await api('/api/sync/status'); } catch { syncBody.textContent = 'status unavailable'; return; }
+      if (s.configured) { syncBody.innerHTML = syncStatusHTML(s); wireSyncStatus(s); }
+      else { syncBody.innerHTML = syncFormHTML({ mode: s.mode === 'off' ? 'manual' : s.mode }); wireSyncForm(); }
+    }
+
+    async function runSync(path, verb) {
+      setSyncMsg(verb + '…');
+      try { const r = await api(path, post()); setSyncMsg(`${verb} ${r.synced ?? r.merged ?? 0} change(s)`); syncRefresh(); }
+      catch (err) { setSyncMsg(err.message); }
+    }
+
+    function wireSyncStatus(s) {
+      document.getElementById('sync-mode').onchange = async e => {
+        try { await api('/api/sync/mode', post({ mode: e.target.value })); setSyncMsg('mode → ' + e.target.value); }
+        catch (err) { setSyncMsg(err.message); }
+      };
+      document.getElementById('sync-pull').onclick = () => runSync('/api/sync/pull', 'pulled');
+      document.getElementById('sync-push').onclick = () => runSync('/api/sync/push', 'synced');
+      document.getElementById('sync-reconfig').onclick = () => {
+        syncBody.innerHTML = syncFormHTML({ ...s, akid: '', configured: true });
+        wireSyncForm();
+      };
+    }
+
+    function wireSyncForm() {
+      const connect = document.getElementById('sf-connect');
+      const cancel = document.getElementById('sf-cancel');
+      if (cancel) cancel.onclick = syncRefresh;
+      connect.onclick = async () => {
+        const payload = {
+          endpoint: trimVal('sf-endpoint'), bucket: trimVal('sf-bucket'),
+          access_key_id: trimVal('sf-akid'), secret_key: rawVal('sf-secret'),
+          passphrase: rawVal('sf-pass'), region: trimVal('sf-region'),
+          prefix: trimVal('sf-prefix'), addressing: trimVal('sf-addr'), mode: trimVal('sf-mode'),
+        };
+        connect.disabled = true; setSyncMsg('connecting…');
+        try { await api('/api/sync/setup', post(payload)); syncRefresh(); }
+        catch (err) { setSyncMsg(err.message); connect.disabled = false; }
+      };
+    }
+
+    syncRefresh();
   }
 })();

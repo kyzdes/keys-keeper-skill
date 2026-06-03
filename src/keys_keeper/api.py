@@ -82,6 +82,9 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/env-names" and method == "GET":
         return _env_names(handler)
 
+    if route == "/api/sync/setup" and method == "POST":
+        data = json.loads(body or b"{}")
+        return _sync_action(handler, lambda: _sync_mod().web_setup(paths, data))
     if route == "/api/sync/status" and method == "GET":
         return _sync_action(handler, lambda: _sync_mod().web_status(paths))
     if route == "/api/sync/push" and method == "POST":

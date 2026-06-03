@@ -326,6 +326,40 @@ def web_set_mode(paths: Paths, mode: str) -> dict:
     return {"ok": True, "mode": mode}
 
 
+def web_setup(paths: Paths, data: dict) -> dict:
+    """Configure S3 from the web admin. Secrets (secret key, passphrase) are
+    posted over the loopback+token-gated channel straight into the keychain;
+    they are never echoed back or written to config."""
+    endpoint = (data.get("endpoint") or "").strip()
+    bucket = (data.get("bucket") or "").strip()
+    akid = (data.get("access_key_id") or "").strip()
+    secret = data.get("secret_key") or ""          # not trimmed — it's a secret
+    passphrase = data.get("passphrase") or ""
+    if not (endpoint and bucket and akid and secret and passphrase):
+        raise SyncConfigError(
+            "endpoint, bucket, access key id, secret key and passphrase are all required"
+        )
+    cfg = SyncConfig(
+        mode=(data.get("mode") or "manual"),
+        endpoint=endpoint, bucket=bucket,
+        region=(data.get("region") or "us-east-1").strip(),
+        prefix=(data.get("prefix") or "keys-keeper").strip(),
+        addressing=(data.get("addressing") or "path"),
+        insecure=bool(data.get("insecure")),
+    ).with_device_id()
+    cfg.validate()
+    backend = build_backend()
+    backend.set(SYNC_ACCESS, akid)
+    backend.set(SYNC_SECRET, secret)
+    backend.set(SYNC_PASS, passphrase)
+    remote = _build_remote(cfg, backend)
+    remote.head_object("HEAD")                      # probe credentials (AuthError if bad)
+    cfg = replace(cfg, cas_supported=remote.probe_cas())
+    save_sync_config(cfg, paths)
+    AuditLog(paths).record(op="sync.setup", name="<all>", id_="-", file_target=cfg.endpoint)
+    return {"ok": True, "mode": cfg.mode, "cas_supported": cfg.cas_supported}
+
+
 # ---------------- registration ----------------
 
 def register_sync(sub) -> None:
