@@ -80,6 +80,7 @@ class WebVaultServer:
         self.port = port
         self.multi_tenant = multi_tenant
         self.register_token = register_token
+        self.is_loopback = host in ("127.0.0.1", "localhost", "::1", "[::1]")
         self.accounts = AccountStore(data_dir / "accounts.json")
         self.sessions = SessionStore(idle_sec=idle_sec)
         self.params_secret = secrets.token_bytes(32)   # for anti-enumeration fake salts
@@ -116,6 +117,12 @@ class WebVaultServer:
         self.bound_port = httpd.socket.getsockname()[1]
         scheme = "https" if self.certfile else "http"
         print(f"keys-keeper web vault on {scheme}://{self.host}:{self.bound_port}/")
+        if not self.multi_tenant and self.register_token is None and not self.is_loopback:
+            print("  ! registration is DISABLED (single-tenant on a public host with "
+                  "no --register-token). Set --register-token to allow sign-up.")
+        if not self.certfile and not self.is_loopback:
+            print("  ! no TLS configured — put an HTTPS reverse proxy in front "
+                  "(or pass --certfile/--keyfile).")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
@@ -218,6 +225,15 @@ def _make_handler(srv: "WebVaultServer"):
             self._json(200, {"auth_salt": fake, "auth_iters": _AUTH_ITERS_DEFAULT})
 
         def _auth_register(self):
+            # Fail closed: in single-tenant mode, every account maps to the SAME
+            # (operator's) vault prefix, so open registration on a public host
+            # would let anyone pull the operator's encrypted blob. Require a token
+            # there. Loopback (local demo) and multi-tenant (isolated tenants/<uid>/
+            # signup) may register without a token.
+            if (srv.register_token is None and not srv.multi_tenant
+                    and not srv.is_loopback):
+                return self._json(403, {"error": "registration requires --register-token "
+                                                 "on a public single-tenant host"})
             if srv.register_token is not None:
                 if not hmac.compare_digest(
                         self.headers.get("X-Register-Token", ""), srv.register_token):

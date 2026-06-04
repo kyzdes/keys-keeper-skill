@@ -177,6 +177,27 @@ def test_auth_params_does_not_leak_account_existence(vaultsrv):
     assert st == 200 and len(json.loads(b)["auth_salt"]) == 32
 
 
+def test_single_tenant_public_host_closes_registration(tmp_path, monkeypatch):
+    # Security fix: single-tenant + public host + no token => registration closed
+    # (else an anon user could pull the operator's encrypted vault).
+    monkeypatch.setattr(server_mod, "default_base_prefix", lambda: "keys-keeper")
+    srv = WebVaultServer(data_dir=tmp_path / "wv2", host="0.0.0.0", port=0,
+                         register_token=None)  # public, no token, single-tenant
+    srv._s3_base = object()
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), server_mod._make_handler(srv))
+    srv.bound_port = httpd.socket.getsockname()[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        op = _opener()
+        salt = secrets.token_bytes(16).hex()
+        st, _, _ = _call(op, srv.bound_port, "POST", "/auth/register",
+                         {"uid": "x", "auth_salt": salt, "auth_iters": AUTH_ITERS,
+                          "auth_hash": _ah(PW, salt, AUTH_ITERS)})
+        assert st == 403       # fail closed — no anonymous account creation
+    finally:
+        httpd.shutdown()
+
+
 def test_server_module_never_imports_crypto():
     # The proxy must never be able to decrypt. Importing it must not pull in crypto.
     code = ("import keys_keeper.webvault.server, sys; "
