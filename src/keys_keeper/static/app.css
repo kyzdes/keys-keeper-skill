@@ -1169,11 +1169,12 @@ body {
 /* ========== SETTINGS (S6) ========== */
 .settings-shell {
   padding: 22px 28px;
-  max-width: 980px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
+.settings-inner { max-width: 980px; }
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

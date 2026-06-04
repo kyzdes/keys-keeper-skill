@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="settings-shell">
+  <div class="settings-inner">
   <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600">Settings</div>
   <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-3);margin-top:2px">Server status, security, and maintenance</div>
   <div class="settings-grid">
@@ -27,6 +28,7 @@
         <button class="btn btn-danger" id="shutdown-btn">Shutdown now</button>
       </div>
     </div>
+  </div>
   </div>
 </div>
 {% endblock %}
