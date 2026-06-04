@@ -960,6 +960,10 @@ def build_parser() -> argparse.ArgumentParser:
     from keys_keeper.cli_sync import register_sync
     register_sync(sub)
 
+    # webvault — zero-knowledge web vault server
+    from keys_keeper.webvault.cli import register_webvault
+    register_webvault(sub)
+
     return p
 
 

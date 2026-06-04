@@ -6,6 +6,23 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.7.0] — 2026-06-05
+
+### Added
+
+- **Zero-knowledge web vault (`keys webvault serve`) — read-only v1.** Open your vault from a browser. Because the cloud copy is a self-contained `KK1` blob (`PBKDF2-600k → AES-256-GCM`, all native to WebCrypto), the browser fetches it and **decrypts it in-page with your passphrase** — the passphrase and plaintext never reach the server. The server is a hardened, authenticated **ciphertext shuttle** that reuses `S3Remote` and never imports `crypto` (a test asserts it). The browser is a *third client* on the same encrypted blob the CLI + local admin sync to; this generalises the project's promise from "an agent can't leak your secrets" to "**the server can't**." v1 is read-only (unlock → view/search → reveal/copy → idle auto-lock); add/edit stay in the CLI/local admin.
+  - **Auth split (multi-tenant-ready, blob unchanged).** Login sends an *auth hash* derived from the passphrase with a **different** salt; the server stores only stdlib-`scrypt(auth_hash)`. It can authenticate you without being able to decrypt your vault. The blob key stays `PBKDF2(passphrase, blob.salt, 600k)` exactly as the CLI writes it, so the same blob is readable everywhere. Per-account S3 prefix is derived **server-side from the session**, never from the request.
+  - **Hardening for an internet-exposed, in-DOM secret app.** Strict CSP with **no `unsafe-inline`** + `require-trusted-types-for 'script'`, all DOM via `textContent` (never `innerHTML`), SRI on the bundle, self-hosted fonts, HSTS + `nosniff`/`DENY`/`no-referrer`/COOP/CORP, `no-store`, `HttpOnly; SameSite=Strict; Secure` cookies, reveal-on-demand, clipboard auto-clear, idle auto-lock, **non-extractable** `CryptoKey`, session anti-enumeration. The honest caveat of any web vault — "trust the server to serve honest JS" — is answered by self-hosting + the published SRI hash, not overclaimed.
+  - **Zero new dependencies** (stdlib `http.server` + `hashlib.scrypt` + `S3Remote`; the frontend is vanilla WebCrypto). Ships as `docs/webvault/Dockerfile`; falls back to the local `keys sync` config for a quick self-host demo.
+
+### Internal
+
+- New subpackage `keys_keeper/webvault/` (`server.py`, `store.py`, `remote.py`, `cli.py`) + a static SPA (`index.html`, `kkcrypto.mjs` WebCrypto port, `vault.mjs`, `vault.css`, reused `app.css`). Tests: a Node known-answer test that the browser port decrypts a CLI-produced blob byte-identically (`test_webvault_crypto.py`), and proxy tests for auth gating, session-derived namespacing, key validation, hardened headers, and the never-decrypts invariant (`test_webvault_server.py`). Test count: 307 passing + 13 platform-gated skips on macOS.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.6.0...v0.7.0)
+
+---
+
 ## [0.6.0] — 2026-06-03
 
 ### Added
