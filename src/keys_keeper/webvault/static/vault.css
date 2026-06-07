@@ -2,8 +2,11 @@
    unlock screen, the entry list, and the reveal/lock affordances. No inline
    styles anywhere (strict CSP). */
 
+html, body { height: 100%; margin: 0; }
 .kkv-shell {
-  min-height: 100vh;
+  height: 100vh;          /* definite height so the list can own the scroll */
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -60,7 +63,7 @@
 .kkv-lockpill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
 
 /* ---- list ---- */
-.kkv-list { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+.kkv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 40px; }
 .kkv-inner { max-width: 760px; margin: 0 auto; }
 .kkv-empty { color: var(--text-3); padding: 40px; text-align: center; font-family: 'JetBrains Mono', monospace; }
 .kkv-row {
