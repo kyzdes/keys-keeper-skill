@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 from keys_keeper._locking import lock_exclusive, unlock
 from keys_keeper.models import Entry, EntryType, now_iso
-from keys_keeper.paths import Paths
+from keys_keeper.paths import Paths, ensure_private_dir
 
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
@@ -149,7 +149,9 @@ class MetadataStore:
     @contextmanager
     def _locked_write(self) -> Iterator[dict]:
         """Acquire exclusive lock, read, yield mutable dict, write atomically."""
-        self.paths.root.mkdir(parents=True, exist_ok=True)
+        # 0700 even when a store write is the process's first filesystem touch
+        # (before paths.ensure()), so data.json's parent is never world-readable.
+        ensure_private_dir(self.paths.root)
         # Lock on a separate file so we can rename data.json atomically without
         # invalidating the lock fd. On Windows the mode bits are ignored; the
         # lock file holds no secrets so this is acceptable.

@@ -24,7 +24,7 @@ from typing import Iterator
 
 from keys_keeper import crypto
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
-from keys_keeper.paths import Paths
+from keys_keeper.paths import Paths, ensure_private_dir
 from keys_keeper._locking import lock_exclusive, unlock
 
 _MASTER_ENV = "KEYS_KEEPER_MASTER_KEY"
@@ -100,7 +100,9 @@ class EncryptedFileBackend(KeychainBackend):
         never lose each other's updates. The lock lives on a separate file so the
         atomic rename of secrets.enc doesn't invalidate the lock fd.
         """
-        self.paths.root.mkdir(parents=True, exist_ok=True)
+        # 0700 even when this is the process's first filesystem touch, so the
+        # encrypted store's parent dir is never created world-readable.
+        ensure_private_dir(self.paths.root)
         lock_path = self.paths.root / "secrets.lock"
         lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
         try:

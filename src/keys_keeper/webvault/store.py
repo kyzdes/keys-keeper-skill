@@ -28,10 +28,19 @@ _SCRYPT_P = 1
 _SCRYPT_DKLEN = 32
 _SCRYPT_MAXMEM = 64 * 1024 * 1024
 
+# Bound concurrent scrypt work: each call transiently allocates ~16 MiB, so an
+# unauthenticated flood of /auth/login + /auth/register could otherwise spawn
+# unbounded large allocations and exhaust memory. A module-level semaphore caps
+# how many scrypt computations run at once; excess requests block briefly (and
+# the per-IP rate limiter in the server sheds the real flood before it gets here).
+_SCRYPT_CONCURRENCY = max(2, min(8, (os.cpu_count() or 2)))
+_scrypt_gate = threading.Semaphore(_SCRYPT_CONCURRENCY)
+
 
 def _scrypt(auth_hash_hex: str, salt: bytes) -> bytes:
-    return scrypt(bytes.fromhex(auth_hash_hex), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R,
-                  p=_SCRYPT_P, dklen=_SCRYPT_DKLEN, maxmem=_SCRYPT_MAXMEM)
+    with _scrypt_gate:
+        return scrypt(bytes.fromhex(auth_hash_hex), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R,
+                      p=_SCRYPT_P, dklen=_SCRYPT_DKLEN, maxmem=_SCRYPT_MAXMEM)
 
 
 class AccountError(RuntimeError):

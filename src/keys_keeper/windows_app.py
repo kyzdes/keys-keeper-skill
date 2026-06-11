@@ -44,17 +44,43 @@ def _resolve_keys_binary() -> Path:
     return Path(found)
 
 
+def _ps_dq_escape(value: str) -> str:
+    """Escape a string for safe interpolation into a PowerShell DOUBLE-quoted
+    string literal (`"..."`).
+
+    Inside a PS double-quoted string the metacharacters are the backtick (the
+    escape char), the closing double-quote, and `$` (variable/subexpression
+    interpolation). Escaping the backtick FIRST is essential — otherwise the
+    backticks we add for `"` and `$` would themselves get doubled.
+
+    Without this, a path or description containing `"` would terminate the
+    string early and let the remainder be parsed as PowerShell — i.e. command
+    injection via a crafted target/workdir/description.
+    """
+    return (
+        value.replace("`", "``")  # must be first
+        .replace('"', '`"')
+        .replace("$", "`$")
+    )
+
+
 def _create_shortcut_via_powershell(
     lnk_path: Path, target: Path, args: str, workdir: Path, description: str
 ) -> None:
-    # Use here-string to avoid quoting hell. PowerShell handles the rest.
+    # Every interpolated value is escaped for the PS double-quoted context so a
+    # stray quote/backtick in a path can't break out into executable PowerShell.
+    lnk_e = _ps_dq_escape(str(lnk_path))
+    target_e = _ps_dq_escape(str(target))
+    args_e = _ps_dq_escape(args)
+    workdir_e = _ps_dq_escape(str(workdir))
+    description_e = _ps_dq_escape(description)
     script = (
         '$ws = New-Object -ComObject WScript.Shell\n'
-        f'$lnk = $ws.CreateShortcut("{lnk_path}")\n'
-        f'$lnk.TargetPath = "{target}"\n'
-        f'$lnk.Arguments = "{args}"\n'
-        f'$lnk.WorkingDirectory = "{workdir}"\n'
-        f'$lnk.Description = "{description}"\n'
+        f'$lnk = $ws.CreateShortcut("{lnk_e}")\n'
+        f'$lnk.TargetPath = "{target_e}"\n'
+        f'$lnk.Arguments = "{args_e}"\n'
+        f'$lnk.WorkingDirectory = "{workdir_e}"\n'
+        f'$lnk.Description = "{description_e}"\n'
         '$lnk.Save()\n'
     )
     subprocess.run(

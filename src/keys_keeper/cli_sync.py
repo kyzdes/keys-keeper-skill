@@ -38,6 +38,35 @@ SYNC_PASS = "kk:sync-passphrase"
 
 _DEBOUNCE_SEC = int(os.environ.get("KEYS_KEEPER_SYNC_DEBOUNCE_SEC", "600"))
 
+# Zero-knowledge sync reduces the security of the whole cloud copy to the
+# entropy of this one passphrase, so we refuse to let a user pick a trivially
+# weak one. This is a floor, not a strength meter.
+MIN_SYNC_PASSPHRASE_LEN = 12
+
+
+class WeakPassphraseError(SyncConfigError):
+    """The backup passphrase is too weak to protect a zero-knowledge cloud copy."""
+
+
+def _validate_passphrase_strength(passphrase: str) -> None:
+    """Reject passphrases that are too short or trivially patterned.
+
+    Raised as SyncConfigError so the existing _loud / web error handling
+    surfaces it cleanly (exit 1 / HTTP 400) without leaking the value.
+    """
+    if len(passphrase) < MIN_SYNC_PASSPHRASE_LEN:
+        raise WeakPassphraseError(
+            f"backup passphrase must be at least {MIN_SYNC_PASSPHRASE_LEN} "
+            f"characters (got {len(passphrase)})"
+        )
+    stripped = passphrase.strip()
+    if not stripped or len(set(stripped)) < 4:
+        # all-whitespace, or a near-constant string like "aaaaaaaaaaaa" /
+        # "111111111111" — far too little entropy regardless of length.
+        raise WeakPassphraseError(
+            "backup passphrase is too simple — use a longer, more varied phrase"
+        )
+
 
 # ---------------- builders (monkeypatched in tests) ----------------
 
@@ -103,6 +132,11 @@ def cmd_sync_setup(args: argparse.Namespace) -> int:
     p2 = getpass.getpass("Confirm passphrase: ")
     if p1 != p2 or not p1:
         sys.stderr.write("error: passphrases do not match (or empty)\n")
+        return 1
+    try:
+        _validate_passphrase_strength(p1)
+    except WeakPassphraseError as e:
+        sys.stderr.write(f"error: {e}\n")
         return 1
     backend.set(SYNC_ACCESS, args.access_key_id)
     backend.set(SYNC_SECRET, secret)
@@ -339,6 +373,7 @@ def web_setup(paths: Paths, data: dict) -> dict:
         raise SyncConfigError(
             "endpoint, bucket, access key id, secret key and passphrase are all required"
         )
+    _validate_passphrase_strength(passphrase)  # raises SyncConfigError -> HTTP 400
     cfg = SyncConfig(
         mode=(data.get("mode") or "manual"),
         endpoint=endpoint, bucket=bucket,

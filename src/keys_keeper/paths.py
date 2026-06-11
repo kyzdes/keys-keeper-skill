@@ -62,4 +62,19 @@ class Paths:
         return self.root / f"audit.{year_month}.jsonl.gz"
 
     def ensure(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.root)
+
+
+def ensure_private_dir(directory: Path) -> None:
+    """Create ``directory`` (and parents) with 0700 on POSIX.
+
+    ``mkdir(mode=...)`` is masked by the process umask, so it cannot be
+    relied on to produce 0700 — we mkdir, then explicitly chmod to 0o700.
+    On Windows POSIX mode bits are meaningless; we skip the chmod there so
+    we don't break the platform. On POSIX a chmod failure is surfaced
+    (not swallowed) because a world-accessible config dir would leak the
+    audit log and other per-user state.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name == "posix":
+        os.chmod(directory, 0o700)

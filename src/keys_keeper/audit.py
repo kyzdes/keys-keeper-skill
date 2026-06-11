@@ -8,7 +8,22 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator
-from keys_keeper.paths import Paths
+from keys_keeper.paths import Paths, ensure_private_dir
+
+
+def _private_opener(path: str, flags: int) -> int:
+    """``open()`` opener that creates new files mode 0600 on POSIX.
+
+    The mode passed to ``os.open`` only applies when the file is *created*
+    and is masked by the umask, so we also chmod after open on POSIX to
+    guarantee 0600 even if the file already existed with looser bits.
+    On Windows the mode arg is ignored; we skip the chmod so the platform
+    isn't broken. Mirrors how store.py opens the lock file / data.json.
+    """
+    fd = os.open(path, flags, 0o600)
+    if os.name == "posix":
+        os.fchmod(fd, 0o600)
+    return fd
 
 
 @dataclass
@@ -114,7 +129,7 @@ class AuditLog:
         success: bool = True,
         error: str | None = None,
     ) -> None:
-        self.paths.root.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.paths.root)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # parent pid is the caller (CLI was invoked by zsh / claude / etc)
         ppid = os.getppid()
@@ -129,7 +144,7 @@ class AuditLog:
             success=success,
             error=error,
         )
-        with open(self.paths.audit_jsonl, "a") as f:
+        with open(self.paths.audit_jsonl, "a", opener=_private_opener) as f:
             f.write(event.to_json() + "\n")
 
     def tail(self, n: int = 50) -> Iterator[dict]:
@@ -180,8 +195,13 @@ class AuditLog:
         first_ym = first_ev["ts"][:7]
         if first_ym == cur_ym:
             return
-        # archive the entire current file
+        # archive the entire current file. The rotated .gz holds the same
+        # sensitive metadata as the live log, so it must be 0600 too — open it
+        # through the private opener (gzip.open would inherit the umask, e.g.
+        # 0644) and wrap a GzipFile around the resulting 0600 handle.
         archive = self.paths.audit_archive(first_ym)
-        with open(self.paths.audit_jsonl, "rb") as src, gzip.open(archive, "wb") as dst:
+        with open(archive, "wb", opener=_private_opener) as raw, \
+                gzip.GzipFile(fileobj=raw, mode="wb") as dst, \
+                open(self.paths.audit_jsonl, "rb") as src:
             shutil.copyfileobj(src, dst)
         os.unlink(self.paths.audit_jsonl)

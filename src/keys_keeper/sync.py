@@ -229,6 +229,26 @@ class SyncStatus:
     dirty: bool
 
 
+class RollbackDetected(TransportError):
+    """A normal pull/push saw a remote tip OLDER than the highest version this
+    client has ever adopted. A compromised/MITM bucket can silently repoint HEAD
+    (or swap a snapshot pointer) to an older AUTHENTIC commit to resurrect
+    deleted entries. We refuse it on the normal path; `keys sync rollback` is the
+    one explicit escape hatch.
+
+    Subclasses TransportError so the CLI/web _loud wrappers already surface it as
+    a clean error instead of a traceback.
+    """
+
+
+class SnapshotIntegrityError(TransportError):
+    """A decrypted snapshot's recomputed content hash did not match the
+    entries_hash recorded in the commit object the client fetched. The blob is
+    AEAD-authentic on its own, but it is NOT the snapshot this commit promised —
+    a swapped/mismatched pointer. Refuse it.
+    """
+
+
 class SyncEngine:
     """Drives push/pull/rollback/gc over a RemoteStore (S3Remote or a fake)."""
 
@@ -286,10 +306,35 @@ class SyncEngine:
             commit = json.loads(self.remote.get_object(vkey(n)))
         return _Tip(n, commit["snapshot"], commit.get("entries_hash"))
 
-    # -- apply a remote snapshot into the local vault --
-    def _apply_remote(self, tip: _Tip, passphrase: str) -> int:
+    # -- snapshot integrity: bind the (authenticated) blob to the commit meta --
+    def _decrypt_verified(self, tip: _Tip, passphrase: str) -> dict:
+        """Decrypt the snapshot the commit points at, then RECOMPUTE its content
+        hash and require it to equal the commit's entries_hash.
+
+        AES-GCM already proves the blob was sealed by someone who knew the
+        passphrase, but it does NOT prove THIS blob is the one THIS commit
+        promised: a hostile bucket can point a commit at an older authentic
+        snapshot. Re-deriving the hash and comparing it to the commit metadata
+        the client already fetched closes that gap — with no change to the
+        ciphertext/AAD format (the hash is computed client-side over plaintext).
+        Legacy commits with no entries_hash (None) can't be checked, so they're
+        accepted as before.
+        """
         blob = self.remote.get_object(tip.snapshot)
         payload = decrypt_snapshot(blob, passphrase=passphrase)
+        if tip.entries_hash is not None:
+            actual = content_hash(payload)
+            if actual != tip.entries_hash:
+                raise SnapshotIntegrityError(
+                    f"snapshot content hash mismatch for version {tip.version}: "
+                    f"the commit points at a snapshot that is not the one it "
+                    f"recorded (possible rollback/pointer-swap); refusing to apply"
+                )
+        return payload
+
+    # -- apply a remote snapshot into the local vault --
+    def _apply_remote(self, tip: _Tip, passphrase: str) -> int:
+        payload = self._decrypt_verified(tip, passphrase)
         remote_entries = [Entry.from_dict(r) for r in payload["entries"]]
         remote_secrets = {
             r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
@@ -337,11 +382,31 @@ class SyncEngine:
                 except KeychainError:
                     pass
 
+    # -- anti-rollback watermark (monotonic highest-seen version) --
+    def _watermark(self) -> int | None:
+        v = self._read_state().get("highest_version")
+        return v if isinstance(v, int) else None
+
+    def _guard_not_rolled_back(self, tip: _Tip) -> None:
+        """Refuse a remote tip strictly older than the highest version this
+        client has ever adopted. First pull (no watermark) is always allowed.
+        The explicit `rollback()` path never calls this — it is the one
+        sanctioned way to move backwards.
+        """
+        wm = self._watermark()
+        if wm is not None and tip.version < wm:
+            raise RollbackDetected(
+                f"remote tip is version {tip.version} but this device has already "
+                f"adopted version {wm}; refusing a silent rollback. If this is "
+                f"intentional, run `keys sync rollback {tip.version}`."
+            )
+
     # -- public ops --
     def pull(self, passphrase: str) -> int:
         tip = self._current_tip()
         if tip is None:
             return 0
+        self._guard_not_rolled_back(tip)
         n = self._apply_remote(tip, passphrase)
         self._write_state(version=tip.version)
         return n
@@ -350,6 +415,8 @@ class SyncEngine:
         last_err = None
         for _ in range(self.max_retries):
             tip = self._current_tip()
+            if tip is not None:
+                self._guard_not_rolled_back(tip)
             pulled = self._apply_remote(tip, passphrase) if tip is not None else 0
             payload = build_snapshot_payload(self.store, self.backend)
             if tip is None and not payload["entries"] and not payload["tombstones"]:
@@ -365,7 +432,8 @@ class SyncEngine:
             return pulled + 1
         raise TransportError(f"push: exceeded {self.max_retries} retries ({last_err})")
 
-    def _try_commit(self, payload: dict, parent: int | None, passphrase: str) -> int | None:
+    def _try_commit(self, payload: dict, parent: int | None, passphrase: str,
+                    *, reset_watermark: bool = False) -> int | None:
         """One CAS attempt: write snapshot, then create the next version object
         with If-None-Match:*. Returns the new version, or None if it lost the
         race (caller retries)."""
@@ -389,7 +457,7 @@ class SyncEngine:
             self.remote.delete_object(snap_key)
             return None
         self._write_head(new_version, snap_key)
-        self._write_state(version=new_version)
+        self._write_state(version=new_version, reset_watermark=reset_watermark)
         self._gc_quiet()
         return new_version
 
@@ -402,7 +470,8 @@ class SyncEngine:
                 and winner.get("ts") == commit["ts"])
 
     def _commit_payload(self, payload: dict, passphrase: str,
-                        *, safe_ids: set[str] | None = None) -> int:
+                        *, safe_ids: set[str] | None = None,
+                        reset_watermark: bool = False) -> int:
         """Commit a fixed payload as a new version WITHOUT pre-merging the tip
         (used by rollback, which intentionally overrides the current state).
 
@@ -414,7 +483,8 @@ class SyncEngine:
             tip = self._tip_version()
             if safe_ids is not None and tip is not None:
                 self._guard_rollback_race(tip, passphrase, safe_ids)
-            v = self._try_commit(payload, tip, passphrase)
+            v = self._try_commit(payload, tip, passphrase,
+                                 reset_watermark=reset_watermark)
             if v is not None:
                 return v
         raise TransportError("commit: exceeded retries due to concurrent writers")
@@ -441,8 +511,13 @@ class SyncEngine:
         removal). Older history is left intact for a future rollback.
         """
         commit = json.loads(self.remote.get_object(vkey(version)))
-        blob = self.remote.get_object(commit["snapshot"])
-        payload = decrypt_snapshot(blob, passphrase=passphrase)
+        # Even on the explicit rollback path the snapshot must match its commit's
+        # recorded hash — this is the one place we deliberately move backwards, so
+        # a swapped pointer here would be the most dangerous. We do NOT apply the
+        # watermark guard (rollback is the sanctioned way to go back), only the
+        # content-integrity check.
+        target_tip = _Tip(version, commit["snapshot"], commit.get("entries_hash"))
+        payload = self._decrypt_verified(target_tip, passphrase)
         target_entries = [Entry.from_dict(r) for r in payload["entries"]]
         target_secrets = {r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
                           for r in payload["entries"]}
@@ -472,7 +547,11 @@ class SyncEngine:
         # commit so a concurrent peer-added entry isn't silently overwritten.
         local_payload = build_snapshot_payload(self.store, self.backend)
         safe_ids = target_ids | {t["id"] for t in tombs}
-        return self._commit_payload(local_payload, passphrase, safe_ids=safe_ids)
+        # The freshly published commit becomes the new high-water mark; reset it
+        # explicitly so a deliberate rollback re-anchors the monotonic guard
+        # rather than tripping it on the next pull.
+        return self._commit_payload(local_payload, passphrase, safe_ids=safe_ids,
+                                    reset_watermark=True)
 
     def status(self) -> SyncStatus:
         try:
@@ -552,12 +631,22 @@ class SyncEngine:
         except (ValueError, OSError):
             return {}
 
-    def _write_state(self, *, version: int | None = None, **extra) -> None:
+    def _write_state(self, *, version: int | None = None,
+                     reset_watermark: bool = False, **extra) -> None:
         if self.paths is None:
             return
         state = self._read_state()
         if version is not None:
             state["last_version"] = version
+            # Monotonic anti-rollback watermark: only ever moves UP on the normal
+            # path, so a later silent repoint to an older commit is detectable.
+            # `reset_watermark` (set only by the explicit rollback) lets the user
+            # deliberately move it back DOWN to the version they restored to.
+            cur = state.get("highest_version")
+            if reset_watermark:
+                state["highest_version"] = version
+            elif not isinstance(cur, int) or version > cur:
+                state["highest_version"] = version
         state["last_sync_at"] = now_iso()
         state.update(extra)
         self.paths.ensure()

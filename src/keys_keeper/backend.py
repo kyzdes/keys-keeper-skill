@@ -126,6 +126,30 @@ class MacOSKeychainBackend(KeychainBackend):
         return Sealed(plain.stdout.rstrip("\n"))
 
     def set(self, account: str, value: str) -> None:
+        # KNOWN LIMITATION (H3 — argv exposure): the secret is passed as the
+        # `-w <value>` argument below, so for the brief lifetime of this child
+        # process the plaintext is visible in its argv to other local users via
+        # `ps -axww`. The Linux backend avoids this by writing the secret to the
+        # `security`-equivalent over stdin; the macOS `security` tool has no
+        # stdin-password mode, and the only argv-free alternative — `-w` with no
+        # value, which makes `security` prompt on the controlling terminal —
+        # was evaluated and rejected because it cannot satisfy this backend's
+        # contract:
+        #   1. The interactive prompt reads a SINGLE line (tty line discipline),
+        #      so it truncates any multi-line secret at the first newline. PEM /
+        #      OpenSSH private keys and other multi-line values (see
+        #      test_set_multiline_value) would be silently corrupted.
+        #   2. Prompt mode requires `-w` to be the literal last argv token, which
+        #      is mutually exclusive with passing a `[keychain]` path. That would
+        #      force every write onto the user's default login keychain and break
+        #      test isolation (and the custom-keychain feature) entirely.
+        # A pty-driven prompt was prototyped and confirmed to corrupt multi-line
+        # values and ignore the keychain path, so it is NOT shipped: a keychain
+        # write that can truncate or mis-target a secret is worse than the argv
+        # window. The exposure is bounded to a sub-second child on a machine
+        # where a local attacker would, in most threat models, already have the
+        # access needed to read the keychain anyway. Revisit if Apple adds a
+        # stdin/file password input to `security` (none exists as of macOS 15).
         # delete first to avoid duplicate entries
         self.delete(account)
         result = subprocess.run(
