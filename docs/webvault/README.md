@@ -22,7 +22,17 @@ next unlock.
   Types, all DOM via `textContent` (never `innerHTML`), SRI on the bundle,
   self-hosted fonts, HSTS, `no-store`, reveal-on-demand, clipboard auto-clear,
   idle auto-lock, non-extractable `CryptoKey`, session-derived tenant prefix
-  (never from the request).
+  (never from the request). A per-IP sliding-window rate limiter sheds
+  `/auth/login` and `/auth/register` floods; a hard 64 KiB body cap rejects
+  oversized requests before they're read. The `Server` header is a static
+  `kkvault` — it doesn't leak the Python version.
+- **Behind a reverse proxy**: pass `--behind-proxy` (or `WEBVAULT_BEHIND_PROXY=1`)
+  so the rate limiter keys on the **real client IP** (the rightmost
+  `X-Forwarded-For` entry your proxy appended), not the proxy's loopback address
+  — otherwise every client collapses into one bucket and a single source can
+  lock out everyone. Same flag also lets the `Secure` cookie flag follow
+  `X-Forwarded-Proto=https`. Only enable it when a trusted proxy actually sits in
+  front; a direct client could otherwise spoof those headers.
 - **The one honest caveat** of *any* web vault: you must trust the server to
   serve honest JS. **Self-host** (then it's your own box) + verify the published
   SRI hash. We don't claim past this.
@@ -44,9 +54,17 @@ docker run -p 8333:8333 -v kkvault:/data \
 ```
 
 Put a TLS-terminating reverse proxy in front (or pass `--certfile/--keyfile`).
-`WEBVAULT_VAULT_PREFIX` must match the prefix your CLI syncs to so the web reads
-the same vault. Set `WEBVAULT_MULTI_TENANT=1` to namespace each account under
-`tenants/<uid>/` instead.
+When you run behind a proxy, also set `WEBVAULT_BEHIND_PROXY=1` (CLI:
+`--behind-proxy`) so the rate limiter keys on the real client IP and the `Secure`
+cookie flag follows `X-Forwarded-Proto`. `WEBVAULT_VAULT_PREFIX` must match the
+prefix your CLI syncs to so the web reads the same vault. Set
+`WEBVAULT_MULTI_TENANT=1` to namespace each account under `tenants/<uid>/`
+instead.
+
+Single-tenant registration is **closed by default**: pass
+`WEBVAULT_REGISTER_TOKEN` to gate sign-up with a token (as above), or — only on a
+trusted/local network — `WEBVAULT_ALLOW_OPEN_REGISTRATION=1` for token-less
+sign-up. Multi-tenant mode (isolated `tenants/<uid>/`) registers without a token.
 
 Locally, without env vars, the server falls back to your `keys sync` config +
 keychain creds — handy for trying it against your existing bucket:

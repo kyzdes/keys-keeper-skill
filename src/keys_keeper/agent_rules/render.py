@@ -22,14 +22,11 @@ from keys_keeper.agent_rules.canonical import (
 # falls back to these.
 CLAUDE_SKILL_NAME = "keys-keeper"
 CLAUDE_SKILL_DESCRIPTION = (
-    "Securely save/retrieve API keys, SSH keys, server credentials, and domain "
-    "info using the OS-native credential store (macOS Keychain / Windows "
-    "Credential Manager / Linux Secret Service, with an encrypted-file fallback "
-    "on headless servers) via the `keys` CLI. Use when the user mentions "
-    "saving, getting, or referencing secrets, API keys, tokens, SSH keys, "
-    "server addresses, or domain configs. Never produces plaintext secret "
-    "values in output — uses CLI commands that handle files and clipboard "
-    "directly."
+    "Securely save, retrieve, or reference API keys, SSH keys, server "
+    "credentials, and domain info via the `keys` CLI, without ever exposing "
+    "the plaintext value. Use when the user mentions saving, getting, "
+    "injecting, or referencing secrets, API keys, tokens, SSH keys, server "
+    "addresses, or domain configs."
 )
 
 # Cursor MDC frontmatter values. alwaysApply=true makes the rule fire on
@@ -72,7 +69,7 @@ def render_claude_skill_md(
         "\n"
         f"# {name}\n"
         "\n"
-        f"{common_body()}"
+        f"{common_body(include_examples_pointer=True)}"
     )
 
 

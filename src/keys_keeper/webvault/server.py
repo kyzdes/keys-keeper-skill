@@ -193,6 +193,10 @@ def _make_handler(srv: "WebVaultServer"):
         server_version = "kkvault"
         protocol_version = "HTTP/1.1"
 
+        def version_string(self):
+            # Don't leak the Python interpreter version in the Server header.
+            return "kkvault"
+
         def log_message(self, *a):  # no request logging (avoid leaking uids/paths)
             pass
 
@@ -224,6 +228,19 @@ def _make_handler(srv: "WebVaultServer"):
             """Content-Length missing-but-needed or malformed/negative (-> 400)."""
 
         def _client_ip(self) -> str:
+            # Behind a trusted reverse proxy the socket peer is the proxy itself, so
+            # every real client would collapse into ONE rate-limit bucket — letting a
+            # single attacker DoS-lock login/registration for everyone, and removing
+            # per-source throttling of online guessing. When the operator promises a
+            # trusted proxy (--behind-proxy / trust_forwarded) we instead take the
+            # RIGHTMOST X-Forwarded-For entry: the hop our proxy observed and appended
+            # (nginx $proxy_add_x_forwarded_for). Leftmost entries are attacker-
+            # controlled and must never be trusted. Same trust model as
+            # _client_is_https; assumes a single trusted proxy directly in front.
+            if srv.trust_forwarded:
+                parts = [p.strip() for p in self.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+                if parts:
+                    return parts[-1]
             return (self.client_address[0] if self.client_address else "?")
 
         def _body(self) -> bytes:

@@ -6,6 +6,21 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [0.7.1] — 2026-06-12
+
+### Security
+
+- **Web vault: the per-IP login/registration rate limiter is now correct behind a reverse proxy.** It previously keyed on the socket peer — always the proxy — so every client shared one bucket (a single source could DoS-lock auth for everyone, and online password guessing wasn't throttled per source). With `--behind-proxy` it now keys on the rightmost `X-Forwarded-For` hop (the one the trusted proxy appended; leftmost, client-spoofable entries are never trusted). (KI-023)
+- **Web vault: the `Server` response header no longer leaks the Python interpreter version** (it is now just `"kkvault"`). (KI-024)
+
+### Internal
+
+- Expanded web-vault proxy test coverage: session logout/idle-expiry, tampered-cookie rejection, whoami gating, multi-tenant prefix-from-session isolation, HEAD-rebuild + empty-vault, upstream-error→502 and NotFound→404 mapping, the key allow-list (valid + malformed), register edge cases, `/static/` traversal, absence of any write surface, malformed Content-Length, anti-enumeration determinism, and the two hardening fixes above. Added ~20 web-vault hardening/edge tests.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.7.0...v0.7.1)
+
+---
+
 ## [0.7.0] — 2026-06-05
 
 ### Added

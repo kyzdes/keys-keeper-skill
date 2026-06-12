@@ -26,6 +26,7 @@ You CAN:
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
+- `keys sync status` — sync mode + local/remote versions (metadata only, no values)
 - `keys doctor` — paths + keychain sync check, useful when a value is missing
 - `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values
 

@@ -688,7 +688,7 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.5 · macOS + Windows + Linux · MIT</p>
+      <p class="eyebrow">v0.7.1 · macOS + Windows + Linux · MIT</p>
       <h1>a cross-platform secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
       <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
       <div class="cta-row">
@@ -1281,12 +1281,33 @@ footer .tagline {
   </div>
 </section>
 
+<!-- ──────────────── S7.5 now shipping ─────────────── -->
+<section id="shipping">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">now shipping</p>
+      <h2>what landed since v0.5.</h2>
+      <p>Two things that used to be on this list moved off it. Both are end-to-end encrypted and stay true to the architecture — the server never sees a plaintext secret.</p>
+    </div>
+    <div class="limit-cards">
+      <div class="limit-card">
+        <h3>cloud sync</h3>
+        <p>S3-compatible backup and sync across machines — AWS S3, Cloudflare R2, Backblaze B2, or self-hosted MinIO. End-to-end encrypted as one AES-256-GCM blob; the bucket only ever holds ciphertext. <code style="font-family:'JetBrains Mono',monospace;">keys sync setup</code>.</p>
+      </div>
+      <div class="limit-card">
+        <h3>zero-knowledge web vault</h3>
+        <p>Open your vault in a browser from a host you run yourself. The page decrypts in-memory in the browser; the server never sees plaintext. <code style="font-family:'JetBrains Mono',monospace;">keys webvault serve</code> (read-only v1).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ──────────────── S8 limitations ─────────────── -->
 <section id="limitations">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">honest limitations</p>
-      <h2>what v0.5 is not.</h2>
+      <h2>what v0.7.1 is not.</h2>
       <p>If any of these is a dealbreaker, that's fine — none of them are theoretically hard, they're just not done yet. Tracking on the roadmap above.</p>
     </div>
     <div class="limit-cards">
@@ -1297,10 +1318,6 @@ footer .tagline {
       <div class="limit-card">
         <h3>single user</h3>
         <p>No team / multi-user / sharing. This is a personal tool.</p>
-      </div>
-      <div class="limit-card">
-        <h3>no cloud sync</h3>
-        <p>Use <code style="font-family:'JetBrains Mono',monospace;">keys export</code> + your encrypted-file sync route.</p>
       </div>
       <div class="limit-card">
         <h3>bulk paste = api_key</h3>
@@ -1343,7 +1360,7 @@ footer .tagline {
     <div class="row">
       <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.5.0</span>
+        <span>keys-keeper · v0.7.1</span>
       </a>
       <div class="links">
         <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>

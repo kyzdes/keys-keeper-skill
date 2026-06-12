@@ -353,6 +353,7 @@ def test_init_claude_malformed_frontmatter_falls_back_to_defaults(chdir):
     out = target.read_text(encoding="utf-8")
     # Fence regex requires a closing `---\n`; missing → defaults restored.
     assert "name: keys-keeper" in out
-    assert "macOS Keychain" in out  # default description text
+    # default description text (distinctive opening phrase of the canonical default)
+    assert "Securely save, retrieve, or reference API keys" in out
     assert "leftover" not in out
     assert "Storage CLI is `keys`" in out  # canonical body

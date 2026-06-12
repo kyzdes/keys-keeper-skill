@@ -6,7 +6,7 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. All variants share one safety contract: the agent can *put* secrets into your files without ever *seeing* the value.
 
-**Status:** v0.5.0 · macOS + Windows + Linux · single-user · MIT license
+**Status:** v0.7.1 · macOS + Windows + Linux · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -128,6 +128,22 @@ If Claude tries to bypass — `KEYS_KEEPER_ALLOW_REVEAL=1` is a per-shell env-va
 
 Designed terminal-adjacent: JetBrains Mono, dark by default, dense, low-chrome. No framework, no build step — Jinja2 + vanilla JS.
 
+## Cloud sync
+
+`keys sync setup / push / pull / status / mode / rollback` — back up and sync your vault across machines. Connect any S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi); the whole vault is encrypted into a single AES-256-GCM blob (the same format as `keys export`) before it ever leaves the machine.
+
+- **Git-like versioned snapshots.** Each push writes an immutable snapshot and a plaintext commit (`{version, parent, device, ts, …}` — never an entry field or secret), with a `HEAD` cache. `keys sync rollback <version>` restores any earlier snapshot and republishes it so peers converge.
+- **Id-keyed merge, no duplicates.** Entries merge by their UUID `id` (not name) with last-write-wins on `updated_at`, so re-pulling is idempotent and two machines converge without dupes. Deletes propagate via soft-delete tombstones.
+- **Optional auto-sync.** `keys sync mode auto` enables a non-interactive SessionStart hook that pulls+pushes in a debounced, backgrounded, **fail-open** worker — any missing credential or network error exits 0 and never blocks a session. The passphrase is read from the OS keychain (set once at setup).
+
+Zero new dependencies — AWS Signature V4 is hand-rolled over the stdlib (no boto3). First-time setup (which stores the S3 access key id, secret key, and passphrase in the OS keychain) stays in the CLI; the web `/settings` Sync panel exposes status, the mode toggle, and Pull / "Sync now".
+
+## Zero-knowledge web vault
+
+`keys webvault serve` — open your vault from a browser. Because the cloud copy is a self-contained encrypted blob (`PBKDF2-600k → AES-256-GCM`, all native to WebCrypto), the browser fetches it and **decrypts it in-page with your passphrase** — the passphrase and plaintext never reach the server. The server is a hardened, authenticated **ciphertext shuttle** that never sees plaintext; it's just a third client on the same encrypted blob the CLI + local admin sync to. This generalises the project's promise from "an agent can't leak your secrets" to "**the server can't**."
+
+v1 is **read-only** (unlock → view/search → reveal/copy → idle auto-lock); add/edit stay in the CLI and local admin. Self-host it via [`docs/webvault/Dockerfile`](docs/webvault/Dockerfile), or fall back to your local `keys sync` config for a quick demo.
+
 ## Architecture
 
 ```
@@ -137,7 +153,7 @@ Designed terminal-adjacent: JetBrains Mono, dark by default, dense, low-chrome. 
 └──────────────────┘           │  add list info reveal copy      │
                                │  inject resolve rm edit ssh     │
 ┌──────────────────┐   exec    │  serve export import audit      │
-│  Shell / scripts │ ────────► │  doctor                          │
+│  Shell / scripts │ ────────► │  doctor sync webvault           │
 └──────────────────┘           └────┬────────────┬───────────────┘
                                     │            │
                                     ▼            ▼
@@ -167,6 +183,8 @@ Open source, accepting PRs.
 - [x] ~~**Linux backend** via `secret-tool` (libsecret), with an encrypted-file fallback for headless servers~~ — shipped in v0.5
 - [x] ~~**Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)~~ — shipped in v0.2
 - [x] ~~**Cursor / Aider / Codex / Cline rule-file generators** beyond the Claude skill format~~ — shipped in v0.3 (`keys init <target>`)
+- [x] ~~**Cloud sync** to any S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi), whole vault encrypted into one blob, git-like versioned snapshots, id-keyed merge~~ — shipped in v0.6 (`keys sync setup/push/pull/status/mode/rollback`)
+- [x] ~~**Zero-knowledge web vault** — open your vault from a browser; the browser decrypts the blob in-page, the server never sees plaintext (read-only v1)~~ — shipped in v0.7 (`keys webvault serve`)
 - [ ] **MCP stdio server** (`keys mcp`) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)
 - [ ] **Touch ID-gated reveal in admin** with auto-wipe from DOM after 10s
 - [ ] **CSV export from `/audit`** (already CLI-only via `keys audit > file.csv`)
@@ -178,8 +196,8 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 ## Honest limitations
 
 - **macOS, Windows, Linux.** On a headless Linux server without a keyring daemon, the encrypted-file backend needs `KEYS_KEEPER_MASTER_KEY` in the environment to unlock.
-- **Single user, single machine.** No team / multi-user / sharing.
-- **No cloud sync.** Use `keys export` + your favorite encrypted-file-sync route if you need it.
+- **Single user.** No team / multi-user / sharing. Cloud sync (v0.6) keeps your *own* vault in step across machines via an S3 bucket; it is not a way to share secrets with someone else.
+- **Web vault is read-only (v1).** `keys webvault serve` lets you view/search/reveal/copy from a browser; adding and editing still happen in the CLI or local admin.
 - **Bulk paste cleanly handles `api_key` only.** Other types need their type-specific fields filled by hand or via `+ New` in the admin.
 - **The `caller_path` in audit log** is best-effort (parsed from `ps -p PID -o command=`); enough for forensics, not court evidence.
 
