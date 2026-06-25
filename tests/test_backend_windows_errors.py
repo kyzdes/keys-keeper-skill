@@ -19,6 +19,9 @@ def test_error_8_explains_per_app_credential_limit():
     # The actionable bits: it's the per-app cap, not size, and how to lift it.
     assert "20-credentials-per-app" in msg
     assert "MaxPerAppCredentialNumber" in msg
+    # The Vault key doesn't exist on a fresh machine, so the fix command must
+    # create it first — New-ItemProperty alone fails with PathNotFound.
+    assert "New-Item " in msg
     assert "credential-limit-per-app" in msg  # docs link
     # Must NOT mislead the user into thinking a 64-byte value was too big.
     assert "too large" not in msg
