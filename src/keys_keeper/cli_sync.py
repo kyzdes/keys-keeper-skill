@@ -75,7 +75,7 @@ def _build_remote(cfg: SyncConfig, backend) -> S3Remote:
     secret = backend.get(SYNC_SECRET)  # Sealed — stays sealed into the signer
     signer = S3Signer(akid, secret, region=cfg.region)
     return S3Remote(signer=signer, endpoint=cfg.endpoint, bucket=cfg.bucket,
-                    prefix=cfg.prefix, addressing=cfg.addressing)
+                    prefix=cfg.prefix, addressing=cfg.addressing, proxy=cfg.proxy)
 
 
 def _build_engine(paths: Paths):

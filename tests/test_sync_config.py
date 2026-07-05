@@ -40,6 +40,22 @@ def test_F2_unknown_mode_and_addressing_rejected(kk_home):
         SyncConfig(retain_snapshots=0, mode="off").validate()
 
 
+def test_proxy_defaults_to_direct_and_roundtrips(kk_home):
+    paths = Paths()
+    assert SyncConfig().proxy == "direct"            # secrets backups bypass the OS proxy
+    cfg = SyncConfig(mode="manual", endpoint="https://s3.example.com", bucket="b",
+                     proxy="http://127.0.0.1:1082")
+    save_sync_config(cfg, paths)
+    assert load_sync_config(paths).proxy == "http://127.0.0.1:1082"
+
+
+def test_proxy_rejects_garbage_but_allows_direct_system_url(kk_home):
+    for ok in ("direct", "system", "http://p:8080", "https://p:8080"):
+        SyncConfig(mode="off", proxy=ok).validate()  # no raise
+    with pytest.raises(SyncConfigError):
+        SyncConfig(mode="off", proxy="socks5://nope").validate()
+
+
 def test_F4_device_id_generated_once_and_stable(kk_home):
     paths = Paths()
     cfg = SyncConfig(mode="manual", endpoint="https://s3.example.com", bucket="b").with_device_id()

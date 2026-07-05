@@ -30,7 +30,7 @@ def _remote(handler):
     """Build an S3Remote whose urlopen is driven by `handler(req) -> FakeResp`."""
     captured = []
 
-    def fake_urlopen(req, timeout=None):
+    def fake_urlopen(req, timeout=None, **_kw):  # **_kw absorbs proxy= (see _request)
         captured.append(req)
         return handler(req, captured)
 
@@ -145,3 +145,65 @@ def test_probe_cas_false_when_precondition_ignored(monkeypatch):
     remote, _, fake = _remote(handler)
     monkeypatch.setattr(sr, "urlopen", fake)
     assert remote.probe_cas() is False
+
+
+# ---------------- proxy policy (default = direct/bypass) ----------------
+
+def _proxyhandler(opener):
+    return next(h for h in opener.handlers if isinstance(h, sr.ProxyHandler))
+
+
+def test_proxy_default_is_direct_bypass(monkeypatch):
+    # Even with a system/env proxy present, "direct" must apply NO proxy.
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1082")
+    sr._OPENERS.clear()
+    op = sr._opener_for("direct")
+    active = [h for h in op.handlers if isinstance(h, sr.ProxyHandler) and h.proxies]
+    assert active == []          # no proxy applied → straight to S3
+    sr._OPENERS.clear()          # don't leak the cached opener to other tests
+
+
+def test_proxy_explicit_url_builds_handler():
+    sr._OPENERS.clear()
+    ph = _proxyhandler(sr._opener_for("http://127.0.0.1:8080"))
+    assert ph.proxies.get("https") == "http://127.0.0.1:8080"
+    assert ph.proxies.get("http") == "http://127.0.0.1:8080"
+
+
+def test_proxy_system_honours_env(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9999")
+    sr._OPENERS.pop("system", None)
+    ph = _proxyhandler(sr._opener_for("system"))
+    assert "127.0.0.1:9999" in (ph.proxies.get("https", "") + ph.proxies.get("http", ""))
+
+
+def test_request_passes_proxy_and_defaults_to_direct(monkeypatch):
+    seen = {}
+
+    def fake(req, timeout=None, *, proxy="MISSING"):
+        seen["proxy"] = proxy
+        return FakeResp(200, {}, b"")
+
+    monkeypatch.setattr(sr, "urlopen", fake)
+    remote = S3Remote(
+        signer=S3Signer("AKIDEXAMPLE", Sealed("secretkey"), region="us-east-1"),
+        endpoint="https://s3.example.com", bucket="b", prefix="kk",
+    )
+    remote._request("GET", "/b/kk/x")
+    assert seen["proxy"] == "direct"          # default never inherits the OS proxy
+
+
+def test_proxy_tunnel_error_adds_actionable_hint(monkeypatch):
+    from urllib.error import URLError
+
+    def boom(req, timeout=None, **_kw):
+        raise URLError("Tunnel connection failed: 503 Service Unavailable")
+
+    monkeypatch.setattr(sr, "urlopen", boom)
+    remote = S3Remote(
+        signer=S3Signer("AKIDEXAMPLE", Sealed("secretkey"), region="us-east-1"),
+        endpoint="https://s3.example.com", bucket="b", prefix="kk", proxy="system",
+    )
+    with pytest.raises(TransportError) as ei:
+        remote._request("GET", "/b/kk/x")
+    assert 'sync.proxy="direct"' in str(ei.value)

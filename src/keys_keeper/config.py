@@ -40,6 +40,7 @@ class SyncConfig:
     retain_snapshots: int = 20
     insecure: bool = False           # allow plain http for a non-loopback endpoint
     cas_supported: bool = True       # provider honours If-None-Match (probed at setup)
+    proxy: str = "direct"            # direct | system | http(s)://host:port — S3 transport proxy
 
     def validate(self) -> None:
         if self.mode not in VALID_MODES:
@@ -50,6 +51,15 @@ class SyncConfig:
             )
         if not isinstance(self.retain_snapshots, int) or self.retain_snapshots < 1:
             raise SyncConfigError("retain_snapshots must be an int >= 1")
+        # proxy policy for the S3 transport (sync_remote._opener_for): a flaky
+        # local/VPN proxy must not be silently inherited for secret backups.
+        if self.proxy not in ("direct", "system") and not self.proxy.startswith(
+            ("http://", "https://")
+        ):
+            raise SyncConfigError(
+                "sync proxy must be 'direct', 'system', or an http(s):// proxy URL, "
+                f"got {self.proxy!r}"
+            )
         # device_id ends up inside S3 object keys — keep it to a canonical charset
         # so a hand-edited config can't produce keys needing odd encoding.
         if self.device_id and not all(c.isalnum() or c in "._-" for c in self.device_id):

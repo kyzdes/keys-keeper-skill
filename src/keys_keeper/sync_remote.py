@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from keys_keeper.backend import Sealed
 
@@ -158,6 +158,37 @@ class S3Signer:
         return out
 
 
+# ---------------- HTTP opener (proxy policy) ----------------
+#
+# S3 transport goes DIRECT by default — it bypasses any system/env HTTP proxy.
+# A secrets backup talking to a fixed S3 endpoint wants a deterministic path; a
+# flaky local VPN/proxy (e.g. a CONNECT tunnel that returns "503 Service
+# Unavailable") must not be able to break, or sit in front of, the encrypted
+# blob. Set sync.proxy = "system" to honour the OS/env proxy (the old
+# behaviour), or "http://host:port" to force one explicitly.
+_OPENERS: dict = {}
+
+
+def _opener_for(proxy: str):
+    key = proxy or "direct"
+    op = _OPENERS.get(key)
+    if op is None:
+        if key == "system":
+            op = build_opener()                          # honour system/env proxy
+        elif key in ("direct", "none", "off", ""):
+            op = build_opener(ProxyHandler({}))          # bypass all proxies
+        else:
+            op = build_opener(ProxyHandler({"http": key, "https": key}))
+        _OPENERS[key] = op
+    return op
+
+
+def urlopen(req, timeout=None, *, proxy: str = "direct"):
+    """Module-level transport seam (monkeypatched in tests). Routes the request
+    through a cached opener selected by the sync `proxy` policy."""
+    return _opener_for(proxy).open(req, timeout=timeout)
+
+
 # ---------------- S3 verbs ----------------
 
 class S3Remote:
@@ -169,13 +200,15 @@ class S3Remote:
     """
 
     def __init__(self, *, signer: S3Signer, endpoint: str, bucket: str,
-                 prefix: str = "", addressing: str = "path", timeout: float = 15.0):
+                 prefix: str = "", addressing: str = "path", timeout: float = 15.0,
+                 proxy: str = "direct"):
         self.signer = signer
         self.endpoint = endpoint.rstrip("/")
         self.bucket = bucket
         self.prefix = prefix.strip("/")
         self.addressing = addressing
         self.timeout = timeout
+        self._proxy = proxy or "direct"
         u = urlparse(self.endpoint)
         self._scheme = u.scheme
         self._endpoint_host = u.netloc
@@ -216,7 +249,7 @@ class S3Remote:
         for k, v in signed.items():
             req.add_header(k, v)
         try:
-            resp = urlopen(req, timeout=self.timeout)
+            resp = urlopen(req, timeout=self.timeout, proxy=self._proxy)
             return resp.status, dict(resp.headers), resp.read()
         except HTTPError as e:
             status = e.code
@@ -231,7 +264,15 @@ class S3Remote:
                 raise PreconditionFailed(f"{method} {path}: {status}") from None
             raise TransportError(f"{method} {path}: HTTP {status}") from None
         except (URLError, OSError, TimeoutError) as e:
-            raise TransportError(f"{method} {path}: {e}") from None
+            # A proxy CONNECT failure ("Tunnel connection failed: 503 …") carries
+            # no S3 credentials, so it is safe to surface and point at the fix.
+            low = str(e).lower()
+            hint = ""
+            if "tunnel connection failed" in low or "proxy" in low:
+                hint = (' — the request was routed through an HTTP proxy; set '
+                        'sync.proxy="direct" in config.toml (or clear the system '
+                        'proxy / set NO_PROXY) to connect straight to S3')
+            raise TransportError(f"{method} {path}: {e}{hint}") from None
 
     # -- public verbs --
     def put_object(self, key: str, body: bytes, *, if_none_match: str | None = None,
