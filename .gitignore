@@ -13,6 +13,9 @@ htmlcov/
 # Project memory for AI agents — never commit (may contain operational notes)
 context-map-*/
 
+# Internal audit/review artifacts — derived from private context-map memory; keep local.
+keys-keeper-product-review.html
+
 # Demo recording master — committed exports go in docs/landing/{demo.mp4,demo.gif}
 docs/landing/demo-source.mp4
 docs/landing/.palette.png
