@@ -6,6 +6,14 @@ Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Dashboard: the FILTER tag rail no longer balloons to many rows when a vault has lots of tags.** It is now a single horizontally-scrolling row, so the entries table stays visible without scrolling the page past a wall of pills. Active filters sort to the front (flush against the pinned `FILTER` label) so they never scroll out of view, a right-edge fade signals when more tags are off-screen, a vertical mouse wheel scrolls the rail sideways, and chips are now keyboard-focusable (Tab + Enter/Space) with a visible focus ring. CSS/JS only — no change to the page structure or filter semantics.
+
+---
+
 ## [0.7.1] — 2026-06-12
 
 ### Security

@@ -125,24 +125,70 @@
     setTimeout(() => t.remove(), 3500);
   }
 
+  // Fade the right edge only while there is more to scroll to, so the last chip
+  // is never left dimmed once you reach the end, and a rail that fits shows no fade.
+  function updateRailFade(rail) {
+    const overflow = rail.scrollWidth - rail.clientWidth > 1;
+    const atEnd = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 1;
+    rail.classList.toggle('has-overflow', overflow && !atEnd);
+  }
+
   function renderTagRail() {
     const rail = document.getElementById('tag-rail');
     if (!rail) return;
+
+    // Bind once (guarded): vertical wheel -> horizontal scroll, but only while the
+    // rail overflows so a short rail lets the page scroll normally; scroll/resize
+    // keep the edge-fade in sync.
+    if (!rail.dataset.railBound) {
+      rail.addEventListener('wheel', (e) => {
+        if (!e.deltaY || rail.scrollWidth <= rail.clientWidth) return;
+        e.preventDefault();
+        rail.scrollLeft += e.deltaY;
+      }, { passive: false });
+      rail.addEventListener('scroll', () => updateRailFade(rail), { passive: true });
+      window.addEventListener('resize', () => updateRailFade(rail));
+      rail.dataset.railBound = '1';
+    }
+
     const allTags = new Set();
     state.entries.forEach(e => (e.tags || []).forEach(t => allTags.add(t)));
     rail.querySelectorAll('.tag-chip').forEach(n => n.remove());
-    [...allTags].sort().forEach(t => {
+
+    // Active chips first -> they sit flush against the pinned FILTER label and
+    // never scroll out of view; everything else stays alphabetical.
+    const tags = [...allTags].sort((a, b) => {
+      const aOn = state.activeTags.has(a), bOn = state.activeTags.has(b);
+      if (aOn !== bOn) return aOn ? -1 : 1;
+      return a.localeCompare(b);
+    });
+
+    const toggle = (t) => {
+      if (state.activeTags.has(t)) state.activeTags.delete(t);
+      else state.activeTags.add(t);
+      renderTagRail();
+      rail.scrollLeft = 0;       // snap to front so the now-leading active chips are visible
+      updateRailFade(rail);
+      render();
+    };
+
+    tags.forEach(t => {
+      const on = state.activeTags.has(t);
       const chip = el('span', {
-        class: 'tag-chip' + (state.activeTags.has(t) ? ' active' : ''),
-        onclick: () => {
-          if (state.activeTags.has(t)) state.activeTags.delete(t);
-          else state.activeTags.add(t);
-          renderTagRail();
-          render();
-        },
+        class: 'tag-chip' + (on ? ' active' : ''),
+        tabindex: '0',
+        role: 'button',
+        'aria-pressed': on ? 'true' : 'false',
+        onclick: () => toggle(t),
       }, t);
+      // el() stringifies unknown attrs via setAttribute, so bind keydown as a property.
+      chip.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(t); }
+      };
       rail.append(chip);
     });
+
+    updateRailFade(rail);
   }
 
   async function load() {

@@ -256,11 +256,33 @@ body {
 
 .tag-rail {
   display: flex; gap: 7px; align-items: center;
-  padding: 0 24px 14px;
+  padding: 0 24px 14px;                 /* [compact]/[spacious] overrides above still win by specificity */
   border-bottom: 1px solid var(--border-subtle);
-  flex-wrap: wrap;
+  background: var(--bg);                /* opaque so chips scrolling under the pinned label are hidden */
+  /* One row that scrolls sideways instead of wrapping into ~6 rows when there are many tags */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-padding-inline: 64px 44px;     /* keyboard focus scroll-into-view clears the pinned label + fade */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+/* Right-edge fade, shown only while more chips remain to the right (class toggled from JS)
+   — so the final chip is never left dimmed at the end, and a rail that fits shows no fade. */
+.tag-rail.has-overflow {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+.tag-rail::-webkit-scrollbar { height: 6px; }
+.tag-rail::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tag-rail::-webkit-scrollbar-track { background: transparent; }
 .tag-rail .label {
+  flex: 0 0 auto;
+  position: sticky;
+  left: 0;                              /* pin FILTER so it never scrolls out of view */
+  z-index: 1;
+  background: var(--bg);
+  padding-right: 8px;
   font-size: 11.5px;
   font-family: 'JetBrains Mono', monospace;
   color: var(--text-3);
@@ -268,6 +290,7 @@ body {
   margin-right: 5px;
 }
 .tag-chip {
+  flex: 0 0 auto;                       /* don't let flex-nowrap shrink/truncate chips */
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 13px;
@@ -284,6 +307,7 @@ body {
   color: var(--accent);
   background: var(--accent-soft);
 }
+.tag-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tag-chip .x { color: var(--text-4); margin-left: 2px; }
 
 .type-tabs {
