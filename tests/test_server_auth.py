@@ -1,6 +1,7 @@
 import threading
 import time
 import http.cookiejar
+import socket
 import urllib.request
 import urllib.error
 import pytest
@@ -29,6 +30,22 @@ def _fetch(url, token=None):
     if token:
         req.add_header("Sec-Keys-Token", token)
     return urllib.request.urlopen(req, timeout=2)
+
+
+def _raw_post_status(admin, headers: dict[str, str]) -> int:
+    lines = [
+        "POST /api/heartbeat HTTP/1.1",
+        f"Host: 127.0.0.1:{admin.bound_port}",
+        f"Sec-Keys-Token: {admin.token}",
+        "Connection: close",
+        *(f"{key}: {value}" for key, value in headers.items()),
+        "",
+        "",
+    ]
+    with socket.create_connection(("127.0.0.1", admin.bound_port), timeout=2) as sock:
+        sock.sendall("\r\n".join(lines).encode("ascii"))
+        response = sock.recv(4096).decode("ascii", "replace")
+    return int(response.split(" ", 2)[1])
 
 
 def test_request_without_token_returns_403(admin):
@@ -87,6 +104,22 @@ def test_admin_csp_blocks_inline_script_execution(admin):
     assert "script-src 'self' 'unsafe-inline'" not in csp
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
+
+
+def test_admin_rejects_oversized_body_before_reading_it(admin):
+    assert _raw_post_status(
+        admin,
+        {"Content-Length": str(8 * 1024 * 1024 + 1)},
+    ) == 413
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "-1"])
+def test_admin_rejects_malformed_content_length(admin, value):
+    assert _raw_post_status(admin, {"Content-Length": value}) == 400
+
+
+def test_admin_rejects_chunked_request_bodies(admin):
+    assert _raw_post_status(admin, {"Transfer-Encoding": "chunked"}) == 400
 
 
 def test_no_cache_headers_on_responses(admin):

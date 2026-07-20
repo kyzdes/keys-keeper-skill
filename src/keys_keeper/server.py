@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs
 from keys_keeper.paths import Paths
 
 
+_MAX_BODY_BYTES = 8 * 1024 * 1024
 _NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, private",
     "X-Content-Type-Options": "nosniff",
@@ -132,6 +133,26 @@ def make_handler(admin: "AdminServer"):
             data = json.dumps(payload).encode("utf-8")
             self._send(status, data, "application/json")
 
+        def _read_request_body(self) -> bytes | None:
+            if self.headers.get("Transfer-Encoding"):
+                self._send_json(400, {"error": "transfer-encoding is unsupported"})
+                return None
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                return b""
+            try:
+                length = int(raw_length)
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "bad content-length"})
+                return None
+            if length < 0:
+                self._send_json(400, {"error": "bad content-length"})
+                return None
+            if length > _MAX_BODY_BYTES:
+                self._send_json(413, {"error": "request body too large"})
+                return None
+            return self.rfile.read(length) if length else b""
+
         # ---- routing ----
 
         def do_GET(self) -> None:
@@ -206,8 +227,9 @@ def make_handler(admin: "AdminServer"):
             if not self._verify_token():
                 self._send(403, b"forbidden")
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b""
+            body = self._read_request_body()
+            if body is None:
+                return
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="POST", path=self.path, body=body)
 
@@ -224,8 +246,9 @@ def make_handler(admin: "AdminServer"):
             if not self._verify_token():
                 self._send(403, b"forbidden")
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b""
+            body = self._read_request_body()
+            if body is None:
+                return
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="PATCH", path=self.path, body=body)
 
