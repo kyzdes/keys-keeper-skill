@@ -1,0 +1,39 @@
+{
+  "name": "keys-keeper",
+  "version": "0.7.2",
+  "description": "Codex workflows for routing locally stored secrets through the keys CLI without returning plaintext in normal tool output.",
+  "author": {
+    "name": "Viacheslav Kuznetsov",
+    "url": "https://github.com/kyzdes"
+  },
+  "homepage": "https://github.com/kyzdes/keys-keeper-skill",
+  "repository": "https://github.com/kyzdes/keys-keeper-skill",
+  "license": "MIT",
+  "keywords": [
+    "secrets",
+    "keychain",
+    "codex",
+    "security",
+    "developer-tools"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Keys Keeper",
+    "shortDescription": "Route local secrets without printing their values.",
+    "longDescription": "Use natural-language requests to list secret metadata, inject a named key into a file, copy it with automatic clearing, open SSH sessions, and inspect audit history through the local keys CLI. This reduces accidental transcript exposure; it is not an isolation boundary against code running as the same OS user.",
+    "developerName": "Viacheslav Kuznetsov",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Inspect secret metadata without revealing values",
+      "Route named secrets to explicit local sinks",
+      "Open SSH sessions from saved credentials",
+      "Audit secret operations"
+    ],
+    "defaultPrompt": [
+      "List my available keys without revealing their values.",
+      "Put my saved OpenRouter key into this project's .env file.",
+      "Connect to my saved production server over SSH."
+    ],
+    "brandColor": "#D97757"
+  }
+}

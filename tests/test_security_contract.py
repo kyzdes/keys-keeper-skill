@@ -9,11 +9,13 @@ from keys_keeper import __version__
 
 
 ROOT = Path(__file__).resolve().parent.parent
+CODEX_PLUGIN_ROOT = ROOT / "plugins" / "keys-keeper"
 
 PUBLIC_SECURITY_SURFACES = (
     ROOT / "README.md",
     ROOT / "pyproject.toml",
     ROOT / ".claude-plugin" / "plugin.json",
+    CODEX_PLUGIN_ROOT / ".codex-plugin" / "plugin.json",
     ROOT / "docs" / "landing" / "index.html",
     ROOT / "src" / "keys_keeper" / "agent_rules" / "canonical.py",
     ROOT / "src" / "keys_keeper" / "agent_rules" / "render.py",
@@ -39,11 +41,55 @@ def test_public_copy_does_not_claim_same_user_isolation():
 
 def test_release_versions_are_consistent():
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    claude_plugin = json.loads(
+        (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    codex_plugin = json.loads(
+        (CODEX_PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
     match = re.search(r'^version = "([^"]+)"$', project, re.MULTILINE)
     assert match is not None
     assert match.group(1) == __version__
-    assert plugin["version"] == __version__
+    assert claude_plugin["version"] == __version__
+    assert codex_plugin["version"] == __version__
+
+
+def test_codex_plugin_is_skill_only_and_implicitly_invokable():
+    plugin = json.loads(
+        (CODEX_PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert plugin["name"] == "keys-keeper"
+    assert plugin["skills"] == "./skills/"
+    assert "hooks" not in plugin
+    assert "mcpServers" not in plugin
+    assert "apps" not in plugin
+
+    prompts = plugin["interface"]["defaultPrompt"]
+    assert 1 <= len(prompts) <= 3
+    assert all(len(prompt) <= 128 for prompt in prompts)
+
+    for forbidden_path in ("hooks", "scripts", "src", ".git", ".venv"):
+        assert not (CODEX_PLUGIN_ROOT / forbidden_path).exists()
+
+    source_skill_root = ROOT / "skills" / "keys-keeper"
+    packaged_skill_root = CODEX_PLUGIN_ROOT / "skills" / "keys-keeper"
+    for relative_path in (
+        Path("SKILL.md"),
+        Path("agents/openai.yaml"),
+        Path("references/examples.md"),
+    ):
+        assert (packaged_skill_root / relative_path).read_bytes() == (
+            source_skill_root / relative_path
+        ).read_bytes()
+
+    agent_manifest = (packaged_skill_root / "agents" / "openai.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "allow_implicit_invocation: true" in agent_manifest
 
 
 def test_cryptography_floor_contains_the_patched_wheel_release():

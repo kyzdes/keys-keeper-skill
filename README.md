@@ -52,11 +52,17 @@ Pick whichever agents you use — run inside the project directory you want the 
 | **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; mutable-HEAD updates are disabled by default |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
-| **Codex CLI** | `keys init codex` | Writes `AGENTS.md` (also read by Cursor / Amp / Jules in 2026 per the AGENTS.md open spec) |
+| **Codex app / CLI** | Install the Keys Keeper Codex plugin once; project-only fallback: `keys init codex` | The plugin recognizes secret workflows in every new task; the fallback writes `AGENTS.md` for one project |
 | **Cline** | `keys init cline` | Writes `.clinerules/00-keys-keeper.md` |
 | **Any other agent** | `keys init generic` | Prints to stdout — redirect wherever your agent reads rules from |
 
 You can mix targets — `keys init cursor` and `keys init codex` in the same project both work and stay consistent. The `aider`/`codex` writes use HTML-comment markers so re-running just refreshes the keys-keeper section and leaves the rest of the file alone.
+
+The minimal Codex bundle lives in `plugins/keys-keeper`. It deliberately ships
+no startup hook, application code, or virtual environment: installing the plugin
+does not read the credential store, fetch updates, or start sync. Once installed,
+open a new Codex task and ask naturally, for example: “put the saved OpenRouter
+key into this project's `.env`.”
 
 Run `keys init claude --check` from your CI to fail builds on prose drift.
 
@@ -116,7 +122,7 @@ keys serve
 | `keys resolve FILE` — substitutes `__KEYS:name__` placeholders | |
 | `keys ssh NAME` — opens session via tempfile-resolved key, file shredded on exit | |
 
-The shipped skill markdown (`skills/keys-keeper/SKILL.md`) tells Claude:
+The shipped skill markdown (`skills/keys-keeper/SKILL.md`) tells Codex and Claude:
 
 > You MUST NOT run `keys reveal`. You CAN use `keys copy / inject / resolve / ssh`.
 
