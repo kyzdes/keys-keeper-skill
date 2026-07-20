@@ -17,21 +17,31 @@ def _only(*present):
 
 
 def test_prefers_wayland(monkeypatch):
-    monkeypatch.setattr(clipboard.shutil, "which", _only("wl-copy", "xclip", "xsel"))
-    assert clipboard._linux_copy_cmd()[0] == "wl-copy"
-    assert clipboard._linux_paste_cmd()[0] == "wl-paste"
+    monkeypatch.setattr(
+        clipboard.shutil,
+        "which",
+        _only("wl-copy", "wl-paste", "xclip", "xsel"),
+    )
+    assert clipboard._linux_copy_cmd()[0] == "/usr/bin/wl-copy"
+    assert clipboard._linux_paste_cmd()[0] == "/usr/bin/wl-paste"
 
 
 def test_falls_back_to_xclip(monkeypatch):
     monkeypatch.setattr(clipboard.shutil, "which", _only("xclip", "xsel"))
-    assert clipboard._linux_copy_cmd()[0] == "xclip"
-    assert clipboard._linux_paste_cmd() == ["xclip", "-selection", "clipboard", "-o"]
+    assert clipboard._linux_copy_cmd()[0] == "/usr/bin/xclip"
+    assert clipboard._linux_paste_cmd() == [
+        "/usr/bin/xclip", "-selection", "clipboard", "-o",
+    ]
 
 
 def test_falls_back_to_xsel(monkeypatch):
     monkeypatch.setattr(clipboard.shutil, "which", _only("xsel"))
-    assert clipboard._linux_copy_cmd() == ["xsel", "--clipboard", "--input"]
-    assert clipboard._linux_paste_cmd() == ["xsel", "--clipboard", "--output"]
+    assert clipboard._linux_copy_cmd() == [
+        "/usr/bin/xsel", "--clipboard", "--input",
+    ]
+    assert clipboard._linux_paste_cmd() == [
+        "/usr/bin/xsel", "--clipboard", "--output",
+    ]
 
 
 def test_headless_raises_clear_error(monkeypatch):
