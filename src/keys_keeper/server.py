@@ -18,8 +18,12 @@ _NO_CACHE_HEADERS = {
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "script-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'"
+        "script-src 'self'; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
     ),
 }
 
@@ -75,6 +79,12 @@ def make_handler(admin: "AdminServer"):
 
         # ---- helpers ----
 
+        def _session_cookie_name(self) -> str:
+            # Cookies are scoped to hosts, not ports. A port suffix prevents
+            # two simultaneous local admin instances from overwriting each
+            # other's session capability.
+            return f"kk_session_{admin.bound_port}"
+
         def _verify_token(self) -> bool:
             # Accept token via header (fetch/XHR) or session cookie (browser
             # nav). The ?t=TOKEN query form is accepted ONLY on the initial
@@ -89,7 +99,7 @@ def make_handler(admin: "AdminServer"):
             cookie_header = self.headers.get("Cookie", "")
             for part in cookie_header.split(";"):
                 k, _, v = part.strip().partition("=")
-                if k == "kk_session" and v == admin.token:
+                if k == self._session_cookie_name() and v == admin.token:
                     self._auth_ok = True
                     return True
             parsed = urlparse(self.path)
@@ -112,7 +122,8 @@ def make_handler(admin: "AdminServer"):
             if getattr(self, "_auth_ok", False):
                 self.send_header(
                     "Set-Cookie",
-                    f"kk_session={admin.token}; HttpOnly; SameSite=Strict; Path=/",
+                    f"{self._session_cookie_name()}={admin.token}; "
+                    "HttpOnly; SameSite=Strict; Path=/",
                 )
             self.end_headers()
             self.wfile.write(body)

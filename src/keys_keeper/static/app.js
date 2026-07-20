@@ -1,9 +1,6 @@
 // keys-keeper admin client
 (() => {
-  const TOKEN = window.KK_TOKEN;
-
   async function api(path, opts = {}) {
-    opts.headers = { ...(opts.headers || {}), 'Sec-Keys-Token': TOKEN };
     const r = await fetch(path, opts);
     if (!r.ok) {
       let detail = '';
@@ -51,6 +48,15 @@
     });
     children.flat().forEach(c => e.append(c instanceof Node ? c : document.createTextNode(c ?? '')));
     return e;
+  }
+
+  function kvRow(key, value, valueClass = '') {
+    return el(
+      'div',
+      { class: 'kv-row' },
+      el('span', { class: 'key' }, key),
+      el('span', { class: `val${valueClass ? ` ${valueClass}` : ''}` }, String(value ?? '')),
+    );
   }
 
   function render() {
@@ -335,7 +341,7 @@
   document.getElementById('cmdk-trigger')?.addEventListener('click', paletteOpen);
 
   setInterval(() => {
-    fetch('/api/heartbeat', { method: 'POST', headers: { 'Sec-Keys-Token': TOKEN } });
+    fetch('/api/heartbeat', { method: 'POST' });
   }, 60000);
 
   // Note: we deliberately do NOT shutdown on beforeunload — that fires on
@@ -402,7 +408,7 @@
         if (!confirm(`Delete ${e.name}?`)) return;
         const doDelete = async (cascade) => {
           const url = `/api/entries/${encodeURIComponent(e.id)}` + (cascade ? '?cascade=1' : '');
-          return fetch(url, { method: 'DELETE', headers: { 'Sec-Keys-Token': TOKEN } });
+          return fetch(url, { method: 'DELETE' });
         };
         try {
           let r = await doDelete(false);
@@ -783,21 +789,33 @@
 
   if (document.querySelector('.settings-shell')) {
     api('/api/status').then(s => {
-      document.getElementById('status-body').innerHTML = `
-        <div class="kv-row"><span class="key">version</span><span class="val">${s.version}</span></div>
-        <div class="kv-row"><span class="key">port</span><span class="val">${location.port}</span></div>
-        <div class="kv-row"><span class="key">uptime</span><span class="val">${Math.floor(s.uptime_sec / 60)} min ${s.uptime_sec % 60} s</span></div>
-        <div class="kv-row"><span class="key">config_dir</span><span class="val mono">${s.config_dir}</span></div>
-      `;
-      document.getElementById('security-body').innerHTML = `
-        <div class="kv-row"><span class="key">KEYS_KEEPER_ALLOW_REVEAL</span><span class="val ${s.reveal_env_set ? 'success' : 'danger'}">${s.reveal_env_set ? '✓ set' : '✗ not set'}</span></div>
-        <div class="kv-row"><span class="key">URL token</span><span class="val success">✓ active · stripped from history</span></div>
-        ${s.reveal_env_set ? '' : `
-        <div style="margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6">
-          <div style="color:var(--text-4);margin-bottom:4px"># add to ~/.zshrc to enable</div>
-          <div style="color:var(--accent)">export KEYS_KEEPER_ALLOW_REVEAL=1</div>
-        </div>`}
-      `;
+      const uptime = Math.max(0, Math.floor(Number(s.uptime_sec) || 0));
+      document.getElementById('status-body').replaceChildren(
+        kvRow('version', s.version),
+        kvRow('port', location.port),
+        kvRow('uptime', `${Math.floor(uptime / 60)} min ${uptime % 60} s`),
+        kvRow('config_dir', s.config_dir, 'mono'),
+      );
+
+      const securityBody = document.getElementById('security-body');
+      securityBody.replaceChildren(
+        kvRow(
+          'KEYS_KEEPER_ALLOW_REVEAL',
+          s.reveal_env_set ? '✓ set' : '✗ not set',
+          s.reveal_env_set ? 'success' : 'danger',
+        ),
+        kvRow('URL token', '✓ active · HttpOnly · stripped from history', 'success'),
+      );
+      if (!s.reveal_env_set) {
+        securityBody.append(el(
+          'div',
+          {
+            style: "margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6",
+          },
+          el('div', { style: 'color:var(--text-4);margin-bottom:4px' }, '# add to ~/.zshrc to enable'),
+          el('div', { style: 'color:var(--accent)' }, 'export KEYS_KEEPER_ALLOW_REVEAL=1'),
+        ));
+      }
     });
 
     document.getElementById('shutdown-btn').onclick = async () => {
