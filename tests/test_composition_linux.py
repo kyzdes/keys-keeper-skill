@@ -17,6 +17,10 @@ from keys_keeper.backend_linux import SecretToolBackend
 def linux(monkeypatch):
     monkeypatch.setattr(composition.sys, "platform", "linux")
     monkeypatch.delenv("KEYS_KEEPER_BACKEND", raising=False)
+    monkeypatch.setattr(
+        "keys_keeper.backend_linux.shutil.which",
+        lambda _name: "/usr/bin/secret-tool",
+    )
 
 
 def _stub_available(monkeypatch, value: bool):

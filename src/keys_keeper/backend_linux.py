@@ -14,12 +14,19 @@ it is not visible in `ps`/`/proc/<pid>/cmdline` to other local processes.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 
 _SECRET_TOOL = "secret-tool"
+_PROBE_ACCOUNT = "kk:__keys-keeper-availability-probe__"
+
+
+def _secret_tool_path() -> str | None:
+    resolved = shutil.which(_SECRET_TOOL)
+    return os.path.abspath(resolved) if resolved else None
 
 
 def secret_service_available(service: str = "keys-keeper") -> bool:
@@ -30,12 +37,24 @@ def secret_service_available(service: str = "keys-keeper") -> bool:
     `secret-tool` exit with a D-Bus error and a non-trivial returncode; an
     empty-but-present keyring returns 0 (or 1 for "no results") quickly.
     """
-    if shutil.which(_SECRET_TOOL) is None:
+    executable = _secret_tool_path()
+    if executable is None:
         return False
     try:
         result = subprocess.run(
-            [_SECRET_TOOL, "search", "--all", "service", service],
-            capture_output=True, text=True, timeout=10,
+            [
+                executable,
+                "search",
+                "--all",
+                "service",
+                service,
+                "account",
+                _PROBE_ACCOUNT,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -51,10 +70,8 @@ def _parse_accounts(output: str) -> list[str]:
     We read only those lines and ignore everything else (notably `secret = ...`).
 
     NOTE: `secret-tool search` writes the human-readable item dump (labels,
-    attributes, created/modified) to **stderr**; stdout carries only the secret
-    value(s). Callers must therefore pass stderr (or stderr+stdout) here, not
-    stdout alone — see list_ids(). A duplicate id (same account listed in both
-    streams) is de-duped while preserving first-seen order.
+    attributes, created/modified) to **stderr**; stdout carries secret values
+    and is deliberately redirected to DEVNULL by callers.
     """
     ids: list[str] = []
     seen: set[str] = set()
@@ -73,13 +90,16 @@ class SecretToolBackend(KeychainBackend):
 
     def __init__(self, *, service: str = "keys-keeper"):
         self.service = service
+        self.executable = _secret_tool_path()
+        if self.executable is None:
+            raise KeychainError("secret-tool executable not found")
 
     def _attrs(self, account: str) -> list[str]:
         return ["service", self.service, "account", account]
 
     def get(self, account: str) -> Sealed:
         result = subprocess.run(
-            [_SECRET_TOOL, "lookup", *self._attrs(account)],
+            [self.executable, "lookup", *self._attrs(account)],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -90,7 +110,13 @@ class SecretToolBackend(KeychainBackend):
     def set(self, account: str, value: str) -> None:
         label = f"keys-keeper: {account}"
         result = subprocess.run(
-            [_SECRET_TOOL, "store", "--label", label, *self._attrs(account)],
+            [
+                self.executable,
+                "store",
+                "--label",
+                label,
+                *self._attrs(account),
+            ],
             input=value, capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -102,20 +128,21 @@ class SecretToolBackend(KeychainBackend):
         # `secret-tool clear` removes all items matching the attributes; a
         # missing entry is a no-op with rc 0, so we don't inspect returncode.
         subprocess.run(
-            [_SECRET_TOOL, "clear", *self._attrs(account)],
+            [self.executable, "clear", *self._attrs(account)],
             capture_output=True, text=True,
         )
 
     def list_ids(self) -> list[str]:
         result = subprocess.run(
-            [_SECRET_TOOL, "search", "--all", "service", self.service],
-            capture_output=True, text=True,
+            [self.executable, "search", "--all", "service", self.service],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         if result.returncode not in (0, 1):
             raise KeychainError(
                 f"secret-tool search failed: {result.stderr.strip()}"
             )
-        # `secret-tool search` prints the item dump (with `attribute.account =`)
-        # to stderr; stdout holds only secret values. Parse stderr first, then
-        # stdout as a fallback for libsecret builds that route it differently.
-        return _parse_accounts(result.stderr + "\n" + result.stdout)
+        # `secret-tool search` prints attributes to stderr. stdout contains
+        # secret material and was never captured by this process.
+        return _parse_accounts(result.stderr)
