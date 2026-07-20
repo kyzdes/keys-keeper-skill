@@ -23,6 +23,7 @@ from keys_keeper.models import (
     validate_snapshot_payload,
 )
 from keys_keeper.paths import Paths
+from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
 from keys_keeper.store import MetadataStore, NameConflict, NotFound, StoreError
 
 
@@ -271,12 +272,18 @@ def cmd_inject(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = build_backend()
-    # File sink (controlled, not transcript-visible).
-    value = backend.get(e.id).unseal()
     target = Path(args.file)
-    if target.exists():
-        existing = target.read_text()
+    try:
+        target_state = read_secure_text(target, missing_ok=True)
+    except SecureFileError as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
+
+    backend = build_backend()
+    # File exposure sink (not printed, but readable by processes with access).
+    value = backend.get(e.id).unseal()
+    existing = target_state.text
+    if target_state.identity is not None:
         existing_lines = existing.splitlines()
         match_idx = None
         for i, line in enumerate(existing_lines):
@@ -297,7 +304,15 @@ def cmd_inject(args: argparse.Namespace) -> int:
             new_content = existing + sep + f"{args.as_env}={value}\n"
     else:
         new_content = f"{args.as_env}={value}\n"
-    target.write_text(new_content)
+    try:
+        replace_secure_text(target_state, new_content)
+    except SecureFileError as ex:
+        audit.record(
+            op="inject", name=e.name, id_=e.id, file_target=str(target),
+            success=False, error="secure file write failed",
+        )
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
     audit.record(op="inject", name=e.name, id_=e.id, file_target=str(target), success=True)
     print(f"injected {e.name} → {target} as {args.as_env}")
     return 0
@@ -313,7 +328,12 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     audit = AuditLog(paths)
     backend = build_backend()
     target = Path(args.file)
-    content = target.read_text()
+    try:
+        target_state = read_secure_text(target, missing_ok=False)
+    except SecureFileError as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
+    content = target_state.text
     errors = []
     count = 0
 
@@ -347,7 +367,16 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         for err in errors:
             sys.stderr.write(f"  - {err}\n")
         return 1
-    target.write_text(new_content)
+    try:
+        replace_secure_text(target_state, new_content)
+    except SecureFileError as ex:
+        audit.record(
+            op="resolve", name="<file>", id_=str(target),
+            file_target=str(target), success=False,
+            error="secure file write failed",
+        )
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
     audit.record(op="resolve", name="<file>", id_=str(target), file_target=str(target), success=True)
     print(f"resolved {count} placeholder(s) in {target}")
     return 0

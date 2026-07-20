@@ -179,7 +179,7 @@ v1 is **read-only** (unlock → view/search → reveal/copy → idle auto-lock);
 
 Two-layer storage: secrets in macOS Keychain (tied to the user's login keychain and its configured OS access policy), metadata in `~/.config/keys-keeper/data.json` (so you can back it up, diff it, and sync it through Time Machine). This version does not enforce Touch ID or per-operation user presence.
 
-Append-only audit log records every `add / copy / inject / resolve / reveal / ssh / export` operation with caller PID and process command line — visible in the admin's `/audit` page.
+Append-only audit log records every `add / copy / inject / resolve / reveal / ssh / export` operation with caller PID and executable path, never the caller's full argv — visible in the admin's `/audit` page.
 
 Encrypted backup via `keys export` (AES-256-GCM with PBKDF2-HMAC-SHA256, 600k iterations). Single portable file, restorable via `keys import` on a new machine.
 
@@ -208,7 +208,7 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 - **Single user.** No team / multi-user / sharing. Cloud sync (v0.6) keeps your *own* vault in step across machines via an S3 bucket; it is not a way to share secrets with someone else.
 - **Web vault is read-only (v1).** `keys webvault serve` lets you view/search/reveal/copy from a browser; adding and editing still happen in the CLI or local admin.
 - **Bulk paste cleanly handles `api_key` only.** Other types need their type-specific fields filled by hand or via `+ New` in the admin.
-- **The `caller_path` in audit log** is best-effort (parsed from `ps -p PID -o command=`); enough for forensics, not court evidence.
+- **The `caller_path` in audit log** is a best-effort executable identity without argv; useful context, not forensic proof.
 - **Same-user shell access is outside the current boundary.** A process running as you can set the reveal environment variable, read clipboard/file sinks, or invoke OS credential tooling directly.
 - **File and clipboard commands deliberately expose plaintext to their destination.** Do not use them when the destination is readable by an untrusted agent.
 

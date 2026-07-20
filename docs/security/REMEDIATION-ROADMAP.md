@@ -37,8 +37,9 @@ an agent-readable file are explicit human exposure operations.
 | Workstream | Status |
 |---|---|
 | SEC-0 release containment | Complete in `56c0833` |
-| SEC-1 trust-boundary validation | Implemented on this branch; regression suite green |
-| SEC-2 through SEC-7 | Planned |
+| SEC-1 trust-boundary validation | Complete in `f591bdc` |
+| SEC-2 secure local sinks and subprocesses | In progress: file sinks and audit metadata implemented |
+| SEC-3 through SEC-7 | Planned |
 
 ## Workstreams
 

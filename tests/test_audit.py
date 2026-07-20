@@ -3,10 +3,13 @@ import json
 import os
 import stat
 import sys
-import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pytest
-from keys_keeper.audit import AuditLog, AuditEvent
+
+from keys_keeper import audit as audit_module
+from keys_keeper.audit import AuditLog
 from keys_keeper.paths import Paths
 
 
@@ -32,11 +35,43 @@ def test_record_includes_timestamp_and_caller(audit):
     assert e["caller_pid"] == os.getppid() or e["caller_pid"] == os.getpid()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX caller lookup")
+def test_caller_lookup_requests_executable_not_full_argv(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="/bin/zsh\n")
+
+    monkeypatch.setattr(audit_module.sys, "platform", "darwin")
+    monkeypatch.setattr(audit_module.subprocess, "run", fake_run)
+    assert audit_module._resolve_caller_path(123) == "/bin/zsh"
+    assert captured["command"] == ["/bin/ps", "-p", "123", "-o", "comm="]
+    assert "shell" not in captured["kwargs"]
+
+
+def test_record_sanitizes_metadata_and_does_not_persist_error_text(audit):
+    audit.record(
+        op="copy\nforged",
+        name="entry\tname",
+        id_="kk:test\rvalue",
+        error="backend accidentally echoed sk-super-secret",
+        success=False,
+    )
+    event = list(audit.tail(1))[0]
+    assert "\n" not in event["op"]
+    assert "\t" not in event["name"]
+    assert "\r" not in event["id"]
+    assert event["error"] == "operation failed"
+    assert "sk-super-secret" not in Paths().audit_jsonl.read_text()
+
+
 def test_jsonl_format_one_event_per_line(audit, kk_home):
     audit.record(op="copy", name="a", id_="kk:1", success=True)
     audit.record(op="copy", name="b", id_="kk:2", success=True)
     raw = (kk_home / "audit.jsonl").read_text()
-    lines = [l for l in raw.splitlines() if l.strip()]
+    lines = [line for line in raw.splitlines() if line.strip()]
     assert len(lines) == 2
     for line in lines:
         json.loads(line)  # each line is valid JSON
