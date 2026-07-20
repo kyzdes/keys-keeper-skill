@@ -25,7 +25,12 @@ from dataclasses import dataclass, field, replace
 
 from keys_keeper.backend import KeychainBackend, KeychainError
 from keys_keeper.crypto import BadPassword, decrypt_blob, encrypt_blob
-from keys_keeper.models import Entry, now_iso
+from keys_keeper.models import (
+    Entry,
+    ValidationError,
+    now_iso,
+    validate_snapshot_payload,
+)
 from keys_keeper.store import SCHEMA_VERSION, MetadataStore
 from keys_keeper.sync_remote import NotFound, PreconditionFailed, TransportError
 
@@ -249,6 +254,10 @@ class SnapshotIntegrityError(TransportError):
     """
 
 
+class SnapshotValidationError(TransportError):
+    """A decrypted snapshot contains unsafe or unsupported metadata."""
+
+
 class SyncEngine:
     """Drives push/pull/rollback/gc over a RemoteStore (S3Remote or a fake)."""
 
@@ -322,6 +331,16 @@ class SyncEngine:
         """
         blob = self.remote.get_object(tip.snapshot)
         payload = decrypt_snapshot(blob, passphrase=passphrase)
+        try:
+            # Validate before content_hash touches attacker-influenced types.
+            # The apply path validates again when it consumes the normalized
+            # Entry/tombstone objects; keeping this guard here makes malformed
+            # authenticated blobs fail with a bounded domain error.
+            validate_snapshot_payload(payload)
+        except ValidationError as ex:
+            raise SnapshotValidationError(
+                f"snapshot {tip.version} failed metadata validation: {ex}"
+            ) from ex
         if tip.entries_hash is not None:
             actual = content_hash(payload)
             if actual != tip.entries_hash:
@@ -335,13 +354,18 @@ class SyncEngine:
     # -- apply a remote snapshot into the local vault --
     def _apply_remote(self, tip: _Tip, passphrase: str) -> int:
         payload = self._decrypt_verified(tip, passphrase)
-        remote_entries = [Entry.from_dict(r) for r in payload["entries"]]
+        try:
+            remote_entries, remote_tombstones = validate_snapshot_payload(payload)
+        except ValidationError as ex:
+            raise SnapshotValidationError(
+                f"snapshot {tip.version} failed metadata validation: {ex}"
+            ) from ex
         remote_secrets = {
             r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
             for r in payload["entries"]
         }
         result = merge(self.store.list(), self.store.tombstones(),
-                       remote_entries, payload["tombstones"])
+                       remote_entries, remote_tombstones)
         if not result.changed:
             return 0
         self._apply_merge_result(result, remote_secrets)
@@ -496,7 +520,13 @@ class SyncEngine:
                                        passphrase=passphrase)
         except (NotFound, TransportError, BadPassword):
             return
-        unexpected = {r["id"] for r in payload["entries"]} - safe_ids
+        try:
+            entries, _ = validate_snapshot_payload(payload)
+        except ValidationError as ex:
+            raise SnapshotValidationError(
+                f"snapshot {tip} failed metadata validation: {ex}"
+            ) from ex
+        unexpected = {entry.id for entry in entries} - safe_ids
         if unexpected:
             raise TransportError(
                 f"rollback raced a concurrent change that added {len(unexpected)} "
@@ -518,7 +548,12 @@ class SyncEngine:
         # content-integrity check.
         target_tip = _Tip(version, commit["snapshot"], commit.get("entries_hash"))
         payload = self._decrypt_verified(target_tip, passphrase)
-        target_entries = [Entry.from_dict(r) for r in payload["entries"]]
+        try:
+            target_entries, target_tombstones = validate_snapshot_payload(payload)
+        except ValidationError as ex:
+            raise SnapshotValidationError(
+                f"snapshot {version} failed metadata validation: {ex}"
+            ) from ex
         target_secrets = {r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
                           for r in payload["entries"]}
         target_ids = {e.id for e in target_entries}
@@ -527,7 +562,7 @@ class SyncEngine:
         now = now_iso()
         removed = [{"id": e.id, "name": e.name, "deleted_at": now}
                    for e in self.store.list() if e.id not in target_ids]
-        tombs = _dedupe_tombstones(list(payload["tombstones"]) + removed)
+        tombs = _dedupe_tombstones(list(target_tombstones) + removed)
 
         for id_ in target_ids:
             sec, pf = target_secrets[id_]

@@ -32,6 +32,14 @@ an agent-readable file are explicit human exposure operations.
 | 0.9.0 | Opt-in isolated broker preview | Cross-platform sandbox tests; compatibility mode remains available |
 | 1.0.0 | High-assurance isolated mode | Independent review and red-team sign-off |
 
+## Implementation status
+
+| Workstream | Status |
+|---|---|
+| SEC-0 release containment | Complete in `56c0833` |
+| SEC-1 trust-boundary validation | Implemented on this branch; regression suite green |
+| SEC-2 through SEC-7 | Planned |
+
 ## Workstreams
 
 ### SEC-0: release containment

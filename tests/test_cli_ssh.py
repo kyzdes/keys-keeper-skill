@@ -3,6 +3,7 @@ from io import StringIO
 from unittest.mock import patch
 import pytest
 from keys_keeper import cli
+from keys_keeper.models import Entry, EntryType, now_iso
 from keys_keeper.paths import Paths
 from keys_keeper.store import MetadataStore
 
@@ -58,3 +59,27 @@ def test_ssh_invokes_ssh_with_resolved_key(cli_env, monkeypatch, tmp_path):
 def test_ssh_unknown_server(cli_env):
     rc = cli.main(["ssh", "no-such-server"])
     assert rc != 0
+
+
+def test_ssh_revalidates_legacy_metadata_before_exec(cli_env, capsys):
+    """Unsafe metadata already present on disk must not reach argv."""
+    now = now_iso()
+    MetadataStore(Paths()).add(Entry(
+        id="kk:11111111-1111-4111-8111-111111111111",
+        name="legacy-unsafe-server",
+        type=EntryType.SERVER,
+        fields={
+            "host": "good.example",
+            "user": "-oProxyCommand=touch /tmp/pwned",
+            "port": 22,
+            "auth": "none",
+        },
+        tags=[],
+        note="",
+        refs=[],
+        created_at=now,
+        updated_at=now,
+    ))
+
+    assert cli.main(["ssh", "legacy-unsafe-server"]) == 1
+    assert "unsafe" in capsys.readouterr().err

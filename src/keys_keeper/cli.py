@@ -15,7 +15,13 @@ from keys_keeper import __version__, clipboard
 from keys_keeper.audit import AuditLog
 from keys_keeper.backend import KeychainError
 from keys_keeper.composition import build_backend
-from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
+from keys_keeper.models import (
+    Entry,
+    EntryType,
+    ValidationError,
+    now_iso,
+    validate_snapshot_payload,
+)
 from keys_keeper.paths import Paths
 from keys_keeper.store import MetadataStore, NameConflict, NotFound, StoreError
 
@@ -680,16 +686,20 @@ def cmd_import(args: argparse.Namespace) -> int:
     except BadPassword as ex:
         sys.stderr.write(f"error: {ex}\n")
         return 1
-    payload = _json.loads(raw)
+    try:
+        payload = _json.loads(raw)
+        validated_entries, _ = validate_snapshot_payload(payload)
+    except (_json.JSONDecodeError, UnicodeDecodeError, ValidationError) as ex:
+        sys.stderr.write(f"error: invalid import payload: {ex}\n")
+        return 1
     store = MetadataStore(paths)
     backend = build_backend()
     audit = AuditLog(paths)
     existing = {e.name for e in store.list()}
     imported = 0
-    for rec in payload["entries"]:
-        secret = rec.pop("_secret", None)
-        passphrase = rec.pop("_secret_passphrase", None)
-        e = Entry.from_dict(rec)
+    for rec, e in zip(payload["entries"], validated_entries):
+        secret = rec.get("_secret")
+        passphrase = rec.get("_secret_passphrase")
         fresh = e.name not in existing
         if not fresh and not args.replace:
             continue

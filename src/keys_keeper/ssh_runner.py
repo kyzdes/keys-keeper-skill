@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 from keys_keeper.backend import KeychainBackend
-from keys_keeper.models import Entry, EntryType
+from keys_keeper.models import EntryType, validate_ssh_target
 from keys_keeper.refs import resolve_chain, RefMissingError
 from keys_keeper.store import MetadataStore
 
@@ -46,9 +46,11 @@ def run_ssh(
     server = store.get_by_name(server_name)
     if server is None or server.type != EntryType.SERVER:
         raise ValueError(f"{server_name!r} is not a server entry")
-    host = server.fields["host"]
-    user = server.fields.get("user", "root")
-    port = int(server.fields.get("port", 22))
+    host, user, port = validate_ssh_target(
+        host=server.fields["host"],
+        user=server.fields.get("user", "root"),
+        port=server.fields.get("port", 22),
+    )
     auth = server.fields.get("auth", "ssh_key")
 
     if auth == "ssh_key":
