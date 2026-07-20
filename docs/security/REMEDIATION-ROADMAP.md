@@ -38,7 +38,7 @@ an agent-readable file are explicit human exposure operations.
 |---|---|
 | SEC-0 release containment | Complete in `56c0833` |
 | SEC-1 trust-boundary validation | Complete in `f591bdc` |
-| SEC-2 secure local sinks and subprocesses | In progress: local sinks, audit metadata, clipboard pipe, argv-free macOS writes, and Linux enumeration containment implemented |
+| SEC-2 secure local sinks and subprocesses | In progress: local sinks, audit metadata, clipboard pipe, macOS/Linux credential subprocess containment, and SSH executable/tempfile hardening implemented |
 | SEC-3 through SEC-7 | Planned |
 
 ## Workstreams
