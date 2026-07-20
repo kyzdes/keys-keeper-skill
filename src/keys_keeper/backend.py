@@ -2,7 +2,8 @@
 from __future__ import annotations
 import subprocess
 from abc import ABC, abstractmethod
-from pathlib import Path
+
+from keys_keeper.macos_keychain import MacOSNativeKeychain, SecurityFrameworkError
 
 
 class KeychainError(RuntimeError):
@@ -66,116 +67,119 @@ class KeychainBackend(ABC):
 
 
 class MacOSKeychainBackend(KeychainBackend):
-    """Wraps the macOS `security` CLI.
+    """macOS Keychain backend with native secret-value operations.
 
     All entries belong to one fixed `service` (default: "keys-keeper").
     The `account` is the entry's UUID id (e.g. "kk:abc..." or "kk:abc:passphrase").
     Use a custom `keychain_path` in tests to avoid touching the user's login keychain.
+
+    Writes use Keychain Services directly, keeping values out of process argv.
+    Reads and deletes retain the fixed system ``security`` executable so legacy
+    items keep their existing ACL behavior. Native writes explicitly trust that
+    executable; no per-upgrade Keychain approval is required.
     """
 
-    def __init__(self, *, service: str = "keys-keeper", keychain_path: str | None = None):
+    def __init__(
+        self,
+        *,
+        service: str = "keys-keeper",
+        keychain_path: str | None = None,
+        allow_interaction: bool = True,
+    ):
         self.service = service
         self.keychain_path = keychain_path
+        self._native = MacOSNativeKeychain(
+            service=service,
+            keychain_path=keychain_path,
+            allow_interaction=allow_interaction,
+        )
 
     def _kc_args(self) -> list[str]:
         return [self.keychain_path] if self.keychain_path else []
 
     def get(self, account: str) -> Sealed:
-        # Use `-g` so we can detect non-printable / multi-line values via the
-        # `password: 0x<HEX>  "<octal>"` form on stderr. Plain printable values
-        # come back via `-w` on stdout verbatim; hex-encoded ones (anything
-        # containing a newline or other non-printable byte) we decode from the
-        # `0x` prefix on stderr.
+        # `-g` emits non-printable/multiline values as an exact hex encoding;
+        # `-w` provides an unambiguous printable value. Both outputs are private
+        # pipes, never argv or inherited terminal streams.
         result = subprocess.run(
             [
-                "security", "find-generic-password",
-                "-s", self.service, "-a", account,
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s",
+                self.service,
+                "-a",
+                account,
                 "-g",
                 *self._kc_args(),
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             raise KeychainError(f"keychain entry not found: {account}")
-        # stderr starts with either `password: "literal"\n` or
-        # `password: 0xHEX  "octal-form"\n`. Prefer the hex form when present.
         first_line = result.stderr.splitlines()[0] if result.stderr else ""
         if first_line.startswith("password: 0x"):
             hex_part = first_line[len("password: 0x"):]
-            # hex runs until a space (the tail is `  "octal"` for display)
-            hex_str = hex_part.split(" ", 1)[0]
+            hex_string = hex_part.split(" ", 1)[0]
             try:
-                return Sealed(bytes.fromhex(hex_str).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError) as e:
+                return Sealed(bytes.fromhex(hex_string).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as ex:
                 raise KeychainError(
-                    f"failed to decode keychain entry {account}: {e}"
-                )
-        # Plain printable value — read from `-w` for an unambiguous string.
+                    f"failed to decode keychain entry {account}"
+                ) from ex
         plain = subprocess.run(
             [
-                "security", "find-generic-password",
-                "-s", self.service, "-a", account,
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s",
+                self.service,
+                "-a",
+                account,
                 "-w",
                 *self._kc_args(),
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if plain.returncode != 0:
             raise KeychainError(f"keychain entry not found: {account}")
         return Sealed(plain.stdout.rstrip("\n"))
 
     def set(self, account: str, value: str) -> None:
-        # KNOWN LIMITATION (H3 — argv exposure): the secret is passed as the
-        # `-w <value>` argument below, so for the brief lifetime of this child
-        # process the plaintext is visible in its argv to other local users via
-        # `ps -axww`. The Linux backend avoids this by writing the secret to the
-        # `security`-equivalent over stdin; the macOS `security` tool has no
-        # stdin-password mode, and the only argv-free alternative — `-w` with no
-        # value, which makes `security` prompt on the controlling terminal —
-        # was evaluated and rejected because it cannot satisfy this backend's
-        # contract:
-        #   1. The interactive prompt reads a SINGLE line (tty line discipline),
-        #      so it truncates any multi-line secret at the first newline. PEM /
-        #      OpenSSH private keys and other multi-line values (see
-        #      test_set_multiline_value) would be silently corrupted.
-        #   2. Prompt mode requires `-w` to be the literal last argv token, which
-        #      is mutually exclusive with passing a `[keychain]` path. That would
-        #      force every write onto the user's default login keychain and break
-        #      test isolation (and the custom-keychain feature) entirely.
-        # A pty-driven prompt was prototyped and confirmed to corrupt multi-line
-        # values and ignore the keychain path, so it is NOT shipped: a keychain
-        # write that can truncate or mis-target a secret is worse than the argv
-        # window. The exposure is bounded to a sub-second child on a machine
-        # where a local attacker would, in most threat models, already have the
-        # access needed to read the keychain anyway. Revisit if Apple adds a
-        # stdin/file password input to `security` (none exists as of macOS 15).
-        # delete first to avoid duplicate entries
+        # The system CLI can delete legacy items under their existing ACL. The
+        # replacement value is then created natively, never through `-w VALUE`.
         self.delete(account)
-        result = subprocess.run(
-            [
-                "security", "add-generic-password",
-                "-s", self.service, "-a", account, "-w", value,
-                "-U",  # update if exists (belt-and-suspenders)
-                *self._kc_args(),
-            ],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            raise KeychainError(f"failed to set keychain entry {account}: {result.stderr.strip()}")
+        try:
+            self._native.add(account, value)
+        except (SecurityFrameworkError, UnicodeEncodeError) as ex:
+            raise KeychainError(f"failed to set keychain entry {account}") from ex
 
     def delete(self, account: str) -> None:
-        subprocess.run(
-            ["security", "delete-generic-password", "-s", self.service, "-a", account, *self._kc_args()],
-            capture_output=True, text=True,
+        result = subprocess.run(
+            [
+                "/usr/bin/security",
+                "delete-generic-password",
+                "-s",
+                self.service,
+                "-a",
+                account,
+                *self._kc_args(),
+            ],
+            capture_output=True,
+            text=True,
         )
-        # ignore returncode — missing entry is fine
+        # macOS maps errSecItemNotFound (-25300) to process status 44. Missing
+        # entries are an intentional no-op; any other failure must stop a
+        # metadata deletion or replacement instead of leaving an orphan.
+        if result.returncode not in (0, 44):
+            raise KeychainError(f"failed to delete keychain entry {account}")
 
     def list_ids(self) -> list[str]:
         # `security dump-keychain` is heavy + verbose; we use a more targeted approach
         # by parsing `security find-generic-password` repeatedly is impractical too.
         # Instead, dump all generic passwords for our service via dump-keychain.
         result = subprocess.run(
-            ["security", "dump-keychain", *self._kc_args()],
+            ["/usr/bin/security", "dump-keychain", *self._kc_args()],
             capture_output=True, text=True,
         )
         if result.returncode != 0:

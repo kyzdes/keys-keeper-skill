@@ -21,9 +21,11 @@ def build_backend() -> KeychainBackend:
         return WindowsCredentialBackend(service=service)
     if sys.platform.startswith("linux"):
         return _build_linux_backend(service)
+    keychain_path = os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN")
     return MacOSKeychainBackend(
         service=service,
-        keychain_path=os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN"),
+        keychain_path=keychain_path,
+        allow_interaction=keychain_path is None,
     )
 
 
