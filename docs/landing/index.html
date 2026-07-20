@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>keys-keeper · a cross-platform secrets manager AI agents architecturally cannot leak from</title>
-<meta name="description" content="Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value. Free, MIT, OSS.">
+<title>keys-keeper · keep plaintext out of normal agent tool responses</title>
+<meta name="description" content="Stores keys in the native OS credential store and routes normal agent workflows to explicit local sinks without printing plaintext. Free, MIT, OSS.">
 <meta name="theme-color" content="#0a0b0c">
-<meta property="og:title" content="keys-keeper · the secrets manager AI agents can't leak from">
-<meta property="og:description" content="Stores keys in the macOS Keychain or Windows Credential Manager. Ships with a Claude skill that lets agents put secrets into your files without ever seeing the value.">
+<meta property="og:title" content="keys-keeper · transcript-safer secret workflows for coding agents">
+<meta property="og:description" content="Stores keys in the native OS credential store and avoids returning plaintext in normal agent tool output. Same-user shell access remains outside the boundary.">
 <meta property="og:url" content="https://github.com/kyzdes/keys-keeper-skill">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
@@ -688,9 +688,9 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.7.1 · macOS + Windows + Linux · MIT</p>
-      <h1>a cross-platform secrets manager AI agents <span class="accent">architecturally cannot leak from</span>.</h1>
-      <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Ships with a Claude Code plugin that lets agents <em>put</em> secrets into your files without ever <em>seeing</em> the value. Free, open source, auto-updating install.</p>
+      <p class="eyebrow">v0.7.2 · macOS + Windows + Linux · MIT</p>
+      <h1>a cross-platform secrets workflow that keeps plaintext <span class="accent">out of normal agent output</span>.</h1>
+      <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Normal commands route values to explicit sinks instead of returning them in tool output. Free, open source, reviewed-release install.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#install" id="hero-copy">
           <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="9" rx="1.5"/><path d="M3 11V4a1 1 0 011-1h7"/></svg>
@@ -783,7 +783,7 @@ footer .tagline {
           <div class="tx-line"><span class="role">←</span><span class="ok">injected openrouter → .env</span></div>
         </div>
         <div class="contrast-col__caption">
-          The agent never possessed the value. The CLI read it from the system clipboard, wrote to your OS credential store, then wrote into <code class="mono" style="color:var(--accent);">.env</code> directly. The transcript holds <strong>only the operation</strong>. The value lives in the macOS Keychain (Touch-ID protected) or Windows Credential Manager (DPAPI-bound) and in the file you wanted it in. Nowhere else.
+          The command output contains only the operation. The CLI read the system clipboard, wrote to the OS credential store, then wrote into <code class="mono" style="color:var(--accent);">.env</code> directly. The resulting file is an <strong>exposure sink</strong>: any agent or process allowed to read it can recover the value.
         </div>
       </div>
     </div>
@@ -796,7 +796,7 @@ footer .tagline {
     <div class="section-head">
       <p class="eyebrow">the design</p>
       <h2>command surface, by design</h2>
-      <p>The split is structural, not a convention. The shipped Claude skill markdown enumerates exactly which commands the agent may use. The one command that prints plaintext to stdout — <code class="mono" style="color:var(--accent);">keys reveal</code> — refuses to run unless an explicit env-var is set, which the skill never sets and the agent has no path to set. The structural guard fires before any prose can override it.</p>
+      <p>The shipped Claude skill markdown enumerates the intended command surface. Normal commands avoid printing plaintext; <code class="mono" style="color:var(--accent);">keys reveal</code> has a caller-controlled environment guard to prevent accidents. This is transcript hygiene, not isolation from arbitrary same-user shell code.</p>
     </div>
 
     <div class="surface-grid">
@@ -830,7 +830,7 @@ footer .tagline {
           <span class="check">✓</span>
           <div>
             <code>keys inject NAME --file F --as ENV</code>
-            <div class="desc">Appends <code style="font-family:'JetBrains Mono',monospace">ENV=value</code> to the file. The CLI writes; the agent never sees.</div>
+            <div class="desc">Appends <code style="font-family:'JetBrains Mono',monospace">ENV=value</code> without printing it. Any process that can read the file can still recover the value.</div>
           </div>
         </div>
         <div class="surface-row">
@@ -858,14 +858,14 @@ footer .tagline {
           <span class="check">⚠</span>
           <div>
             <code>keys reveal NAME</code>
-            <div class="desc">Refuses to run unless <code style="font-family:'JetBrains Mono',monospace; font-size:12px;">KEYS_KEEPER_ALLOW_REVEAL=1</code> is in env. Most users never set it; agents have no path to set it. This is the structural guard that fires before any prose can override it.</div>
+            <div class="desc">Refuses to run unless <code style="font-family:'JetBrains Mono',monospace; font-size:12px;">KEYS_KEEPER_ALLOW_REVEAL=1</code> is in env. This prevents accidental use, but a shell-capable caller can set the variable itself.</div>
           </div>
         </div>
       </div>
     </div>
 
     <blockquote class="surface-callout">
-      The shipped skill markdown tells Claude: <strong>"You MUST NOT run <code>keys reveal</code>. You CAN use <code>keys copy / inject / resolve / ssh</code>."</strong> The env-var gate makes that instruction <em>structural</em>. Even if the agent tried, the CLI itself refuses.
+      The shipped skill markdown tells Claude: <strong>"You MUST NOT run <code>keys reveal</code>. You CAN use <code>keys copy / inject / resolve / ssh</code>."</strong> That contract reduces accidental transcript exposure; it does not constrain a malicious or prompt-injected same-user agent.
     </blockquote>
   </div>
 </section>
@@ -1200,8 +1200,8 @@ footer .tagline {
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">install in 2 minutes</p>
-      <h2>two lines in Claude Code. auto-updates.</h2>
-      <p>The Claude Code plugin is the recommended path — adds the skill and a SessionStart hook that pulls new releases via <code class="mono" style="color:var(--accent);">claude plugin update</code> automatically. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
+      <h2>two lines in Claude Code. reviewed updates.</h2>
+      <p>The Claude Code plugin adds the skill and auto-sync hook. Mutable-HEAD plugin updates are disabled by default; install reviewed releases explicitly. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
     </div>
 
     <p class="install-note" style="margin: 0 0 12px; color: var(--text-3); font-size: 14px;">Run these as <strong>two separate slash commands</strong> in Claude Code — paste step 1, press Enter, then paste step 2. (Claude Code runs one slash command at a time.)</p>
@@ -1295,8 +1295,8 @@ footer .tagline {
         <p>S3-compatible backup and sync across machines — AWS S3, Cloudflare R2, Backblaze B2, or self-hosted MinIO. End-to-end encrypted as one AES-256-GCM blob; the bucket only ever holds ciphertext. <code style="font-family:'JetBrains Mono',monospace;">keys sync setup</code>.</p>
       </div>
       <div class="limit-card">
-        <h3>zero-knowledge web vault</h3>
-        <p>Open your vault in a browser from a host you run yourself. The page decrypts in-memory in the browser; the server never sees plaintext. <code style="font-family:'JetBrains Mono',monospace;">keys webvault serve</code> (read-only v1).</p>
+        <h3>browser-decrypted web vault</h3>
+        <p>Open your vault from a host you run yourself. The reviewed page decrypts in-memory in the browser, while normal server requests handle ciphertext. You still trust the host to serve honest JavaScript. <code style="font-family:'JetBrains Mono',monospace;">keys webvault serve</code> (read-only v1).</p>
       </div>
     </div>
   </div>
@@ -1307,13 +1307,13 @@ footer .tagline {
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">honest limitations</p>
-      <h2>what v0.7.1 is not.</h2>
+      <h2>what v0.7.2 is not.</h2>
       <p>If any of these is a dealbreaker, that's fine — none of them are theoretically hard, they're just not done yet. Tracking on the roadmap above.</p>
     </div>
     <div class="limit-cards">
       <div class="limit-card">
         <h3>headless Linux needs a master key</h3>
-        <p>Desktop Linux uses the OS keyring via secret-tool. A headless server has no keyring daemon, so the encrypted-file backend needs <code>KEYS_KEEPER_MASTER_KEY</code> in the environment to unlock.</p>
+        <p>Desktop Linux uses the OS keyring via secret-tool. A headless server has no keyring daemon, so the encrypted-file backend needs <code>KEYS_KEEPER_MASTER_KEY</code> in the environment to unlock. An agent inheriting that environment is not isolated from the vault.</p>
       </div>
       <div class="limit-card">
         <h3>single user</h3>
@@ -1341,12 +1341,12 @@ footer .tagline {
     </div>
     <div class="threat-grid">
       <div class="threat-block def">
-        <h3>defends against</h3>
-        <p>AI agents extracting plaintext into transcripts (the original motivation), accidental <code style="font-family:'JetBrains Mono',monospace; color:var(--text-2);">git add</code> of <code style="font-family:'JetBrains Mono',monospace; color:var(--text-2);">.env</code> files, plaintext clipboard residue past the auto-clear window, ad-hoc shell scripts that need a key without you retyping it.</p>
+        <h3>reduces</h3>
+        <p>Accidental plaintext in normal tool output and transcripts when an agent follows the generated rules, long-lived clipboard residue, and ad-hoc manual secret handling.</p>
       </div>
       <div class="threat-block skip">
         <h3>does not defend against</h3>
-        <p>A root-level adversary on your Mac, malware with full keychain access, screen-recording on a compromised host, or network attackers (the admin is localhost-only and never reachable from outside the loopback interface anyway).</p>
+        <p>A malicious or prompt-injected agent with arbitrary shell access as the same OS user, any process that can read a selected file or clipboard sink, an inherited master key, direct credential-store access, compromised updates, root, or malware.</p>
       </div>
     </div>
   </div>
@@ -1360,7 +1360,7 @@ footer .tagline {
     <div class="row">
       <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.7.1</span>
+        <span>keys-keeper · v0.7.2</span>
       </a>
       <div class="links">
         <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>

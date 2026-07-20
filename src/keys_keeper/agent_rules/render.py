@@ -23,8 +23,8 @@ from keys_keeper.agent_rules.canonical import (
 CLAUDE_SKILL_NAME = "keys-keeper"
 CLAUDE_SKILL_DESCRIPTION = (
     "Securely save, retrieve, or reference API keys, SSH keys, server "
-    "credentials, and domain info via the `keys` CLI, without ever exposing "
-    "the plaintext value. Use when the user mentions saving, getting, "
+    "credentials, and domain info via the `keys` CLI using workflows that "
+    "avoid returning plaintext in normal tool output. Use when the user mentions saving, getting, "
     "injecting, or referencing secrets, API keys, tokens, SSH keys, server "
     "addresses, or domain configs."
 )

@@ -12,13 +12,12 @@ class KeychainError(RuntimeError):
 class Sealed:
     """A plaintext secret that refuses to render itself.
 
-    The product's central guarantee is that AI agents cannot leak secret
-    values into their transcripts. The keychain backend returns Sealed
-    instead of bare str so an accidental f-string, print, log line, or
-    repr in a debug session prints "<sealed>" instead of the value.
-    Plaintext is only produced via the explicit `.unseal()` call —
-    grep -rn "\\.unseal()" enumerates every site where a secret leaves
-    its envelope.
+    This is defense-in-depth against accidental rendering, not an
+    authorization boundary. The keychain backend returns Sealed instead of a
+    bare str so an accidental f-string, print, log line, or repr in a debug
+    session prints "<sealed>" instead of the value. Any caller that can import
+    this package can deliberately call `.unseal()`; high-assurance isolation
+    therefore requires a separate broker/security principal.
     """
 
     __slots__ = ("_v",)

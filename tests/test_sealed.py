@@ -1,8 +1,9 @@
-"""Sealed wrapper — the structural guard behind 'AI agents cannot leak'.
+"""Sealed wrapper — defense-in-depth against accidental rendering.
 
 These tests pin the rendering invariants. If any of them break, an
 accidental f-string or print of a Sealed value would leak plaintext
-into a transcript. That is the whole reason this class exists.
+into a transcript. Deliberate `.unseal()` remains possible and is covered by
+the explicit test below; Sealed is not an authorization boundary.
 """
 from keys_keeper.backend import Sealed
 
