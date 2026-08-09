@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keys-keeper"
-version = "0.7.1"
-description = "Cross-platform (macOS + Windows + Linux) secrets manager that AI coding agents architecturally cannot leak from — CLI + local web admin + Claude skill"
+version = "0.7.2"
+description = "Cross-platform secrets workflow that keeps plaintext out of normal agent tool responses by routing values to explicit local sinks"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -30,7 +30,10 @@ classifiers = [
 ]
 dependencies = [
     "jinja2>=3.1",
-    "cryptography>=41.0",
+    # 48.0.1 updates the bundled wheels to OpenSSL 4.0.1. Keep the upper
+    # bound until the support policy decides whether dropping Intel macOS
+    # wheels in cryptography 49 is acceptable.
+    "cryptography>=48.0.1,<49",
 ]
 
 [project.urls]

@@ -137,8 +137,11 @@ def test_snapshot_pointer_swap_is_rejected(tmp_path):
     forged_payload = {
         "schema_version": 1,
         "entries": [{
-            "id": "kk:deadbeef", "name": "ATTACKER", "type": "api_key",
-            "fields": {}, "updated_at": "2099-01-01T00:00:00Z",
+            "id": "kk:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "name": "attacker", "type": "api_key", "fields": {},
+            "tags": [], "note": "", "refs": [],
+            "created_at": "2099-01-01T00:00:00Z",
+            "updated_at": "2099-01-01T00:00:00Z",
             "_secret": "sk-evil", "_secret_passphrase": None,
         }],
         "tombstones": [],
@@ -176,8 +179,11 @@ def test_rollback_to_swapped_snapshot_is_rejected(tmp_path):
     a.engine.push(PW)                          # v2
     commit = json.loads(r.objs[vkey(1)])
     forged = {"schema_version": 1,
-              "entries": [{"id": "kk:evil", "name": "X", "type": "api_key",
-                           "fields": {}, "updated_at": "2099-01-01T00:00:00Z",
+              "entries": [{"id": "kk:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                           "name": "attacker", "type": "api_key", "fields": {},
+                           "tags": [], "note": "", "refs": [],
+                           "created_at": "2099-01-01T00:00:00Z",
+                           "updated_at": "2099-01-01T00:00:00Z",
                            "_secret": "x", "_secret_passphrase": None}],
               "tombstones": []}
     r.objs[commit["snapshot"]] = encrypt_snapshot(forged, passphrase=PW)

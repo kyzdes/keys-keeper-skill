@@ -9,6 +9,9 @@ Two layers:
 """
 from __future__ import annotations
 
+import os
+import subprocess
+
 import pytest
 
 from keys_keeper.backend import KeychainError, Sealed
@@ -60,17 +63,53 @@ def test_list_ids_reads_stderr(monkeypatch):
     list_ids() must parse stderr — parsing stdout alone returned []."""
     class _R:
         returncode = 0
-        stdout = "sk-secret-value\n"   # secret on stdout — must be ignored
         stderr = (
             "[/org/freedesktop/secrets/collection/login/1]\n"
             "attribute.account = kk:a\n"
             "attribute.service = keys-keeper\n"
             "attribute.account = kk:b\n"
         )
-    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", lambda *a, **k: _R())
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _R()
+
+    monkeypatch.setattr(
+        "keys_keeper.backend_linux.shutil.which",
+        lambda _name: "/usr/bin/secret-tool",
+    )
+    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", fake_run)
     ids = SecretToolBackend(service="keys-keeper").list_ids()
     assert sorted(ids) == ["kk:a", "kk:b"]
-    assert "sk-secret-value" not in ids
+    assert captured["command"][0] == os.path.abspath("/usr/bin/secret-tool")
+    assert captured["kwargs"]["stdout"] is subprocess.DEVNULL
+    assert captured["kwargs"]["stderr"] is subprocess.PIPE
+
+
+def test_lookup_uses_resolved_absolute_executable(monkeypatch):
+    captured = {}
+
+    class _R:
+        returncode = 0
+        stdout = "test-secret"
+        stderr = ""
+
+    monkeypatch.setattr(
+        "keys_keeper.backend_linux.shutil.which",
+        lambda _name: "relative/tools/secret-tool",
+    )
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return _R()
+
+    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", fake_run)
+    backend = SecretToolBackend(service="keys-keeper")
+    assert backend.get("kk:test") == Sealed("test-secret")
+    assert os.path.isabs(captured["command"][0])
+    assert os.path.basename(captured["command"][0]) == "secret-tool"
 
 
 def test_availability_false_when_secret_tool_absent(monkeypatch):
@@ -80,12 +119,21 @@ def test_availability_false_when_secret_tool_absent(monkeypatch):
 
 def test_availability_true_when_daemon_answers(monkeypatch):
     monkeypatch.setattr("keys_keeper.backend_linux.shutil.which", lambda _n: "/usr/bin/secret-tool")
+    captured = {}
 
     class _R:
         returncode = 1  # "no results" still means the daemon answered
 
-    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", lambda *a, **k: _R())
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _R()
+
+    monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", fake_run)
     assert secret_service_available() is True
+    assert "account" in captured["command"]
+    assert "kk:__keys-keeper-availability-probe__" in captured["command"]
+    assert captured["kwargs"]["stdout"] is subprocess.DEVNULL
 
 
 def test_availability_false_on_dbus_error(monkeypatch):

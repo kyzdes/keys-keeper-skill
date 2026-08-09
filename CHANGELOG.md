@@ -2,15 +2,37 @@
 
 All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](https://keepachangelog.com/) + [Semver](https://semver.org/).
 
-Distribution: install via Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`) or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace auto-update on every Claude Code session start.
+Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace updates are explicit by default; mutable-HEAD SessionStart updates remain an opt-in compatibility mode.
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [0.7.2] — 2026-08-09
+
+### Security
+
+- Hardened plaintext file sinks with owner-only creation and replacement semantics, while preserving existing destination permissions where appropriate. Audit metadata no longer records secret-adjacent source paths.
+- Kept macOS Keychain writes and clipboard-clear verification values out of process arguments. Linux Secret Service enumeration no longer requests or parses secret values.
+- Added strict validation and size bounds for imported metadata before any vault mutation.
+- Hardened SSH execution: trusted executable resolution, owner-only key tempfiles, and safer cleanup across supported platforms.
+- Moved the local admin token from navigable URLs into an `HttpOnly` session cookie and bounded request bodies before parsing.
+- Replaced unsupported same-user isolation claims with the accurate compatibility-mode boundary: normal commands reduce transcript exposure, while clipboard/file sinks and arbitrary same-user shell code remain outside the guarantee.
+
+### Added
+
+- A minimal, implicitly invokable Codex plugin bundle under `plugins/keys-keeper`.
+- A repository-local Codex marketplace manifest at `.agents/plugins/marketplace.json`, so the GitHub repository URL is sufficient to discover and install the plugin.
+- Regression contracts for release-version parity, Codex bundle isolation, prompt-injection handling, secure sinks, SSH execution, Keychain argv hygiene, and local-admin authentication.
+
 ### Changed
 
-- **Dashboard: the FILTER tag rail no longer balloons to many rows when a vault has lots of tags.** It is now a single horizontally-scrolling row, so the entries table stays visible without scrolling the page past a wall of pills. Active filters sort to the front (flush against the pinned `FILTER` label) so they never scroll out of view, a right-edge fade signals when more tags are off-screen, a vertical mouse wheel scrolls the rail sideways, and chips are now keyboard-focusable (Tab + Enter/Space) with a visible focus ring. CSS/JS only — no change to the page structure or filter semantics.
+- Claude's SessionStart updater is now fail-closed by default. Mutable `HEAD` updates require the explicit `KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE=1` opt-in; reviewed release updates remain the recommended path.
+- The dashboard FILTER rail stays on one horizontally scrolling row, keeping the entries table visible even with many tags.
+
+[Diff](https://github.com/kyzdes/keys-keeper-skill/compare/v0.7.1...v0.7.2)
 
 ---
 

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Keys Keeper"
+  short_description: "Route local secrets without printing their values"
+  brand_color: "#D97757"
+  default_prompt: "Use Keys Keeper to select and route a saved secret without revealing its value."
+policy:
+  allow_implicit_invocation: true

@@ -4,7 +4,14 @@ import pytest
 
 from keys_keeper.models import Entry, EntryType, now_iso
 from keys_keeper.backend import KeychainError
-from keys_keeper.sync import merge, vkey, content_hash, build_snapshot_payload
+from keys_keeper.sync import (
+    SnapshotValidationError,
+    build_snapshot_payload,
+    content_hash,
+    encrypt_snapshot,
+    merge,
+    vkey,
+)
 from _sync_fakes import (
     FakeRemote, RaceOnceRemote, NonCasRemote, FakeBackend, make_device, add_entry,
     live_ids, names,
@@ -38,6 +45,41 @@ def test_pull_is_idempotent_no_duplicates(tmp_path):
     assert b.paths.data_json.read_text() == before
     assert names(b) == ["api-one"]          # exactly one, no duplicate
     assert b.backend.d  # secret materialised on B
+
+
+def test_pull_rejects_reserved_account_before_local_mutation(tmp_path):
+    remote = FakeRemote()
+    source = make_device(remote, tmp_path, "source")
+    add_entry(source, "safe-entry", "sk-safe")
+    source.engine.push(PW)
+
+    commit = json.loads(remote.objs[vkey(1)])
+    malicious = {
+        "schema_version": 2,
+        "entries": [{
+            "id": "kk:sync-passphrase",
+            "name": "attacker-entry",
+            "type": "api_key",
+            "fields": {},
+            "tags": [],
+            "note": "",
+            "refs": [],
+            "created_at": "2026-07-20T00:00:00Z",
+            "updated_at": "2026-07-20T00:00:00Z",
+            "_secret": "overwrite-attempt",
+            "_secret_passphrase": None,
+        }],
+        "tombstones": [],
+    }
+    remote.objs[commit["snapshot"]] = encrypt_snapshot(malicious, passphrase=PW)
+    commit["entries_hash"] = content_hash(malicious)
+    remote.objs[vkey(1)] = json.dumps(commit).encode()
+
+    target = make_device(remote, tmp_path, "target")
+    with pytest.raises(SnapshotValidationError, match="reserved"):
+        target.engine.pull(PW)
+    assert target.store.list() == []
+    assert target.backend.d == {}
 
 
 def test_no_empty_commit(tmp_path):

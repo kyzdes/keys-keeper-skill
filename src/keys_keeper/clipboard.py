@@ -14,6 +14,7 @@ fits keys-keeper's "values go to a target, not to stdout" pattern.
   rather than a traceback.
 """
 from __future__ import annotations
+import os
 import shutil
 import subprocess
 import sys
@@ -47,16 +48,20 @@ _HEADLESS_MSG = (
 
 
 def _linux_copy_cmd() -> list[str]:
-    for tool in _LINUX_PRIORITY:
-        if shutil.which(tool):
-            return _LINUX_COPY[tool]
+    for family in _LINUX_PRIORITY:
+        command = _LINUX_COPY[family]
+        resolved = shutil.which(command[0])
+        if resolved:
+            return [os.path.abspath(resolved), *command[1:]]
     raise ClipboardUnavailable(_HEADLESS_MSG)
 
 
 def _linux_paste_cmd() -> list[str]:
-    for tool in _LINUX_PRIORITY:
-        if shutil.which(tool):
-            return _LINUX_PASTE[tool]
+    for family in _LINUX_PRIORITY:
+        command = _LINUX_PASTE[family]
+        resolved = shutil.which(command[0])
+        if resolved:
+            return [os.path.abspath(resolved), *command[1:]]
     raise ClipboardUnavailable(_HEADLESS_MSG)
 
 
@@ -173,15 +178,17 @@ if sys.platform == "win32":
 elif sys.platform == "darwin":
 
     def read() -> str:
-        result = subprocess.run(["pbpaste"], capture_output=True, text=True)
+        result = subprocess.run(
+            ["/usr/bin/pbpaste"], capture_output=True, text=True
+        )
         return result.stdout
 
     def write(value: str) -> bool:
-        proc = subprocess.run(["pbcopy"], input=value, text=True)
+        proc = subprocess.run(["/usr/bin/pbcopy"], input=value, text=True)
         return proc.returncode == 0
 
     def clear() -> None:
-        subprocess.run(["pbcopy"], input="", text=True)
+        subprocess.run(["/usr/bin/pbcopy"], input="", text=True)
 
 elif sys.platform.startswith("linux"):
 
@@ -212,13 +219,20 @@ def spawn_clear_after(value_hash: str, delay_sec: int) -> None:
     if its SHA-256 still matches `value_hash` (i.e. the user hasn't copied
     something else in the meantime).
 
-    Detached so the CLI exits immediately after `keys copy`. The hash is
-    safe to pass via argv — it's a hash, not plaintext.
+    Detached so the CLI exits immediately after `keys copy`. The hash is a
+    verifier for the clipboard value, so it crosses a private stdin pipe and
+    never appears in the child process's argv.
     """
-    args = [sys.executable, "-m", "keys_keeper._clipboard_clear_daemon",
-            value_hash, str(delay_sec)]
+    if len(value_hash) != 64 or any(ch not in "0123456789abcdef" for ch in value_hash):
+        raise ValueError("value_hash must be a lowercase SHA-256 digest")
+    args = [
+        sys.executable,
+        "-m",
+        "keys_keeper._clipboard_clear_daemon",
+        str(delay_sec),
+    ]
     kwargs: dict = {
-        "stdin": subprocess.DEVNULL,
+        "stdin": subprocess.PIPE,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "close_fds": True,
@@ -231,4 +245,11 @@ def spawn_clear_after(value_hash: str, delay_sec: int) -> None:
         )
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(args, **kwargs)
+    process = subprocess.Popen(args, **kwargs)
+    if process.stdin is None:
+        raise RuntimeError("clipboard clear daemon pipe was not created")
+    try:
+        process.stdin.write((value_hash + "\n").encode("ascii"))
+        process.stdin.flush()
+    finally:
+        process.stdin.close()

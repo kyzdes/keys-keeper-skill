@@ -4,6 +4,7 @@ import gzip
 import json
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -47,7 +48,7 @@ _UNTRUSTED_FIELD_MAX_LEN = 256
 
 def _sanitize_untrusted(s: str | None) -> str | None:
     """Strip control chars and cap length on values that originate from the
-    OS (parent argv via `ps`) or from raw CLI flags. The audit JSONL is read
+    OS (parent executable identity) or from raw CLI flags. The audit JSONL is read
     back by the admin UI; defense-in-depth against future code paths that
     might render these fields without escaping (the current renderer uses
     textContent, but we keep this guard so a regression there can't immediately
@@ -63,18 +64,26 @@ def _sanitize_untrusted(s: str | None) -> str | None:
 def _resolve_caller_path(pid: int) -> str:
     """Best-effort lookup of the parent process for the audit record.
 
-    On macOS we read argv via `ps`. On Windows we use ctypes against
-    kernel32 to get the image path — Windows command-line lookup requires
-    either WMI (slow, ~200-500ms per audit event) or undocumented PEB
-    parsing (fragile across WoW64), and the image path alone already
-    captures 95% of the useful signal (which shell / IDE / agent invoked
-    us). Document this asymmetry: macOS caller_path is a command line,
-    Windows caller_path is an exe path.
+    Record only the executable identity, never its argument vector: wrappers
+    frequently contain credentials in argv. Linux exposes the executable via
+    /proc; macOS uses the absolute /bin/ps with ``comm=``; Windows queries the
+    process image path through kernel32.
     """
     try:
         if sys.platform == "win32":
             return _sanitize_untrusted(_resolve_caller_path_win(pid)) or "?"
-        out = os.popen(f"ps -p {pid} -o command=").read().strip()
+        if sys.platform.startswith("linux"):
+            out = os.readlink(f"/proc/{pid}/exe")
+            return _sanitize_untrusted(out) or "?"
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+        out = result.stdout.strip() if result.returncode == 0 else ""
         return _sanitize_untrusted(out) or "?"
     except Exception:
         return "?"
@@ -135,14 +144,17 @@ class AuditLog:
         ppid = os.getppid()
         event = AuditEvent(
             ts=now,
-            op=op,
-            name=name,
-            id=id_,
+            op=_sanitize_untrusted(op) or "?",
+            name=_sanitize_untrusted(name) or "?",
+            id=_sanitize_untrusted(id_) or "?",
             caller_pid=ppid,
             caller_path=_resolve_caller_path(ppid),
             file_target=_sanitize_untrusted(file_target),
             success=success,
-            error=error,
+            # Exception text is not durable audit metadata: an upstream tool or
+            # backend can embed a credential in it. Keep only the fact of an
+            # error; the interactive caller already receives the live message.
+            error="operation failed" if error else None,
         )
         with open(self.paths.audit_jsonl, "a", opener=_private_opener) as f:
             f.write(event.to_json() + "\n")

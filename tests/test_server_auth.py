@@ -1,5 +1,7 @@
 import threading
 import time
+import http.cookiejar
+import socket
 import urllib.request
 import urllib.error
 import pytest
@@ -30,6 +32,22 @@ def _fetch(url, token=None):
     return urllib.request.urlopen(req, timeout=2)
 
 
+def _raw_post_status(admin, headers: dict[str, str]) -> int:
+    lines = [
+        "POST /api/heartbeat HTTP/1.1",
+        f"Host: 127.0.0.1:{admin.bound_port}",
+        f"Sec-Keys-Token: {admin.token}",
+        "Connection: close",
+        *(f"{key}: {value}" for key, value in headers.items()),
+        "",
+        "",
+    ]
+    with socket.create_connection(("127.0.0.1", admin.bound_port), timeout=2) as sock:
+        sock.sendall("\r\n".join(lines).encode("ascii"))
+        response = sock.recv(4096).decode("ascii", "replace")
+    return int(response.split(" ", 2)[1])
+
+
 def test_request_without_token_returns_403(admin):
     url = f"http://127.0.0.1:{admin.bound_port}/api/entries"
     with pytest.raises(urllib.error.HTTPError) as ex:
@@ -55,11 +73,53 @@ def test_initial_html_response_includes_token_in_query(admin):
     resp = _fetch(url)
     assert resp.status == 200
     body = resp.read().decode("utf-8")
-    # the JS should grab the token from location.search and stash it in sessionStorage,
-    # then strip it from the URL via history.replaceState.
-    assert "URLSearchParams" in body
-    assert "sessionStorage" in body
-    assert "history.replaceState" in body or "replaceState" in body
+    assert '/static/bootstrap.js' in body
+    assert "sessionStorage" not in body
+    cookie = resp.headers.get("Set-Cookie", "")
+    assert f"kk_session_{admin.bound_port}=" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=Strict" in cookie
+
+    bootstrap = _fetch(
+        f"http://127.0.0.1:{admin.bound_port}/static/bootstrap.js"
+    ).read().decode("utf-8")
+    assert "history.replaceState" in bootstrap
+    assert "sessionStorage" not in bootstrap
+
+
+def test_browser_cookie_authenticates_api_without_js_readable_token(admin):
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    root = f"http://127.0.0.1:{admin.bound_port}/?t={admin.token}"
+    assert opener.open(root, timeout=2).status == 200
+    api = f"http://127.0.0.1:{admin.bound_port}/api/entries"
+    assert opener.open(api, timeout=2).status == 200
+
+
+def test_admin_csp_blocks_inline_script_execution(admin):
+    url = f"http://127.0.0.1:{admin.bound_port}/?t={admin.token}"
+    response = _fetch(url)
+    csp = response.headers["Content-Security-Policy"]
+    assert "script-src 'self'" in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert "object-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+
+
+def test_admin_rejects_oversized_body_before_reading_it(admin):
+    assert _raw_post_status(
+        admin,
+        {"Content-Length": str(8 * 1024 * 1024 + 1)},
+    ) == 413
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "-1"])
+def test_admin_rejects_malformed_content_length(admin, value):
+    assert _raw_post_status(admin, {"Content-Length": value}) == 400
+
+
+def test_admin_rejects_chunked_request_bodies(admin):
+    assert _raw_post_status(admin, {"Transfer-Encoding": "chunked"}) == 400
 
 
 def test_no_cache_headers_on_responses(admin):

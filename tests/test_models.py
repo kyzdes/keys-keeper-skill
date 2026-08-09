@@ -1,6 +1,12 @@
 import pytest
 from datetime import datetime, timezone
-from keys_keeper.models import Entry, EntryType, ValidationError, validate_name
+from keys_keeper.models import (
+    Entry,
+    EntryType,
+    ValidationError,
+    validate_name,
+    validate_snapshot_payload,
+)
 
 
 def test_validate_name_accepts_valid_slug():
@@ -89,3 +95,66 @@ def test_entry_new_assigns_uuid_and_timestamps():
     assert e.id.startswith("kk:")
     assert len(e.id) > 10
     assert e.created_at == e.updated_at
+
+
+def test_untrusted_entry_requires_canonical_uuid4():
+    e = Entry.new(name="safe-name", type=EntryType.API_KEY)
+    assert Entry.from_untrusted_dict(e.to_dict()) == e
+
+    for unsafe_id in (
+        "kk:sync-passphrase",
+        "kk:not-a-uuid",
+        "kk:00000000-0000-1000-8000-000000000000",
+        "other:00000000-0000-4000-8000-000000000000",
+    ):
+        with pytest.raises(ValidationError, match="id"):
+            Entry.from_untrusted_dict({**e.to_dict(), "id": unsafe_id})
+
+
+def test_untrusted_entry_rejects_unknown_fields():
+    e = Entry.new(name="safe-name", type=EntryType.API_KEY)
+    with pytest.raises(ValidationError, match="unknown fields"):
+        Entry.from_untrusted_dict({**e.to_dict(), "surprise": "value"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("user", "-oProxyCommand=touch /tmp/pwned"),
+        ("host", "-oProxyCommand=touch-pwned"),
+        ("host", "good.example\nProxyCommand evil"),
+        ("port", "22 -oProxyCommand=evil"),
+    ],
+)
+def test_server_fields_reject_ssh_option_injection(field, value):
+    fields = {"host": "good.example", "user": "root", "port": 22, "auth": "ssh_key"}
+    fields[field] = value
+    with pytest.raises(ValidationError):
+        Entry.new(name="prod-server", type=EntryType.SERVER, fields=fields)
+
+
+def test_snapshot_validation_rejects_duplicate_and_reserved_ids():
+    e = Entry.new(name="safe-name", type=EntryType.API_KEY)
+    record = {**e.to_dict(), "_secret": "secret", "_secret_passphrase": None}
+    with pytest.raises(ValidationError, match="duplicate"):
+        validate_snapshot_payload({
+            "schema_version": 2,
+            "entries": [record, record],
+            "tombstones": [],
+        })
+    with pytest.raises(ValidationError, match="reserved"):
+        validate_snapshot_payload({
+            "schema_version": 2,
+            "entries": [{**record, "id": "kk:sync-passphrase"}],
+            "tombstones": [],
+        })
+    with pytest.raises(ValidationError, match="reserved"):
+        validate_snapshot_payload({
+            "schema_version": 2,
+            "entries": [],
+            "tombstones": [{
+                "id": "kk:sync-s3-secret-key",
+                "name": "attacker-entry",
+                "deleted_at": "2026-07-20T00:00:00Z",
+            }],
+        })

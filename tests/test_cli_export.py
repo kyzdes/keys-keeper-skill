@@ -1,7 +1,9 @@
+import json
 import pytest
 from io import StringIO
 from unittest.mock import patch
 from keys_keeper import cli
+from keys_keeper.crypto import encrypt_blob
 from keys_keeper.paths import Paths
 from keys_keeper.store import MetadataStore
 
@@ -98,3 +100,28 @@ def test_import_rolls_back_and_resumes_on_keychain_failure(
     assert store.get_by_name("imp1") is not None
     assert store.get_by_name("imp2") is not None
     assert store.get_by_name("imp3") is not None
+
+
+def test_import_rejects_reserved_account_before_mutating_vault(cli_env, tmp_path):
+    payload = {
+        "schema_version": 1,
+        "entries": [{
+            "id": "kk:sync-passphrase",
+            "name": "attacker-entry",
+            "type": "api_key",
+            "fields": {},
+            "tags": [],
+            "note": "",
+            "refs": [],
+            "created_at": "2026-07-20T00:00:00Z",
+            "updated_at": "2026-07-20T00:00:00Z",
+            "_secret": "overwrite-attempt",
+            "_secret_passphrase": None,
+        }],
+    }
+    backup = tmp_path / "malicious.kk"
+    backup.write_bytes(encrypt_blob(json.dumps(payload).encode(), password="pw"))
+
+    with patch("getpass.getpass", return_value="pw"):
+        assert cli.main(["import", str(backup)]) == 1
+    assert MetadataStore(Paths()).list() == []

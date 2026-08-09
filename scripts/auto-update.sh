@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # kyzdes/claude-skills · marketplace auto-update hook
 #
-# Fires at every Claude Code SessionStart from each installed plugin in this
-# marketplace. Refreshes the marketplace manifest, then asks Claude Code to
-# update each installed plugin from this marketplace to its latest commit.
-# New versions apply on the NEXT session start (Claude Code design).
+# Invoked at Claude Code SessionStart, but intentionally does NOTHING unless
+# the user explicitly opts into mutable-HEAD updates. Silent auto-update is an
+# unacceptable default for a process that can access a local secrets store.
 #
 # ---------------------------------------------------------------------------
 # CHAIN-OF-TRUST / THREAT MODEL — read before relying on this.
@@ -19,21 +18,23 @@
 # digest verification here — `claude plugin update` resolves the marketplace
 # ref (effectively HEAD) at update time.
 #
-# For HIGH-ASSURANCE installs, do NOT auto-update from HEAD:
-#   - set KEYS_KEEPER_NO_AUTOUPDATE=1 (see below) to disable this hook, and
-#   - pin the plugin to a reviewed tag/commit you have audited, updating it
-#     manually after review.
-#
-# OPT-OUT: export KEYS_KEEPER_NO_AUTOUPDATE=1 (any non-empty value) to skip all
-# update work. The hook still exits 0 (fail-soft) so a SessionStart is never
-# blocked. KKZ_NO_AUTOUPDATE is honored as a back-compat alias.
+# The safe default is a reviewed, pinned release. To retain the legacy update
+# behaviour despite the risk, set KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE=1.
+# KEYS_KEEPER_NO_AUTOUPDATE and KKZ_NO_AUTOUPDATE remain supported and take
+# precedence over that opt-in. The hook always exits 0 (fail-soft).
 # ---------------------------------------------------------------------------
 
 set -e
 
-# Opt-out (high-assurance / pinned installs): bail out before any network or
-# filesystem work, but still exit 0 so SessionStart is never blocked.
+# Explicit opt-out always wins, including when an inherited environment also
+# contains the legacy opt-in.
 if [ -n "${KEYS_KEEPER_NO_AUTOUPDATE:-}" ] || [ -n "${KKZ_NO_AUTOUPDATE:-}" ]; then
+  exit 0
+fi
+
+# Safe default: no network, no filesystem writes, no update. This check must
+# stay before creation of the debounce stamp directory.
+if [ "${KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE:-}" != "1" ]; then
   exit 0
 fi
 

@@ -39,17 +39,7 @@
     </div>
   </div>
 </div>
-<script>
-(() => {
-  const params = new URLSearchParams(location.search);
-  const t = params.get('t');
-  if (t) {
-    sessionStorage.setItem('kk_token', t);
-    history.replaceState({}, '', location.pathname);
-  }
-  window.KK_TOKEN = sessionStorage.getItem('kk_token') || '';
-})();
-</script>
+<script src="/static/bootstrap.js"></script>
 <script src="/static/app.js"></script>
 {% block extra_js %}{% endblock %}
 </body>

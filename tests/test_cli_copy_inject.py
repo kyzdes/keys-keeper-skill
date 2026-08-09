@@ -1,6 +1,6 @@
 import os
+import stat
 import subprocess
-import time
 import pytest
 from io import StringIO
 from keys_keeper import cli
@@ -76,6 +76,19 @@ def test_inject_appends_env_to_file(cli_env, tmp_path, monkeypatch):
     content = env_file.read_text()
     assert "EXISTING=foo" in content
     assert "MY_KEY=injected-value" in content
+    if os.name == "posix":
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+
+def test_inject_creates_private_file(cli_env, tmp_path, monkeypatch):
+    _add("inj-new", "private-value", monkeypatch)
+    env_file = tmp_path / ".env"
+    assert cli.main([
+        "inject", "inj-new", "--file", str(env_file), "--as", "PRIVATE_KEY",
+    ]) == 0
+    assert env_file.read_text() == "PRIVATE_KEY=private-value\n"
+    if os.name == "posix":
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
 def test_inject_refuses_existing_env_without_replace(cli_env, tmp_path, monkeypatch):
@@ -115,3 +128,28 @@ def test_resolve_unknown_name_fails(cli_env, tmp_path):
     target.write_text("X=__KEYS:does-not-exist__\n")
     rc = cli.main(["resolve", str(target)])
     assert rc != 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink semantics are POSIX-specific")
+def test_inject_refuses_symlink_without_touching_target(
+    cli_env, tmp_path, monkeypatch, capsys
+):
+    _add("inj-link", "must-not-land", monkeypatch)
+    victim = tmp_path / "victim"
+    victim.write_text("SAFE=1\n")
+    link = tmp_path / ".env"
+    link.symlink_to(victim)
+
+    assert cli.main([
+        "inject", "inj-link", "--file", str(link), "--as", "STOLEN",
+    ]) == 1
+    assert victim.read_text() == "SAFE=1\n"
+    assert "symlink" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(os.name != "posix", reason="FIFO semantics are POSIX-specific")
+def test_resolve_refuses_non_regular_target(cli_env, tmp_path, capsys):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    assert cli.main(["resolve", str(fifo)]) == 1
+    assert "non-regular" in capsys.readouterr().err

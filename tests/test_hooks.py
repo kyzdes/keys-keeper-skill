@@ -1,4 +1,4 @@
-"""SessionStart hooks: both auto-update and auto-sync are wired, each bounded."""
+"""SessionStart hooks: auto-sync is bounded and mutable updates are opt-in."""
 import json
 import os
 import subprocess
@@ -38,10 +38,29 @@ def test_auto_update_documents_trust_assumption():
     kyzdes account/marketplace, and point high-assurance users at pinning."""
     sh = AUTO_UPDATE.read_text()
     assert "kyzdes" in sh
-    # Trust assumption + the pin-to-a-reviewed-tag escape hatch are documented.
+    # Trust assumption + the pin-to-a-reviewed-tag safe default are documented.
     assert "trustworthy" in sh.lower()
     assert "pin" in sh.lower()
+    assert "KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE" in sh
     assert "KEYS_KEEPER_NO_AUTOUPDATE" in sh
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash hook is POSIX-only")
+def test_auto_update_is_disabled_by_default(tmp_path):
+    """A normal SessionStart must not touch disk or attempt an update."""
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    env.pop("KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE", None)
+    env.pop("KEYS_KEEPER_NO_AUTOUPDATE", None)
+    env.pop("KKZ_NO_AUTOUPDATE", None)
+    proc = subprocess.run(
+        ["bash", str(AUTO_UPDATE)],
+        env=env,
+        capture_output=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr.decode()
+    assert not (tmp_path / ".cache" / "kyzdes-claude-skills").exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash hook is POSIX-only")
@@ -51,6 +70,7 @@ def test_auto_update_optout_exits_zero_with_no_side_effects(tmp_path, optout_var
     early (exit 0, fail-soft) and touch nothing — no stamp dir, no network."""
     env = dict(os.environ)
     env["HOME"] = str(tmp_path)
+    env["KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE"] = "1"
     env[optout_var] = "1"
     proc = subprocess.run(
         ["bash", str(AUTO_UPDATE)],
@@ -97,10 +117,10 @@ def test_ps_dq_escape_leaves_normal_paths_unchanged():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash hook is POSIX-only")
 def test_auto_update_is_failsafe_exit_zero(tmp_path):
-    """Even without the opt-out, a SessionStart must never be blocked: the
-    hook exits 0 on a clean HOME (no claude bin / no installed_plugins.json)."""
+    """Even after explicit opt-in, a missing Claude install cannot block start."""
     env = dict(os.environ)
     env["HOME"] = str(tmp_path)
+    env["KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE"] = "1"
     env.pop("KEYS_KEEPER_NO_AUTOUPDATE", None)
     env.pop("KKZ_NO_AUTOUPDATE", None)
     # Force the debounce to elapse instantly so we exercise past the stamp gate.

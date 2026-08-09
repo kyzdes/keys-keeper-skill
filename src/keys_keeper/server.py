@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs
 from keys_keeper.paths import Paths
 
 
+_MAX_BODY_BYTES = 8 * 1024 * 1024
 _NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, private",
     "X-Content-Type-Options": "nosniff",
@@ -18,8 +19,12 @@ _NO_CACHE_HEADERS = {
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "script-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'"
+        "script-src 'self'; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
     ),
 }
 
@@ -75,6 +80,12 @@ def make_handler(admin: "AdminServer"):
 
         # ---- helpers ----
 
+        def _session_cookie_name(self) -> str:
+            # Cookies are scoped to hosts, not ports. A port suffix prevents
+            # two simultaneous local admin instances from overwriting each
+            # other's session capability.
+            return f"kk_session_{admin.bound_port}"
+
         def _verify_token(self) -> bool:
             # Accept token via header (fetch/XHR) or session cookie (browser
             # nav). The ?t=TOKEN query form is accepted ONLY on the initial
@@ -89,7 +100,7 @@ def make_handler(admin: "AdminServer"):
             cookie_header = self.headers.get("Cookie", "")
             for part in cookie_header.split(";"):
                 k, _, v = part.strip().partition("=")
-                if k == "kk_session" and v == admin.token:
+                if k == self._session_cookie_name() and v == admin.token:
                     self._auth_ok = True
                     return True
             parsed = urlparse(self.path)
@@ -112,7 +123,8 @@ def make_handler(admin: "AdminServer"):
             if getattr(self, "_auth_ok", False):
                 self.send_header(
                     "Set-Cookie",
-                    f"kk_session={admin.token}; HttpOnly; SameSite=Strict; Path=/",
+                    f"{self._session_cookie_name()}={admin.token}; "
+                    "HttpOnly; SameSite=Strict; Path=/",
                 )
             self.end_headers()
             self.wfile.write(body)
@@ -120,6 +132,26 @@ def make_handler(admin: "AdminServer"):
         def _send_json(self, status: int, payload: dict | list) -> None:
             data = json.dumps(payload).encode("utf-8")
             self._send(status, data, "application/json")
+
+        def _read_request_body(self) -> bytes | None:
+            if self.headers.get("Transfer-Encoding"):
+                self._send_json(400, {"error": "transfer-encoding is unsupported"})
+                return None
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                return b""
+            try:
+                length = int(raw_length)
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "bad content-length"})
+                return None
+            if length < 0:
+                self._send_json(400, {"error": "bad content-length"})
+                return None
+            if length > _MAX_BODY_BYTES:
+                self._send_json(413, {"error": "request body too large"})
+                return None
+            return self.rfile.read(length) if length else b""
 
         # ---- routing ----
 
@@ -195,8 +227,9 @@ def make_handler(admin: "AdminServer"):
             if not self._verify_token():
                 self._send(403, b"forbidden")
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b""
+            body = self._read_request_body()
+            if body is None:
+                return
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="POST", path=self.path, body=body)
 
@@ -213,8 +246,9 @@ def make_handler(admin: "AdminServer"):
             if not self._verify_token():
                 self._send(403, b"forbidden")
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b""
+            body = self._read_request_body()
+            if body is None:
+                return
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="PATCH", path=self.path, body=body)
 
