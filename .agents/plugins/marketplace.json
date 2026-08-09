@@ -1,0 +1,20 @@
+{
+  "name": "keys-keeper",
+  "interface": {
+    "displayName": "Keys Keeper"
+  },
+  "plugins": [
+    {
+      "name": "keys-keeper",
+      "source": {
+        "source": "local",
+        "path": "./plugins/keys-keeper"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

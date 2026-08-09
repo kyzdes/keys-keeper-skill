@@ -52,7 +52,7 @@ Pick whichever agents you use — run inside the project directory you want the 
 | **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; mutable-HEAD updates are disabled by default |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
-| **Codex app / CLI** | Install the Keys Keeper Codex plugin once; project-only fallback: `keys init codex` | The plugin recognizes secret workflows in every new task; the fallback writes `AGENTS.md` for one project |
+| **Codex app / CLI** | `codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`<br>then `codex plugin add keys-keeper@keys-keeper` | Installs the minimal skill bundle globally; project-only fallback: `keys init codex` |
 | **Cline** | `keys init cline` | Writes `.clinerules/00-keys-keeper.md` |
 | **Any other agent** | `keys init generic` | Prints to stdout — redirect wherever your agent reads rules from |
 
@@ -63,6 +63,20 @@ no startup hook, application code, or virtual environment: installing the plugin
 does not read the credential store, fetch updates, or start sync. Once installed,
 open a new Codex task and ask naturally, for example: “put the saved OpenRouter
 key into this project's `.env`.”
+
+The repository itself is a Codex marketplace via
+`.agents/plugins/marketplace.json`. In a fresh Codex session you can paste
+`https://github.com/kyzdes/keys-keeper-skill` and ask Codex to install it; the
+deterministic CLI equivalent is the two commands in the table above. Start a new
+task after installation so Codex reloads the available skills.
+
+Already installed in Claude Code? Refresh the marketplace and the reviewed
+plugin release, then start a new session:
+
+```text
+/plugin marketplace update claude-skills
+/plugin update keys-keeper@claude-skills
+```
 
 Run `keys init claude --check` from your CI to fail builds on prose drift.
 

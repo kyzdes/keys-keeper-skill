@@ -10,6 +10,7 @@ from keys_keeper import __version__
 
 ROOT = Path(__file__).resolve().parent.parent
 CODEX_PLUGIN_ROOT = ROOT / "plugins" / "keys-keeper"
+CODEX_MARKETPLACE_PATH = ROOT / ".agents" / "plugins" / "marketplace.json"
 
 PUBLIC_SECURITY_SURFACES = (
     ROOT / "README.md",
@@ -90,6 +91,42 @@ def test_codex_plugin_is_skill_only_and_implicitly_invokable():
         encoding="utf-8"
     )
     assert "allow_implicit_invocation: true" in agent_manifest
+
+
+def test_repository_is_an_installable_codex_marketplace():
+    marketplace = json.loads(CODEX_MARKETPLACE_PATH.read_text(encoding="utf-8"))
+    assert marketplace["name"] == "keys-keeper"
+
+    entries = [
+        entry
+        for entry in marketplace["plugins"]
+        if entry.get("name") == "keys-keeper"
+    ]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["source"] == {
+        "source": "local",
+        "path": "./plugins/keys-keeper",
+    }
+    assert entry["policy"] == {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+    }
+    assert entry["category"] == "Developer Tools"
+
+    source_path = (ROOT / entry["source"]["path"]).resolve()
+    assert source_path == CODEX_PLUGIN_ROOT.resolve()
+    assert (source_path / ".codex-plugin" / "plugin.json").is_file()
+
+
+def test_readme_documents_github_marketplace_install():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert (
+        "codex plugin marketplace add "
+        "https://github.com/kyzdes/keys-keeper-skill" in readme
+    )
+    assert "codex plugin add keys-keeper@keys-keeper" in readme
+    assert "/plugin update keys-keeper@claude-skills" in readme
 
 
 def test_cryptography_floor_contains_the_patched_wheel_release():
