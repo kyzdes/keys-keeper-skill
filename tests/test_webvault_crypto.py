@@ -23,7 +23,8 @@ def _run(blob_path, passphrase, auth_salt_hex, iters):
     return subprocess.run(
         [_NODE, str(HARNESS), str(KKCRYPTO), str(blob_path), passphrase,
          auth_salt_hex, str(iters)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, encoding="utf-8", errors="strict",
+        timeout=120,
     )
 
 

@@ -9,6 +9,7 @@ Two layers:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -82,7 +83,7 @@ def test_list_ids_reads_stderr(monkeypatch):
     monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", fake_run)
     ids = SecretToolBackend(service="keys-keeper").list_ids()
     assert sorted(ids) == ["kk:a", "kk:b"]
-    assert captured["command"][0] == "/usr/bin/secret-tool"
+    assert captured["command"][0] == os.path.abspath("/usr/bin/secret-tool")
     assert captured["kwargs"]["stdout"] is subprocess.DEVNULL
     assert captured["kwargs"]["stderr"] is subprocess.PIPE
 
@@ -107,7 +108,8 @@ def test_lookup_uses_resolved_absolute_executable(monkeypatch):
     monkeypatch.setattr("keys_keeper.backend_linux.subprocess.run", fake_run)
     backend = SecretToolBackend(service="keys-keeper")
     assert backend.get("kk:test") == Sealed("test-secret")
-    assert captured["command"][0].startswith("/")
+    assert os.path.isabs(captured["command"][0])
+    assert os.path.basename(captured["command"][0]) == "secret-tool"
 
 
 def test_availability_false_when_secret_tool_absent(monkeypatch):
