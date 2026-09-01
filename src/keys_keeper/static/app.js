@@ -1,5 +1,31 @@
 // keys-keeper admin client
 (() => {
+  const THEME_KEY = 'keys-keeper-theme';
+
+  function setTheme(theme, persist = false) {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      next === 'light' ? '#f3eee8' : '#120f0d',
+    );
+    const toggle = document.getElementById('theme-toggle');
+    if (toggle) {
+      const target = next === 'dark' ? 'day' : 'evening';
+      toggle.setAttribute('aria-label', `Switch to ${target} theme`);
+      toggle.setAttribute('title', `${target[0].toUpperCase()}${target.slice(1)} theme`);
+    }
+    if (persist) {
+      try { localStorage.setItem(THEME_KEY, next); } catch {}
+    }
+  }
+
+  const themeToggle = document.getElementById('theme-toggle');
+  setTheme(document.documentElement.dataset.theme);
+  themeToggle?.addEventListener('click', () => {
+    setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+  });
+
   async function api(path, opts = {}) {
     const r = await fetch(path, opts);
     if (!r.ok) {

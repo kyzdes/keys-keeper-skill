@@ -50,14 +50,24 @@ def test_dashboard_includes_search_and_palette_trigger(admin):
     body = _get(admin, "/")
     assert "search" in body.lower()
     assert "cmdk" in body.lower() or "⌘K" in body
+    assert 'id="theme-toggle"' in body
+    assert "Names only · values stay in the backend" not in body
 
 
 def test_app_js_fetches_entries_with_token(admin):
     js = _get(admin, "/static/app.js")
     assert "fetch" in js or "XMLHttpRequest" in js
+    assert "keys-keeper-theme" in js
     assert "Sec-Keys-Token" not in js
     assert "KK_TOKEN" not in js
     assert "sessionStorage" not in js
+
+
+def test_theme_bootstrap_is_external_and_csp_compatible(admin):
+    body = _get(admin, "/")
+    theme_js = _get(admin, "/static/theme.js")
+    assert '<script src="/static/theme.js"></script>' in body
+    assert "keys-keeper-theme" in theme_js
 
 
 def test_settings_status_uses_dom_text_not_untrusted_html(admin):
