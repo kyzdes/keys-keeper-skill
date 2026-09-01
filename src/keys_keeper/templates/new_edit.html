@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="modal-backdrop" style="position:static;background:transparent;align-items:flex-start;padding:24px">
-  <div class="modal new-modal" style="margin:0 auto" data-edit-id="{{ entry.id if entry else '' }}">
+<div class="modal-backdrop form-page">
+  <div class="modal new-modal" data-edit-id="{{ entry.id if entry else '' }}">
     <div class="modal-header">
       <span class="modal-title">{% if entry %}Edit {{ entry.name }}{% else %}New entry{% endif %}</span>
     </div>
@@ -29,11 +29,11 @@
       </div>
     </div>
     <div class="modal-footer">
-      <span style="flex:1;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)"><span class="kbd">⌘ Enter</span> save</span>
+      <span class="save-shortcut"><span class="kbd">⌘ Enter</span> save</span>
       <a class="btn btn-ghost" href="{% if entry %}/entry/{{ entry.id }}{% else %}/{% endif %}">Cancel</a>
       <button class="btn btn-primary" id="save-btn">Save entry</button>
     </div>
-    <div id="form-error" style="padding:0 18px 12px;color:var(--danger);font-family:'JetBrains Mono',monospace;font-size:11px"></div>
+    <div id="form-error" class="form-error" role="alert"></div>
   </div>
 </div>
 {% endblock %}

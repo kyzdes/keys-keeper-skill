@@ -266,6 +266,7 @@ def make_handler(admin: "AdminServer"):
             content_type = (
                 "text/css" if asset.suffix == ".css"
                 else "application/javascript" if asset.suffix == ".js"
+                else "image/svg+xml" if asset.suffix == ".svg"
                 else "application/octet-stream"
             )
             self._send(200, asset.read_bytes(), content_type)

@@ -59,6 +59,24 @@
     );
   }
 
+  const ICON_PATHS = {
+    copy: ['M7 6.5h7.5v9H7z', 'M5.5 13.5H4V4h8v1.5'],
+    open: ['M8 5h7v7', 'M15 5 7 13', 'M13 15H5V7'],
+  };
+
+  function svgIcon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 20 20');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    (ICON_PATHS[name] || []).forEach(d => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    });
+    return svg;
+  }
+
   function render() {
     const mount = document.getElementById('entries-mount');
     mount.innerHTML = '';
@@ -72,7 +90,7 @@
       return true;
     });
     if (filtered.length === 0) {
-      mount.append(el('div', { class: 'empty', style: 'padding:40px;text-align:center;color:var(--text-3)' }, 'No matches'));
+      mount.append(el('div', { class: 'empty loading-state' }, state.entries.length ? 'No entries match these filters.' : 'Your vault is empty. Add an entry or import a protected list.'));
       return;
     }
     filtered.forEach(e => mount.append(rowEl(e)));
@@ -80,11 +98,16 @@
 
   function rowEl(e) {
     const meta = TYPE_META[e.type] || { short: '?', color: 'var(--text-3)' };
-    const row = el('div', { class: 'entry-row unified' });
+    const row = el('div', {
+      class: 'entry-row unified',
+      tabindex: '0',
+      role: 'link',
+      'aria-label': `Open ${e.name}`,
+    });
     row.append(
       el('span', {
         class: 'type-icon',
-        style: `background:${meta.color};width:22px;height:22px;font-size:10px;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;color:var(--bg);font-weight:700`,
+        style: `background:${meta.color}`,
       }, meta.short),
       el('span', { class: 'type-label-mono' }, e.type),
       (() => {
@@ -104,14 +127,28 @@
         const copyBtn = el('button', {
           class: 'icon-btn',
           title: 'Copy to clipboard',
+          type: 'button',
+          'aria-label': `Copy ${e.name}`,
           onclick: (ev) => { ev.stopPropagation(); copy(e.id, e.name); },
-        }, '📋');
-        const editBtn = el('a', { class: 'icon-btn', href: `/entry/${encodeURIComponent(e.id)}`, title: 'Open' }, '↗');
+        }, svgIcon('copy'));
+        const editBtn = el('a', {
+          class: 'icon-btn',
+          href: `/entry/${encodeURIComponent(e.id)}`,
+          title: 'Open entry',
+          'aria-label': `Open ${e.name}`,
+          onclick: (ev) => ev.stopPropagation(),
+        }, svgIcon('open'));
         a.append(copyBtn, editBtn);
         return a;
       })(),
     );
     row.onclick = () => { location.href = `/entry/${encodeURIComponent(e.id)}`; };
+    row.onkeydown = (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        location.href = `/entry/${encodeURIComponent(e.id)}`;
+      }
+    };
     return row;
   }
 
@@ -125,7 +162,7 @@
   }
 
   function toast(msg, kind = 'success') {
-    const t = el('div', { class: 'app-toast' }, msg);
+    const t = el('div', { class: 'app-toast', role: kind === 'error' ? 'alert' : 'status' }, msg);
     if (kind === 'error') t.style.borderColor = 'var(--danger)';
     document.body.append(t);
     setTimeout(() => t.remove(), 3500);
@@ -180,10 +217,9 @@
 
     tags.forEach(t => {
       const on = state.activeTags.has(t);
-      const chip = el('span', {
+      const chip = el('button', {
         class: 'tag-chip' + (on ? ' active' : ''),
-        tabindex: '0',
-        role: 'button',
+        type: 'button',
         'aria-pressed': on ? 'true' : 'false',
         onclick: () => toggle(t),
       }, t);
@@ -249,6 +285,12 @@
   document.getElementById('search')?.addEventListener('input', (e) => {
     state.search = e.target.value;
     render();
+  });
+  document.getElementById('search')?.addEventListener('focus', () => {
+    document.getElementById('search-shell')?.classList.add('focused');
+  });
+  document.getElementById('search')?.addEventListener('blur', () => {
+    document.getElementById('search-shell')?.classList.remove('focused');
   });
 
   document.addEventListener('keydown', (e) => {
@@ -690,6 +732,7 @@
     document.querySelectorAll('.op-filter').forEach(c => {
       c.onclick = () => {
         c.classList.toggle('active');
+        c.setAttribute('aria-pressed', c.classList.contains('active') ? 'true' : 'false');
         if (filters.ops.has(c.dataset.op)) filters.ops.delete(c.dataset.op);
         else filters.ops.add(c.dataset.op);
         load();
@@ -711,6 +754,7 @@
       const max = Math.max(...top.map(([, c]) => c), 1);
       const topEl = document.getElementById('top-bars');
       topEl.innerHTML = '';
+      if (top.length === 0) topEl.append(el('div', { class: 'chart-empty' }, 'No access events in this range'));
       top.forEach(([name, c]) => {
         const r = el('div', { class: 'bar-row' });
         r.append(
@@ -747,6 +791,7 @@
       const opMax = Math.max(...opPairs.map(([, c]) => c), 1);
       const opsEl = document.getElementById('ops-bars');
       opsEl.innerHTML = '';
+      if (opPairs.length === 0) opsEl.append(el('div', { class: 'chart-empty' }, 'No operations in this range'));
       opPairs.forEach(([op, c]) => {
         const r = el('div', { class: 'bar-row' });
         r.append(
@@ -810,7 +855,7 @@
         securityBody.append(el(
           'div',
           {
-            style: "margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6",
+            style: "margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:5px;font-family:var(--font-ui);font-size:11px;line-height:1.6",
           },
           el('div', { style: 'color:var(--text-4);margin-bottom:4px' }, '# add to ~/.zshrc to enable'),
           el('div', { style: 'color:var(--accent)' }, 'export KEYS_KEEPER_ALLOW_REVEAL=1'),
