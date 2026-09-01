@@ -10,6 +10,16 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.3] — 2026-09-02
+
+### Changed
+
+- Expanded the agent contract with deterministic temporary-sink cleanup, protected plaintext-export rules, install-path diagnostics, shell-argument hygiene, and an explicit distinction between item presence, successful secret resolution, and external service validity.
+- Corrected repeatable tag examples so each tag uses its own `--tag` flag, and corrected audit guidance to use exact stored operation names.
+- Refined the local admin around one UI typeface with monospace reserved for code and measurements, authored SVG icons, stronger hierarchy and focus states, and a responsive mobile layout for the dashboard, details, forms, audit, and settings surfaces.
+
+---
+
 ## [0.7.2] — 2026-08-09
 
 ### Security

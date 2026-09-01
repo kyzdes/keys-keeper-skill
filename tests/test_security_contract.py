@@ -140,5 +140,5 @@ def test_cryptography_floor_contains_the_patched_wheel_release():
 
 def test_readme_installs_a_reviewed_release_not_repository_head():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "keys-keeper-skill.git@v0.7.2" in readme
+    assert f"keys-keeper-skill.git@v{__version__}" in readme
     assert "pipx install git+https://github.com/kyzdes/keys-keeper-skill.git\n" not in readme

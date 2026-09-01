@@ -17,22 +17,22 @@
   </div>
   <div class="audit-filters" id="audit-filters">
     <div class="group">
-      <span class="group-label">RANGE</span>
+      <span class="group-label">Range</span>
       <button class="preset-btn" data-range="24h">24h</button>
       <button class="preset-btn active" data-range="7d">7d</button>
       <button class="preset-btn" data-range="30d">30d</button>
     </div>
     <div class="group">
-      <span class="group-label">OPS</span>
-      <span class="tag-chip op-filter" data-op="inject">inject</span>
-      <span class="tag-chip op-filter" data-op="copy">copy</span>
-      <span class="tag-chip op-filter" data-op="resolve">resolve</span>
-      <span class="tag-chip op-filter" data-op="reveal">reveal</span>
-      <span class="tag-chip op-filter" data-op="add">add</span>
-      <span class="tag-chip op-filter" data-op="delete">delete</span>
+      <span class="group-label">Operations</span>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="inject">inject</button>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="copy">copy</button>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="resolve">resolve</button>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="reveal">reveal</button>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="add">add</button>
+      <button class="tag-chip op-filter" type="button" aria-pressed="false" data-op="delete">delete</button>
     </div>
   </div>
-  <div style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden;margin-top:12px">
+  <div class="audit-table-wrap">
     <table class="audit-table">
       <thead><tr><th>Timestamp</th><th>Op</th><th>Name</th><th>Caller</th><th>File</th><th>OK</th></tr></thead>
       <tbody id="audit-rows"><tr><td colspan="6">Loading…</td></tr></tbody>

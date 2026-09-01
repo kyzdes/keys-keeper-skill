@@ -49,9 +49,34 @@ User: "Replace stripe-test with the new value."
 
 1. STOP if the user pastes the value.
 2. Tell the user: "put the new key on the clipboard and say 'replace stripe-test'".
-3. Run: `keys add stripe-test --type api_key --from-clipboard --replace --tag payments,dev`.
+3. Run: `keys add stripe-test --type api_key --from-clipboard --replace --tag payments --tag dev`.
 
 (Or open admin: `keys serve` → entry detail → "Replace secret".)
+
+## "Use a saved key for one remote setup"
+
+User: "Configure the remote service with my saved Hyperfusion key."
+
+1. Confirm the destination host before writing anything; the vault normally lives on the current machine, not the remote host.
+2. Create a narrowly scoped temporary directory with `mktemp -d` and keep its exact path in a task-specific variable.
+3. `keys inject hyperfusion-api --file "$exact_file" --as HYPERFUSION_API_KEY`.
+4. Transfer the exact file to one explicit owner-only remote path, or pass it directly to a sink-aware local tool. Do not print, `cat`, `source`, or interpolate its contents.
+5. Verify only remote owner/mode, non-empty status, and an end-to-end service request whose output contains no credential.
+6. Remove the exact local file with `/bin/unlink`, then `rmdir` the empty temporary directory.
+
+Avoid `rm -f` / `rm -rf` cleanup patterns, globs, `$HOME`, `~`, repository roots, and unresolved variables.
+
+## "Export selected credentials to a local file"
+
+User: "Put these credentials in one protected file; don't print them in chat."
+
+1. Confirm that the plaintext file is explicitly requested and choose a destination outside repositories and synced folders.
+2. Write only metadata plus placeholders such as `__KEYS:openrouter-production__`; set the file to owner-only access.
+3. Run `keys resolve /absolute/path/to/export.txt` once.
+4. Do not open or inspect the resolved file. Verify only path, owner/mode, non-empty size, the resolver's placeholder count, and `keys audit --op resolve`.
+5. Report metadata gaps as `not recorded`; do not infer endpoints or consumers from a credential name.
+
+The resulting file is a plaintext exposure sink readable by same-user processes. It must not be committed, uploaded, synced, or attached to chat.
 
 ## "Back up my vault to the cloud"
 

@@ -2,31 +2,32 @@
 {% block content %}
 <div class="dash-toolbar">
   <div class="search-input" id="search-shell">
-    <input id="search" placeholder="Search by name, tag, or note · / to focus" autofocus>
+    <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13 13 3.5 3.5"/></svg>
+    <input id="search" aria-label="Search vault" placeholder="Search names, tags, and notes">
     <span class="kbd">/</span>
   </div>
 </div>
 <div class="tag-rail" id="tag-rail">
-  <span class="label">FILTER</span>
+  <span class="label">Tags</span>
   {# tags rendered dynamically by JS once entries load #}
 </div>
 <div class="app-content" id="dashboard-content">
   <div class="unified-table-head" data-grouping="unified">
     <span></span>
-    <span>type</span>
-    <span>name · tags</span>
-    <span>note</span>
-    <span>last access</span>
+    <span>Type</span>
+    <span>Entry</span>
+    <span>Note</span>
+    <span>Updated</span>
     <span></span>
   </div>
-  <div id="entries-mount">Loading…</div>
+  <div id="entries-mount" aria-live="polite"><div class="loading-state">Loading vault…</div></div>
 </div>
 
 <details id="env-panel" class="env-panel" hidden>
   <summary>
     <span class="env-title">Process env</span>
     <span class="env-count" id="env-count"></span>
-    <span class="env-hint">names only · values never leave the backend</span>
+    <span class="env-hint">Names only · values stay in the backend</span>
   </summary>
   <input class="env-search" id="env-search" placeholder="filter env names · type to search">
   <div class="env-list" id="env-list"></div>
