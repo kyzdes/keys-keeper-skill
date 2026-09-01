@@ -10,6 +10,16 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.4] — 2026-09-02
+
+### Changed
+
+- Replaced the green-tinted neutral system with a warm evening palette and a high-contrast daylight palette, both applied through shared semantic tokens.
+- Added a persistent, system-aware day/evening theme switch that initializes through a CSP-compatible local script before the page is painted.
+- Removed the redundant dashboard footer disclaimer while preserving the Process env metadata boundary.
+
+---
+
 ## [0.7.3] — 2026-09-02
 
 ### Changed
