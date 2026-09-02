@@ -1,6 +1,6 @@
 {
   "name": "keys-keeper",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Cross-platform secrets workflow for macOS, Windows, and Linux. The `keys` CLI routes values to explicit local sinks without returning plaintext in normal agent tool output. This reduces accidental transcript exposure; it is not an isolation boundary against arbitrary code running as the same OS user.",
   "author": {
     "name": "kyzdes"

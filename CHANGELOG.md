@@ -10,6 +10,15 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.6] — 2026-09-02
+
+### Fixed
+
+- Bypass now reads original legacy Keychain items whose decrypt ACL trusts only Apple's fixed `/usr/bin/security`: it first proves that exact authorization from native ACL metadata and verifies that the Keychain is already unlocked, then uses the trusted executable without rewriting or migrating the item.
+- Unknown, locked, or untrusted ACLs still fail closed before a compatibility process starts, preventing authorization-dialog loops.
+
+---
+
 ## [0.7.5] — 2026-09-02
 
 ### Fixed

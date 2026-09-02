@@ -37,7 +37,8 @@ def cmd_keychain_status(args: argparse.Namespace) -> int:
     print("storage: macOS Keychain (original items, no migration)")
     print(f"interaction mode: {config.mode}")
     print(f"authorization dialogs: {'disabled' if config.mode == BYPASS else 'allowed when macOS requires them'}")
-    print("implementation: native Security.framework (no /usr/bin/security process)")
+    print("implementation: native Security.framework")
+    print("legacy reads: ACL-gated /usr/bin/security bridge only when already trusted")
     if paths.keychain_toml.exists() and os.name == "posix":
         print(f"policy file: {paths.keychain_toml} ({stat.S_IMODE(paths.keychain_toml.stat().st_mode):04o})")
     return 0
@@ -61,7 +62,8 @@ def _set_mode(mode: str) -> int:
     if mode == BYPASS:
         print("Keychain bypass enabled — authorization dialogs are disabled")
         print("original macOS Keychain items remain in place; no secrets were moved or copied")
-        print("untrusted items will return an error instead of opening a system window")
+        print("legacy security-only items remain in place and use their pre-authorized path")
+        print("unknown or locked ACLs fail instead of opening a system window")
     else:
         print("Keychain prompt mode enabled — macOS may request authorization when required")
     return 0

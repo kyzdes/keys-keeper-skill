@@ -95,8 +95,10 @@ def test_native_operations_do_not_spawn_security_process(backend, monkeypatch):
     assert calls == []
 
 
-def test_bypass_rejects_legacy_cli_only_acl_without_prompt(backend, test_keychain):
-    """A security-CLI-only ACL fails closed when user interaction is disabled."""
+def test_bypass_reads_original_legacy_cli_only_acl_without_rewriting(
+    backend, test_keychain
+):
+    """An ACL-proven security-only item stays in place and reads silently."""
     subprocess.run(
         [
             "/usr/bin/security",
@@ -113,5 +115,62 @@ def test_bypass_rejects_legacy_cli_only_acl_without_prompt(backend, test_keychai
         capture_output=True,
         text=True,
     )
+    assert backend.get("kk:legacy-cli").unseal() == "non-sensitive-test-value"
+    assert "kk:legacy-cli" in backend.list_ids()
+
+
+def test_bypass_unknown_acl_fails_before_security_process(backend, monkeypatch):
+    def fail_native(_account):
+        raise SecurityFrameworkError("read keychain item", -25308)
+
+    monkeypatch.setattr(backend._native, "get", fail_native)
+    monkeypatch.setattr(
+        backend._native,
+        "legacy_security_read_allowed",
+        lambda _account: False,
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("security process must not start for an unknown ACL")
+        ),
+    )
     with pytest.raises(KeychainError, match="bypass blocked the authorization dialog"):
-        backend.get("kk:legacy-cli")
+        backend.get("kk:untrusted")
+
+
+def test_bypass_locked_keychain_fails_before_legacy_bridge(
+    backend, test_keychain, monkeypatch
+):
+    subprocess.run(
+        [
+            "/usr/bin/security",
+            "add-generic-password",
+            "-s",
+            "keys-keeper-test",
+            "-a",
+            "kk:legacy-locked",
+            "-w",
+            "non-sensitive-test-value",
+            str(test_keychain),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["/usr/bin/security", "lock-keychain", str(test_keychain)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy bridge must not start for a locked Keychain")
+        ),
+    )
+    with pytest.raises(KeychainError, match="bypass blocked the authorization dialog"):
+        backend.get("kk:legacy-locked")

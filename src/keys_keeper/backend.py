@@ -1,5 +1,6 @@
 """Cross-platform secret-storage abstraction."""
 from __future__ import annotations
+import subprocess
 from abc import ABC, abstractmethod
 
 from keys_keeper.macos_keychain import MacOSNativeKeychain, SecurityFrameworkError
@@ -72,9 +73,11 @@ class MacOSKeychainBackend(KeychainBackend):
     The `account` is the entry's UUID id (e.g. "kk:abc..." or "kk:abc:passphrase").
     Use a custom `keychain_path` in tests to avoid touching the user's login keychain.
 
-    Every operation uses Keychain Services in-process. In bypass mode user
-    interaction is disabled, so an untrusted item returns a clean error instead
-    of opening a system authorization dialog.
+    Ordinary operations use Keychain Services in-process. In bypass mode user
+    interaction is disabled. A legacy read may use ``/usr/bin/security`` only
+    when native ACL inspection first proves that the unlocked original item
+    explicitly trusts that binary for decrypt; every other untrusted item fails
+    closed instead of opening a system authorization dialog.
     """
 
     def __init__(
@@ -99,12 +102,58 @@ class MacOSKeychainBackend(KeychainBackend):
             if ex.status == -25300:
                 raise KeychainError(f"keychain entry not found: {account}") from ex
             if not self._native.allow_interaction and ex.status in (-25293, -25308):
+                if self._native.legacy_security_read_allowed(account):
+                    return self._read_legacy_security_bridge(account)
                 raise KeychainError(
                     f"keychain entry {account} does not trust this Keys Keeper runtime; "
                     "bypass blocked the authorization dialog. Use `keys keychain prompt` "
                     "only if you want macOS to ask once."
                 ) from ex
             raise KeychainError(f"failed to read keychain entry {account}: {ex}") from ex
+
+    def _read_legacy_security_bridge(self, account: str) -> Sealed:
+        """Read one security-CLI-only legacy item without changing the item.
+
+        The caller has already verified, from native ACL metadata, that the
+        unlocked item explicitly grants decrypt access to Apple's fixed
+        ``/usr/bin/security`` binary. That makes this a compatibility path for
+        original Keychain records, not a general CLI fallback: unknown ACLs
+        still fail closed before any child process can request authorization.
+        """
+        command = [
+            "/usr/bin/security",
+            "find-generic-password",
+            "-s",
+            self.service,
+            "-a",
+            account,
+            "-w",
+        ]
+        if self.keychain_path:
+            command.append(self.keychain_path)
+        try:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as ex:
+            raise KeychainError(
+                f"trusted legacy Keychain bridge failed for {account}"
+            ) from ex
+        if result.returncode != 0:
+            raise KeychainError(
+                f"trusted legacy Keychain bridge failed for {account}"
+            )
+        raw = result.stdout[:-1] if result.stdout.endswith(b"\n") else result.stdout
+        try:
+            return Sealed(raw.decode("utf-8"))
+        except UnicodeDecodeError as ex:
+            raise KeychainError(
+                f"failed to decode keychain entry {account}"
+            ) from ex
 
     def set(self, account: str, value: str) -> None:
         self.delete(account)

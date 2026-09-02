@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keys-keeper"
-version = "0.7.5"
+version = "0.7.6"
 description = "Cross-platform secrets workflow that keeps plaintext out of normal agent tool responses by routing values to explicit local sinks"
 readme = "README.md"
 license = {text = "MIT"}
