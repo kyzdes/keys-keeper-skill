@@ -332,8 +332,9 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
 
 
 def _status(handler, paths: Paths) -> None:
-    import os, time
+    import os, sys, time
     from keys_keeper import __version__
+    from keys_keeper.keychain_config import load_keychain_config
     info = {
         "version": __version__,
         "config_dir": str(paths.root),
@@ -341,6 +342,7 @@ def _status(handler, paths: Paths) -> None:
         "audit_jsonl": str(paths.audit_jsonl),
         "reveal_env_set": os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") == "1",
         "uptime_sec": int(time.monotonic() - getattr(handler.server, "_kk_started", time.monotonic())),
+        "keychain_mode": load_keychain_config(paths).mode if sys.platform == "darwin" else None,
     }
     handler._send_json(200, info)
 

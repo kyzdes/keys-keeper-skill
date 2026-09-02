@@ -26,6 +26,7 @@ must be treated as exposed to other processes with access to that destination:
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
 - `keys sync status` — sync mode + local/remote versions (metadata only, no values)
+- `keys keychain status` — current macOS prompt/bypass policy; does not open Keychain
 - `keys doctor` — paths + keychain sync check, useful when a value is missing
 - `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values
 
@@ -41,10 +42,10 @@ migrate existing secrets or restructure their setup unprompted.
    `which keys` / `Get-Command keys`). If it works → skip to step 4.
 2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
    silently. One line on what it is, then the platform command:
-   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.4'`
+   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.5'`
      (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
      `python3 -m pip install --user pipx && pipx ensurepath`)
-   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.4"`
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.5"`
    - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
 3. **After install, note that `keys` may need a fresh terminal** for PATH to
    pick it up. Re-check with `keys --version`.
@@ -57,6 +58,21 @@ migrate existing secrets or restructure their setup unprompted.
    of plaintext keys somewhere, prepare the `keys add NAME --from-clipboard …`
    commands for them to run, and remind them any value already pasted into this
    chat is compromised and should be rotated.
+
+### User reports repeated macOS Keychain authorization dialogs
+
+1. Stop the exact automatic caller after verifying its PID. Do not retry the
+   failing command in a loop and do not type a password or click the system
+   authorization dialog on the user's behalf.
+2. Run `keys keychain status`; this is metadata-only and does not open Keychain.
+3. Only when the user explicitly requests bypass, run `keys keychain bypass`.
+   This keeps the original secrets in macOS Keychain and disables Keychain UI;
+   it does not export, copy, migrate, or replace any value.
+4. In bypass, Keys Keeper calls Security.framework in-process and never launches
+   `/usr/bin/security`. Items that already trust Keys Keeper work normally;
+   untrusted legacy items return a clean error instead of a dialog.
+5. Verify with `keys keychain status`, then run the requested operation once.
+   `keys keychain prompt` restores normal macOS authorization dialogs.
 
 ### User wants to save a secret
 

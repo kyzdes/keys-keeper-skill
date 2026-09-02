@@ -869,14 +869,22 @@
       );
 
       const securityBody = document.getElementById('security-body');
-      securityBody.replaceChildren(
+      const securityRows = [
         kvRow(
           'KEYS_KEEPER_ALLOW_REVEAL',
           s.reveal_env_set ? '✓ set' : '✗ not set',
           s.reveal_env_set ? 'success' : 'danger',
         ),
-        kvRow('URL token', '✓ active · HttpOnly · stripped from history', 'success'),
-      );
+      ];
+      if (s.keychain_mode) {
+        securityRows.push(kvRow(
+          'Keychain interaction',
+          s.keychain_mode === 'bypass' ? 'bypass · dialogs disabled' : 'prompt · macOS may ask',
+          s.keychain_mode === 'bypass' ? 'success' : '',
+        ));
+      }
+      securityRows.push(kvRow('URL token', '✓ active · HttpOnly · stripped from history', 'success'));
+      securityBody.replaceChildren(...securityRows);
       if (!s.reveal_env_set) {
         securityBody.append(el(
           'div',

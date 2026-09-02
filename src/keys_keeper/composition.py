@@ -22,10 +22,17 @@ def build_backend() -> KeychainBackend:
     if sys.platform.startswith("linux"):
         return _build_linux_backend(service)
     keychain_path = os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN")
+    if keychain_path is None:
+        from keys_keeper.keychain_config import interaction_allowed
+        allow_interaction = interaction_allowed()
+    else:
+        # Tests must never open a login/UI prompt even if a developer's normal
+        # home is configured for prompt mode.
+        allow_interaction = False
     return MacOSKeychainBackend(
         service=service,
         keychain_path=keychain_path,
-        allow_interaction=keychain_path is None,
+        allow_interaction=allow_interaction,
     )
 
 

@@ -940,6 +940,10 @@ def build_parser() -> argparse.ArgumentParser:
     dr = sub.add_parser("doctor", help="health check + paths")
     dr.set_defaults(func=cmd_doctor)
 
+    # keychain — native macOS prompt/bypass policy
+    from keys_keeper.cli_keychain import register_keychain
+    register_keychain(sub)
+
     qs = sub.add_parser("quickstart", help="friendly getting-started (no secrets shown)")
     qs.set_defaults(func=cmd_quickstart)
 

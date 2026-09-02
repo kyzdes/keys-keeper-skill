@@ -1,12 +1,12 @@
 import subprocess
 
 import pytest
-from keys_keeper import backend as backend_module
 from keys_keeper.backend import (
     MacOSKeychainBackend,
     KeychainError,
     Sealed,
 )
+from keys_keeper.macos_keychain import SecurityFrameworkError
 
 
 @pytest.fixture
@@ -56,16 +56,10 @@ def test_delete_missing_is_noop(backend):
 
 
 def test_delete_propagates_non_missing_keychain_failure(backend, monkeypatch):
-    class Result:
-        returncode = 1
-        stdout = ""
-        stderr = "interaction denied"
+    def fail(_account):
+        raise SecurityFrameworkError("delete keychain item", -25293)
 
-    monkeypatch.setattr(
-        backend_module.subprocess,
-        "run",
-        lambda *args, **kwargs: Result(),
-    )
+    monkeypatch.setattr(backend._native, "delete", fail)
     with pytest.raises(KeychainError, match="failed to delete"):
         backend.delete("kk:blocked")
 
@@ -84,29 +78,25 @@ def test_set_multiline_value(backend):
     assert backend.get("kk:multi").unseal() == pem
 
 
-def test_set_does_not_spawn_secret_in_process_argv(backend, monkeypatch):
+def test_native_operations_do_not_spawn_security_process(backend, monkeypatch):
     calls = []
-
-    class Result:
-        returncode = 44
-        stdout = ""
-        stderr = ""
 
     def capture_subprocess(args, **kwargs):
         calls.append(args)
-        return Result()
+        raise AssertionError(f"unexpected subprocess: {args}")
 
     with monkeypatch.context() as context:
-        context.setattr(backend_module.subprocess, "run", capture_subprocess)
+        context.setattr(subprocess, "run", capture_subprocess)
         backend.set("kk:no-argv", "short-low-entropy-secret")
+        assert backend.get("kk:no-argv").unseal() == "short-low-entropy-secret"
+        assert "kk:no-argv" in backend.list_ids()
+        backend.delete("kk:no-argv")
 
-    assert calls
-    assert all("short-low-entropy-secret" not in command for command in calls)
-    assert backend.get("kk:no-argv").unseal() == "short-low-entropy-secret"
+    assert calls == []
 
 
-def test_native_backend_reads_and_updates_legacy_cli_item(backend, test_keychain):
-    """Existing items written by releases that used `security -w` remain valid."""
+def test_bypass_rejects_legacy_cli_only_acl_without_prompt(backend, test_keychain):
+    """A security-CLI-only ACL fails closed when user interaction is disabled."""
     subprocess.run(
         [
             "/usr/bin/security",
@@ -123,6 +113,5 @@ def test_native_backend_reads_and_updates_legacy_cli_item(backend, test_keychain
         capture_output=True,
         text=True,
     )
-    assert backend.get("kk:legacy-cli").unseal() == "non-sensitive-test-value"
-    backend.set("kk:legacy-cli", "updated-natively")
-    assert backend.get("kk:legacy-cli").unseal() == "updated-natively"
+    with pytest.raises(KeychainError, match="bypass blocked the authorization dialog"):
+        backend.get("kk:legacy-cli")

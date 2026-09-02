@@ -6,7 +6,7 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.7.4 · macOS + Windows + Linux · single-user · MIT license
+**Status:** v0.7.5 · macOS + Windows + Linux · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -37,7 +37,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.4'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.5'
 keys doctor                                            # smoke check
 ```
 
@@ -104,6 +104,19 @@ On Linux, keys-keeper picks storage automatically:
 - **Headless server** (no D-Bus / no keyring daemon): falls back to an **encrypted file** (`~/.config/keys-keeper/secrets.enc`, AES-256-GCM) unlocked by `KEYS_KEEPER_MASTER_KEY` in your environment. Any agent inheriting that environment can obtain the decryption key, so this backend is compatibility mode only.
 
 Force a backend explicitly with `KEYS_KEEPER_BACKEND=secret-tool` or `KEYS_KEEPER_BACKEND=file`. `keys doctor` prints which backend is active.
+
+#### macOS Keychain bypass (no authorization dialogs)
+
+Keys Keeper keeps the original generic-password items in macOS Keychain. It no longer launches `/usr/bin/security` for read, write, delete, or enumeration; every operation goes directly through Security.framework inside the Keys Keeper process.
+
+If macOS starts showing repeated authorization windows, enable the persistent no-UI policy:
+
+```bash
+keys keychain status     # metadata only; does not open Keychain
+keys keychain bypass    # keep native items, disable authorization dialogs
+```
+
+Current items that already trust Keys Keeper continue working normally. An older item that trusts only another executable fails with a clean error instead of opening a system window. Nothing is exported, copied, migrated, or moved. Restore the standard interactive policy with `keys keychain prompt`.
 
 ## Quick start
 
@@ -212,6 +225,7 @@ Open source, accepting PRs.
 - [x] ~~**Cursor / Aider / Codex / Cline rule-file generators** beyond the Claude skill format~~ — shipped in v0.3 (`keys init <target>`)
 - [x] ~~**Cloud sync** to any S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi), whole vault encrypted into one blob, git-like versioned snapshots, id-keyed merge~~ — shipped in v0.6 (`keys sync setup/push/pull/status/mode/rollback`)
 - [x] ~~**Browser-decrypted web vault** — the reviewed client decrypts the blob in-page and the normal server request path handles ciphertext only (read-only v1)~~ — shipped in v0.7 (`keys webvault serve`)
+- [x] ~~**Native macOS Keychain bypass** — in-process Security.framework access with a persistent no-dialog policy~~ — shipped in v0.7.5 (`keys keychain status/bypass/prompt`)
 - [ ] **MCP stdio server** (`keys mcp`) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)
 - [ ] **Touch ID-gated reveal in admin** with auto-wipe from DOM after 10s
 - [ ] **CSV export from `/audit`** (already CLI-only via `keys audit > file.csv`)

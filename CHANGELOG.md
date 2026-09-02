@@ -10,6 +10,16 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.5] — 2026-09-02
+
+### Fixed
+
+- Replaced every runtime `/usr/bin/security` read/delete/list call with in-process Security.framework operations. Existing macOS Keychain items stay in place and plaintext never enters child-process arguments or output pipes.
+- Added persistent `keys keychain bypass`: Keychain UI is disabled process-wide around each serialized native operation, so trusted items work silently and an untrusted legacy ACL returns an error instead of an authorization-dialog loop. `keys keychain prompt` restores the interactive policy.
+- Settings now reports the active prompt/bypass policy without opening Keychain, and agent instructions stop the exact retrying caller before enabling bypass only on an explicit user request.
+
+---
+
 ## [0.7.4] — 2026-09-02
 
 ### Changed

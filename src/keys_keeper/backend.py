@@ -1,6 +1,5 @@
-"""Keychain abstraction. v1 = macOS via `security` CLI."""
+"""Cross-platform secret-storage abstraction."""
 from __future__ import annotations
-import subprocess
 from abc import ABC, abstractmethod
 
 from keys_keeper.macos_keychain import MacOSNativeKeychain, SecurityFrameworkError
@@ -73,10 +72,9 @@ class MacOSKeychainBackend(KeychainBackend):
     The `account` is the entry's UUID id (e.g. "kk:abc..." or "kk:abc:passphrase").
     Use a custom `keychain_path` in tests to avoid touching the user's login keychain.
 
-    Writes use Keychain Services directly, keeping values out of process argv.
-    Reads and deletes retain the fixed system ``security`` executable so legacy
-    items keep their existing ACL behavior. Native writes explicitly trust that
-    executable; no per-upgrade Keychain approval is required.
+    Every operation uses Keychain Services in-process. In bypass mode user
+    interaction is disabled, so an untrusted item returns a clean error instead
+    of opening a system authorization dialog.
     """
 
     def __init__(
@@ -94,60 +92,21 @@ class MacOSKeychainBackend(KeychainBackend):
             allow_interaction=allow_interaction,
         )
 
-    def _kc_args(self) -> list[str]:
-        return [self.keychain_path] if self.keychain_path else []
-
     def get(self, account: str) -> Sealed:
-        # `-g` emits non-printable/multiline values as an exact hex encoding;
-        # `-w` provides an unambiguous printable value. Both outputs are private
-        # pipes, never argv or inherited terminal streams.
-        result = subprocess.run(
-            [
-                "/usr/bin/security",
-                "find-generic-password",
-                "-s",
-                self.service,
-                "-a",
-                account,
-                "-g",
-                *self._kc_args(),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise KeychainError(f"keychain entry not found: {account}")
-        first_line = result.stderr.splitlines()[0] if result.stderr else ""
-        if first_line.startswith("password: 0x"):
-            hex_part = first_line[len("password: 0x"):]
-            hex_string = hex_part.split(" ", 1)[0]
-            try:
-                return Sealed(bytes.fromhex(hex_string).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError) as ex:
+        try:
+            return Sealed(self._native.get(account))
+        except SecurityFrameworkError as ex:
+            if ex.status == -25300:
+                raise KeychainError(f"keychain entry not found: {account}") from ex
+            if not self._native.allow_interaction and ex.status in (-25293, -25308):
                 raise KeychainError(
-                    f"failed to decode keychain entry {account}"
+                    f"keychain entry {account} does not trust this Keys Keeper runtime; "
+                    "bypass blocked the authorization dialog. Use `keys keychain prompt` "
+                    "only if you want macOS to ask once."
                 ) from ex
-        plain = subprocess.run(
-            [
-                "/usr/bin/security",
-                "find-generic-password",
-                "-s",
-                self.service,
-                "-a",
-                account,
-                "-w",
-                *self._kc_args(),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if plain.returncode != 0:
-            raise KeychainError(f"keychain entry not found: {account}")
-        return Sealed(plain.stdout.rstrip("\n"))
+            raise KeychainError(f"failed to read keychain entry {account}: {ex}") from ex
 
     def set(self, account: str, value: str) -> None:
-        # The system CLI can delete legacy items under their existing ACL. The
-        # replacement value is then created natively, never through `-w VALUE`.
         self.delete(account)
         try:
             self._native.add(account, value)
@@ -155,58 +114,13 @@ class MacOSKeychainBackend(KeychainBackend):
             raise KeychainError(f"failed to set keychain entry {account}") from ex
 
     def delete(self, account: str) -> None:
-        result = subprocess.run(
-            [
-                "/usr/bin/security",
-                "delete-generic-password",
-                "-s",
-                self.service,
-                "-a",
-                account,
-                *self._kc_args(),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        # macOS maps errSecItemNotFound (-25300) to process status 44. Missing
-        # entries are an intentional no-op; any other failure must stop a
-        # metadata deletion or replacement instead of leaving an orphan.
-        if result.returncode not in (0, 44):
-            raise KeychainError(f"failed to delete keychain entry {account}")
+        try:
+            self._native.delete(account)
+        except SecurityFrameworkError as ex:
+            raise KeychainError(f"failed to delete keychain entry {account}: {ex}") from ex
 
     def list_ids(self) -> list[str]:
-        # `security dump-keychain` is heavy + verbose; we use a more targeted approach
-        # by parsing `security find-generic-password` repeatedly is impractical too.
-        # Instead, dump all generic passwords for our service via dump-keychain.
-        result = subprocess.run(
-            ["/usr/bin/security", "dump-keychain", *self._kc_args()],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            return []
-        ids: list[str] = []
-        current_service = None
-        current_account = None
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if line.startswith('"svce"<blob>='):
-                current_service = _extract_attr(line)
-            elif line.startswith('"acct"<blob>='):
-                current_account = _extract_attr(line)
-            elif line.startswith("class:"):
-                # next entry starts; flush the previous one
-                if current_service == self.service and current_account:
-                    ids.append(current_account)
-                current_service = None
-                current_account = None
-        # flush final
-        if current_service == self.service and current_account:
-            ids.append(current_account)
-        return ids
-
-
-def _extract_attr(line: str) -> str | None:
-    # line looks like: "svce"<blob>="keys-keeper-test"
-    if '="' in line and line.endswith('"'):
-        return line.split('="', 1)[1][:-1]
-    return None
+        try:
+            return self._native.list_accounts()
+        except SecurityFrameworkError as ex:
+            raise KeychainError(f"failed to list keychain entries: {ex}") from ex

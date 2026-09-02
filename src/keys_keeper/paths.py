@@ -40,6 +40,11 @@ class Paths:
         return self.root / "config.toml"
 
     @property
+    def keychain_toml(self) -> Path:
+        # Non-secret macOS interaction policy: prompt | bypass.
+        return self.root / "keychain.toml"
+
+    @property
     def serve_url_file(self) -> Path:
         # Live admin URL (with session token) of a running `keys serve`, so the
         # macOS quick-launch app can re-open the tab. Written on start, removed
