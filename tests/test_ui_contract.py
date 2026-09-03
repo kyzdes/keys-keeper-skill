@@ -11,10 +11,11 @@ ADMIN_CSS = ROOT / "src" / "keys_keeper" / "static" / "app.css"
 WEB_CSS = ROOT / "src" / "keys_keeper" / "webvault" / "static" / "app.css"
 TOKEN_SOURCE = ROOT / "scripts" / "ui_theme_tokens.json"
 TOKEN_GENERATOR = ROOT / "scripts" / "generate_ui_tokens.py"
+LANDING_HTML = ROOT / "docs" / "landing" / "index.html"
 
 
 def _tokens(css: str, selector: str) -> dict[str, str]:
-    match = re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", css, re.S)
+    match = re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", css, re.DOTALL)
     assert match, f"missing token block {selector}"
     return dict(re.findall(r"--([\w-]+):\s*([^;]+);", match.group(1)))
 
@@ -46,6 +47,40 @@ def test_admin_and_webvault_share_semantic_theme_tokens():
         assert {key: admin_tokens[key] for key in expected} == {
             key: web_tokens[key] for key in expected
         }
+
+
+def test_dark_theme_uses_the_landing_visual_palette():
+    source = json.loads(TOKEN_SOURCE.read_text(encoding="utf-8"))
+    landing = _tokens(LANDING_HTML.read_text(encoding="utf-8"), ":root")
+    panel = source["themes"]["evening"]["tokens"]
+    shared_roles = {
+        "bg",
+        "bg-elevated",
+        "surface",
+        "surface-2",
+        "surface-hover",
+        "text",
+        "text-2",
+        "accent",
+        "accent-soft",
+        "accent-line",
+        "success",
+        "success-soft",
+        "danger",
+        "danger-soft",
+        "warning",
+        "info",
+        "type-api",
+        "type-ssh",
+        "type-server",
+        "type-domain",
+        "type-note",
+        "shadow-md",
+        "shadow-lg",
+    }
+    assert {role: panel[role] for role in shared_roles} == {
+        role: landing[role] for role in shared_roles
+    }
 
 
 def test_ui_token_css_is_generated_from_canonical_source():
@@ -82,6 +117,32 @@ def test_control_boundaries_have_non_text_contrast_in_both_themes():
         tokens = _tokens(css, selector)
         assert _contrast(tokens["border"], tokens["bg"]) >= 3
         assert _contrast(tokens["border"], tokens["surface"]) >= 3
+        assert _contrast(tokens["border"], tokens["surface-2"]) >= 3
+
+
+def test_quiet_text_and_primary_actions_pass_in_both_themes():
+    css = ADMIN_CSS.read_text(encoding="utf-8")
+    for selector in (":root", ':root[data-theme="light"]'):
+        tokens = _tokens(css, selector)
+        for surface in ("bg", "surface", "surface-2"):
+            assert _contrast(tokens["text-4"], tokens[surface]) >= 4.5
+        assert _contrast(tokens["accent"], tokens["bg"]) >= 4.5
+        assert _contrast(tokens["accent"], tokens["accent-ink"]) >= 4.5
+
+
+def test_browser_theme_color_tracks_theme_canvas_tokens():
+    source = json.loads(TOKEN_SOURCE.read_text(encoding="utf-8"))
+    dark = source["themes"]["evening"]["tokens"]["bg"]
+    light = source["themes"]["day"]["tokens"]["bg"]
+    targets = [
+        ROOT / "src" / "keys_keeper" / "static" / "app.js",
+        ROOT / "src" / "keys_keeper" / "webvault" / "static" / "theme.js",
+        ROOT / "src" / "keys_keeper" / "webvault" / "static" / "vault.mjs",
+    ]
+    for path in targets:
+        content = path.read_text(encoding="utf-8")
+        assert dark in content
+        assert light in content
 
 
 def test_webvault_bundle_has_no_inherited_admin_or_env_panel_styles():
