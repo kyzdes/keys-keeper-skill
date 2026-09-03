@@ -134,19 +134,16 @@ def _verify_wheel_contents(root: Path, names: set[str]) -> None:
         )
 
 
-def _run_from_installed_target(
-    target: Path,
+def _run_from_installed_artifact(
+    python: Path,
     cwd: Path,
     *args: str,
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(target)
-    command = [sys.executable, "-m", "keys_keeper", *args]
+    command = [str(python), "-m", "keys_keeper", *args]
     try:
         return subprocess.run(
             command,
             cwd=cwd,
-            env=env,
             check=True,
             capture_output=True,
             text=True,
@@ -170,40 +167,57 @@ def verify(wheel: Path, root: Path) -> None:
 
     with tempfile.TemporaryDirectory(prefix="keys-keeper-artifact-") as raw_tmp:
         temporary = Path(raw_tmp)
-        target = temporary / "site"
-        target.mkdir()
-        # The project ships a platform-independent wheel. Extracting it directly
-        # gives the smoke process an isolated import root without depending on
-        # pip being installed in the test interpreter.
-        with zipfile.ZipFile(wheel) as archive:
-            archive.extractall(target)
+        environment = temporary / "venv"
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(environment)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        # Exercise the wheel as an installable artifact and include its declared
+        # runtime dependencies. Direct extraction can accidentally pass on a
+        # developer machine while failing in a clean release environment.
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                str(wheel),
+            ],
+            cwd=temporary,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
 
-        probe_env = os.environ.copy()
-        probe_env["PYTHONPATH"] = str(target)
         origin = subprocess.run(
             [
-                sys.executable,
+                str(python),
                 "-c",
                 "import keys_keeper; print(keys_keeper.__file__)",
             ],
             cwd=temporary,
-            env=probe_env,
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
         ).stdout.strip()
-        if not Path(origin).resolve().is_relative_to(target.resolve()):
+        if not Path(origin).resolve().is_relative_to(environment.resolve()):
             raise SystemExit(f"artifact smoke imported keys_keeper from {origin}")
 
-        version = _run_from_installed_target(target, temporary, "--version").stdout
+        version = _run_from_installed_artifact(python, temporary, "--version").stdout
         if version.strip() != f"keys-keeper {project_version}":
             raise SystemExit(
                 "installed wheel version output disagrees with the release contract"
             )
 
-        keychain_help = _run_from_installed_target(
-            target, temporary, "keychain", "--help"
+        keychain_help = _run_from_installed_artifact(
+            python, temporary, "keychain", "--help"
         ).stdout
         for command in ("status", "bypass", "prompt", "prepare"):
             if command not in keychain_help:
@@ -211,8 +225,8 @@ def verify(wheel: Path, root: Path) -> None:
                     f"installed wheel keychain command is missing {command!r}"
                 )
 
-        _run_from_installed_target(
-            target,
+        _run_from_installed_artifact(
+            python,
             temporary,
             "init",
             "claude",

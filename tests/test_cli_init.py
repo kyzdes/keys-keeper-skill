@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from keys_keeper.cli import main as cli_main
 from keys_keeper.agent_rules import render
+from keys_keeper.cli import main as cli_main
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ def test_claude_installs_progressive_disclosure_references(chdir):
     skill_root = chdir / ".claude" / "skills" / "keys-keeper"
     skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
     expected = render.render_claude_reference_files()
-    assert set(path.name for path in (skill_root / "references").iterdir()) == set(expected)
+    assert {path.name for path in (skill_root / "references").iterdir()} == set(expected)
     for name, content in expected.items():
         assert (skill_root / "references" / name).read_text(encoding="utf-8") == content
         assert f"references/{name}" in skill
@@ -220,7 +220,7 @@ def test_claude_check_detects_reference_drift(chdir, capsys):
     rc = _run("init", "claude", "--check")
     captured = capsys.readouterr()
     assert rc == 1
-    assert "references/sync.md: out of date" in captured.err
+    assert "references/sync.md: out of date" in captured.err.replace("\\", "/")
 
 
 def test_check_aider_marker_drift(chdir, capsys):
