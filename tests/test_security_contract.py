@@ -144,13 +144,11 @@ def test_repository_is_an_installable_codex_marketplace():
     assert (source_path / ".codex-plugin" / "plugin.json").is_file()
 
 
-def test_readme_documents_github_marketplace_install():
+def test_readme_recommends_stable_codex_skill_install():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert (
-        "codex plugin marketplace add "
-        "https://github.com/kyzdes/keys-keeper-skill" in readme
-    )
-    assert "codex plugin add keys-keeper@keys-keeper" in readme
+    assert "keys init codex-skill" in readme
+    assert "$CODEX_HOME/skills/keys-keeper" in readme
+    assert "outside Codex's versioned plugin cache" in readme
     assert "/plugin update keys-keeper@claude-skills" in readme
 
 

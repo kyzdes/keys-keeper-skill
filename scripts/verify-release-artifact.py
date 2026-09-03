@@ -225,6 +225,29 @@ def verify(wheel: Path, root: Path) -> None:
                     f"installed wheel keychain command is missing {command!r}"
                 )
 
+        vps_help = _run_from_installed_artifact(
+            python, temporary, "sync", "vps", "--help"
+        ).stdout
+        for command in (
+            "init", "push", "pull", "status", "devices",
+            "invite", "join", "approve", "finish", "revoke",
+        ):
+            if command not in vps_help:
+                raise SystemExit(
+                    f"installed wheel VPS sync command is missing {command!r}"
+                )
+
+        syncd_help = subprocess.run(
+            [str(python), "-m", "keys_keeper.sync_server_cli", "--help"],
+            cwd=temporary,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+        if "keys-keeper-syncd" not in syncd_help or "--database" not in syncd_help:
+            raise SystemExit("installed wheel is missing the syncd service entrypoint")
+
         _run_from_installed_artifact(
             python,
             temporary,
@@ -245,6 +268,23 @@ def verify(wheel: Path, root: Path) -> None:
                 raise SystemExit(
                     f"wheel-generated {relative} differs from the source payload"
                 )
+
+        # The Codex-specific target is part of the installed CLI, not merely a
+        # source-checkout convenience. An explicit path keeps this release
+        # test isolated from the operator's real Codex home.
+        _run_from_installed_artifact(
+            python,
+            temporary,
+            "init",
+            "codex-skill",
+            "--out",
+            "codex-home/skills/keys-keeper/SKILL.md",
+            "--force",
+        )
+        if not (
+            temporary / "codex-home" / "skills" / "keys-keeper" / "SKILL.md"
+        ).is_file():
+            raise SystemExit("wheel did not expose the codex-skill init target")
 
 
 def main() -> int:

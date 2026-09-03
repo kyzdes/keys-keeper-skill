@@ -24,6 +24,7 @@ from keys_keeper.agent_rules import render
 
 
 WriteMode = str  # "single-file" | "marker-append" | "stdout"
+DefaultPath = str | Callable[[], Path] | None
 
 
 class _InitError(Exception):
@@ -33,11 +34,11 @@ class _InitError(Exception):
 
 @dataclass(frozen=True)
 class TargetSpec:
-    # All renderers accept Optional[Path]. Only claude actually uses it
-    # (to read existing frontmatter); other targets ignore the argument.
+    # All renderers accept Optional[Path]. Skill renderers use it to preserve
+    # existing frontmatter; other targets ignore the argument.
     # Uniform signature kills the old lambda-with-hardcoded-path pattern.
     render_fn: Callable[[Path | None], str]
-    default_path: str | None  # relative to cwd; None for stdout-only
+    default_path: DefaultPath  # relative to cwd, dynamic, or None for stdout-only
     write_mode: WriteMode
     post_write_hint: str | None = None
     reference_files: Callable[[], dict[str, str]] | None = None
@@ -51,7 +52,7 @@ class TargetSpec:
 
 
 def _render_claude(path: Path | None = None) -> str:
-    """Render SKILL.md, preserving existing name/description if present.
+    """Render a SKILL.md, preserving existing name/description if present.
 
     If `path` is given AND exists, read its frontmatter and reuse any
     user-customized `name` / `description`. Otherwise fall back to defaults
@@ -99,6 +100,13 @@ def _render_generic(_path: Path | None = None) -> str:
     return render.render_generic()
 
 
+def _codex_skill_path() -> Path:
+    """Stable personal skill path, independent of the plugin version cache."""
+    codex_home = os.environ.get("CODEX_HOME")
+    root = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
+    return root / "skills" / "keys-keeper" / "SKILL.md"
+
+
 # ---------------------------------------------------------------------------
 # Registry. Order here = order shown in `keys init --help`.
 # ---------------------------------------------------------------------------
@@ -137,6 +145,16 @@ TARGETS: dict[str, TargetSpec] = {
             "Amp, Jules, and other agents following the AGENTS.md open spec."
         ),
     ),
+    "codex-skill": TargetSpec(
+        render_fn=_render_claude,
+        default_path=_codex_skill_path,
+        write_mode="single-file",
+        post_write_hint=(
+            "Personal Codex skill installed outside the versioned plugin cache. "
+            "Start a new Codex task to reload the skill catalog."
+        ),
+        reference_files=render.render_claude_reference_files,
+    ),
     "cline": TargetSpec(
         render_fn=_render_cline,
         default_path=".clinerules/00-keys-keeper.md",
@@ -153,7 +171,7 @@ TARGETS: dict[str, TargetSpec] = {
 
 
 # ---------------------------------------------------------------------------
-# Claude frontmatter parsing — used only by _render_claude.
+# Skill frontmatter parsing — used only by _render_claude.
 # ---------------------------------------------------------------------------
 
 
@@ -379,7 +397,16 @@ def _cmd_init_inner(args: argparse.Namespace) -> int:
         sys.stdout.write(content)
         return 0
 
-    dest = Path(args.out) if args.out else Path(spec.default_path)
+    if args.out:
+        dest = Path(args.out)
+    elif callable(spec.default_path):
+        dest = spec.default_path()
+    else:
+        # stdout-only targets returned above, so this is unreachable for a
+        # correctly declared target.
+        if spec.default_path is None:
+            raise _InitError(f"target {args.target!r} has no destination path")
+        dest = Path(spec.default_path)
 
     # Special-case claude default path: if we're not in this repo (no
     # skills/keys-keeper/), fall back to .claude/skills/keys-keeper/SKILL.md
@@ -390,7 +417,7 @@ def _cmd_init_inner(args: argparse.Namespace) -> int:
     content = spec.render_fn(dest)
 
     # Warn (once) if cwd is not a git project. Doesn't block.
-    if not Path(".git").exists() and not args.out:
+    if not Path(".git").exists() and not args.out and args.target != "codex-skill":
         print(
             f"warning: no .git in CWD; writing {dest} anyway",
             file=sys.stderr,

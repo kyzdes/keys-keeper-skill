@@ -19,9 +19,9 @@ from keys_keeper.agent_rules.canonical import (
 )
 
 
-# Default frontmatter values for the shipped Claude SKILL.md. The writer
-# preserves these from disk if the user has customized them; otherwise it
-# falls back to these.
+# Default frontmatter values for the shipped SKILL.md. The writer preserves
+# these from disk if the user has customized them; otherwise it falls back to
+# these. The same skill ABI is used by Claude and Codex personal skills.
 CLAUDE_SKILL_NAME = "keys-keeper"
 CLAUDE_SKILL_DESCRIPTION = (
     "Use saved secrets through the `keys` CLI without printing their values. "
@@ -57,7 +57,7 @@ def render_claude_skill_md(
 ) -> str:
     """Full SKILL.md content including YAML frontmatter.
 
-    The Claude skill ABI requires `name` and `description` at the top.
+    The skill ABI requires `name` and `description` at the top.
     Callers (init_cmd) may preserve user-customized frontmatter by reading
     those fields from the existing file and passing them in.
     """
@@ -75,7 +75,7 @@ def render_claude_skill_md(
 
 
 def render_claude_reference_files() -> dict[str, str]:
-    """Generated on-demand references installed next to Claude SKILL.md."""
+    """Generated on-demand references installed next to SKILL.md."""
     return dict(SKILL_REFERENCE_FILES)
 
 

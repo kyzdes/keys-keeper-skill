@@ -40,10 +40,10 @@ migrate existing secrets or restructure their setup unprompted.
    `which keys` / `Get-Command keys`). If it works → skip to step 4.
 2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
    silently. One line on what it is, then the platform command:
-   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.8'`
+   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.8.0'`
      (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
      `python3 -m pip install --user pipx && pipx ensurepath`)
-   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.8"`
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.8.0"`
    - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
 3. **After install, note that `keys` may need a fresh terminal** for PATH to
    pick it up. Re-check with `keys --version`.
@@ -158,6 +158,9 @@ Presence, successful resolution, and external service validity are three differe
 - `keys sync setup` connects an S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi) and stores the access-key id, secret key, and a backup passphrase in the OS keychain. This step INGESTS secrets (it prompts for the secret key + passphrase), so it's user-driven — walk them through `keys sync setup --endpoint ... --bucket ... --access-key-id ...`, don't run it unprompted. The passphrase encrypts the whole cloud copy; a lost passphrase = unrecoverable backup, so tell the user to keep it somewhere safe.
 - Once configured you CAN run `keys sync push` / `keys sync pull` / `keys sync status` yourself — they move only the encrypted AES-256-GCM blob (same zero-knowledge format as `keys export`); no plaintext hits stdout or the transcript. `keys sync status` reads the saved sync credentials and contacts the remote even though its output contains metadata only.
 - `keys sync rollback N` restores an earlier snapshot version; `keys sync mode {off,manual,auto}` switches modes. `auto` enables a fail-open SessionStart auto-sync that exits silently on any error and never prompts.
+- For S3-free private VPS sync, `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a separate KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
+- After VPS setup, you CAN run `keys sync vps status`, `push`, or `pull`; the server receives only ciphertext, signed manifests, public device keys, and token hashes. For onboarding, run `invite`, `join`, `approve`, and `finish` only when the user explicitly asks to add that device. `invite` and `approve` must run on the pinned root device. The invite file contains a short-lived secret: transfer it only to the user-selected destination and never read it back through an agent-visible tool. Pass the invitation trust fingerprint to `join` only after the human verifies it against the root device over a separate channel. Then require the new-device fingerprint to match before `approve`; approval also takes the original invite file so its signed checkpoint cannot change.
+- `keys sync vps revoke DEVICE_ID` is root-device-only. It blocks future server access but does not erase snapshots or VaultKey material already held by that device. Run it only on explicit request and report that cryptographic key rotation is not implemented yet.
 
 ### User wants the vault in a browser (self-hosted)
 

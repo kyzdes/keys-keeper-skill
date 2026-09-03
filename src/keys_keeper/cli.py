@@ -973,7 +973,10 @@ def build_parser() -> argparse.ArgumentParser:
     from keys_keeper.init_cmd import TARGETS as _INIT_TARGETS, cmd_init
     init = sub.add_parser(
         "init",
-        help="emit an agent rule file (claude / cursor / aider / codex / cline / generic)",
+        help=(
+            "emit an agent rule file "
+            "(claude / cursor / aider / codex / codex-skill / cline / generic)"
+        ),
     )
     init.add_argument("target", choices=list(_INIT_TARGETS.keys()))
     init.add_argument("--out", help="override default destination path")

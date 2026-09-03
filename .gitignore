@@ -27,3 +27,9 @@ promo-concepts/
 # Local tooling scratch (Antigravity CLI state, Playwright MCP session dirs).
 .antigravitycli/
 .playwright-mcp/
+# Local deployment and enrollment secrets.
+docs/syncd/.env
+keys-keeper-recovery*.json
+device-invite*.json
+*.keys-keeper-recovery.json
+*.keys-keeper-invite.json

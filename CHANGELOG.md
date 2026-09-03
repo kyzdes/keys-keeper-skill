@@ -4,9 +4,38 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace updates are explicit by default; mutable-HEAD SessionStart updates remain an opt-in compatibility mode.
 
+## [Unreleased]
+
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-09-04
+
+### Added
+
+- Added S3-free KK2 multi-device sync through a private `keys-keeper-syncd`
+  service: encrypted snapshots, Ed25519-signed hash-chain commits, SQLite CAS,
+  root-key pinning, one-time device enrollment, X25519 VaultKey wrapping, and a
+  separate offline recovery bundle.
+- Added a hardened stdlib HTTP client, the `keys-keeper-syncd` process entrypoint,
+  a non-root container definition, and VPS deployment/threat-model guidance.
+
+### Security
+
+- VPS sync requires HTTPS outside loopback, refuses redirects, bounds all wire
+  payloads, keeps bearer tokens and private key material out of local sidecars,
+  and fails closed on rollback, a branch that does not descend from the local
+  checkpoint, pointer swap, unknown-device, or invalid membership/signature
+  evidence. Independent split-view detection still requires witness/gossip.
+- Device enrollment claims are idempotent across lost responses, and root-only
+  device administration is enforced consistently by the CLI and sync service.
+- Device revocation is deliberately labelled as server-access revocation; key
+  epoch rotation for cryptographic post-revocation secrecy remains future work.
+
+### Fixed
+
+- Added `keys init codex-skill`, which installs Keys Keeper into Codex's stable
+  personal skill directory instead of a versioned plugin-cache path. This keeps
+  new tasks from inheriting paths that disappear after a plugin upgrade.
 
 ---
 

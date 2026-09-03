@@ -6,7 +6,7 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.7.8 · macOS + Windows + Linux · single-user · MIT license
+**Status:** v0.8.0 · macOS + Windows + Linux · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -37,7 +37,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.8'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.8.0'
 keys doctor                                            # smoke check
 ```
 
@@ -45,30 +45,37 @@ No pipx? macOS: `brew install pipx && pipx ensurepath`. Windows: `python -m pip 
 
 ### 2. Wire it into your AI agent
 
-Pick whichever agents you use — run inside the project directory you want the agent to use it in:
+Pick whichever agents you use. Run project-scoped targets inside the project
+directory; the personal Codex skill can be installed from anywhere:
 
 | Agent | Command | What it does |
 |---|---|---|
 | **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; mutable-HEAD updates are disabled by default |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
-| **Codex app / CLI** | `codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`<br>then `codex plugin add keys-keeper@keys-keeper` | Installs the minimal skill bundle globally; project-only fallback: `keys init codex` |
+| **Codex app / CLI** | `keys init codex-skill` | Installs a personal skill at `$CODEX_HOME/skills/keys-keeper` (or `~/.codex/skills/keys-keeper`), outside Codex's versioned plugin cache; project-only fallback: `keys init codex` |
 | **Cline** | `keys init cline` | Writes `.clinerules/00-keys-keeper.md` |
 | **Any other agent** | `keys init generic` | Prints to stdout — redirect wherever your agent reads rules from |
 
 You can mix targets — `keys init cursor` and `keys init codex` in the same project both work and stay consistent. The `aider`/`codex` writes use HTML-comment markers so re-running just refreshes the keys-keeper section and leaves the rest of the file alone.
 
-The minimal Codex bundle lives in `plugins/keys-keeper`. It deliberately ships
-no startup hook, application code, or virtual environment: installing the plugin
-does not read the credential store, fetch updates, or start sync. Once installed,
-open a new Codex task and ask naturally, for example: “put the saved OpenRouter
-key into this project's `.env`.”
+For Codex, prefer `keys init codex-skill`. The personal skill path is stable
+across CLI and marketplace updates, while a running Codex task keeps the exact
+skill path it received at startup. A marketplace update may replace a path such
+as `.../plugins/cache/keys-keeper/keys-keeper/0.7.8/...` with `0.8.0`; the old
+task will then report that its catalog path is stale. Re-run
+`keys init codex-skill --force` after upgrading Keys Keeper, then start a new
+Codex task to reload the catalog.
 
-The repository itself is a Codex marketplace via
-`.agents/plugins/marketplace.json`. In a fresh Codex session you can paste
-`https://github.com/kyzdes/keys-keeper-skill` and ask Codex to install it; the
-deterministic CLI equivalent is the two commands in the table above. Start a new
-task after installation so Codex reloads the available skills.
+If `keys-keeper@keys-keeper` was previously installed as a Codex plugin, disable
+or remove that plugin after installing the personal skill so Codex sees only the
+stable copy. The minimal marketplace bundle remains in `plugins/keys-keeper` for
+packaging compatibility; it deliberately ships no startup hook, application
+code, or virtual environment.
+
+The repository is also a Codex marketplace via `.agents/plugins/marketplace.json`.
+That route is useful for testing the packaged plugin, but the personal install
+above is the recommended day-to-day setup because its path is not versioned.
 
 Already installed in Claude Code? Refresh the marketplace and the reviewed
 plugin release, then start a new session:
@@ -188,6 +195,12 @@ Designed terminal-adjacent: JetBrains Mono, dark by default, dense, low-chrome. 
 - **Optional auto-sync.** `keys sync mode auto` enables a non-interactive SessionStart hook that pulls+pushes in a debounced, backgrounded, **fail-open** worker — any missing credential or network error exits 0 and never blocks a session. The passphrase is read from the OS keychain (set once at setup).
 
 Zero new dependencies — AWS Signature V4 is hand-rolled over the stdlib (no boto3). First-time setup (which stores the S3 access key id, secret key, and passphrase in the OS keychain) stays in the CLI; the web `/settings` Sync panel exposes status, the mode toggle, and Pull / "Sync now".
+
+### Private VPS sync (KK2)
+
+`keys sync vps init / push / pull / status / invite / join / approve / finish / devices / revoke` provides a separate S3-free transport through `keys-keeper-syncd`. The VPS stores an SQLite CAS log containing only opaque AES-256-GCM snapshots, signed hash-chain commits, public device keys, and hashed bearer/invite tokens. A random VaultKey and device private keys remain in each device's OS credential store.
+
+New devices use a short-lived one-time invitation, an out-of-band fingerprint comparison, an Ed25519-signed membership statement, and an X25519-wrapped VaultKey. The client pins the root device key and verifies the full chain before decrypting; device enrollment and revocation are root-only. See [the deployment and threat-model guide](docs/architecture/VPS-SYNC-KK2.md). Revocation currently blocks future server access but does not erase data already downloaded or rotate the VaultKey; the CLI reports that limitation explicitly. A malicious VPS split view still requires independent device gossip/witnessing to detect.
 
 ## Zero-knowledge web vault
 
