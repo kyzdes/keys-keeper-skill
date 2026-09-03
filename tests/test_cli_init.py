@@ -6,7 +6,6 @@ Covers: stdout / single-file / marker-append write modes, --force,
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -87,6 +86,18 @@ def test_cline_writes_with_alphabetic_prefix(chdir):
     rc = _run("init", "cline")
     assert rc == 0
     assert (chdir / ".clinerules" / "00-keys-keeper.md").exists()
+
+
+def test_claude_installs_progressive_disclosure_references(chdir):
+    rc = _run("init", "claude")
+    assert rc == 0
+    skill_root = chdir / ".claude" / "skills" / "keys-keeper"
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    expected = render.render_claude_reference_files()
+    assert set(path.name for path in (skill_root / "references").iterdir()) == set(expected)
+    for name, content in expected.items():
+        assert (skill_root / "references" / name).read_text(encoding="utf-8") == content
+        assert f"references/{name}" in skill
 
 
 def test_out_flag_overrides_destination(chdir, tmp_path):
@@ -199,6 +210,17 @@ def test_check_fails_when_file_missing(chdir, capsys):
     captured = capsys.readouterr()
     assert rc == 1
     assert "out of date" in captured.err
+
+
+def test_claude_check_detects_reference_drift(chdir, capsys):
+    _run("init", "claude")
+    reference = chdir / ".claude" / "skills" / "keys-keeper" / "references" / "sync.md"
+    reference.write_text("tampered\n", encoding="utf-8", newline="\n")
+    capsys.readouterr()
+    rc = _run("init", "claude", "--check")
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "references/sync.md: out of date" in captured.err
 
 
 def test_check_aider_marker_drift(chdir, capsys):
@@ -354,6 +376,6 @@ def test_init_claude_malformed_frontmatter_falls_back_to_defaults(chdir):
     # Fence regex requires a closing `---\n`; missing → defaults restored.
     assert "name: keys-keeper" in out
     # default description text (distinctive opening phrase of the canonical default)
-    assert "Securely save, retrieve, or reference API keys" in out
+    assert "Use saved secrets through the `keys` CLI" in out
     assert "leftover" not in out
     assert "Storage CLI is `keys`" in out  # canonical body

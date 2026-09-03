@@ -15,7 +15,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import ssl
@@ -147,6 +146,7 @@ class WebVaultServer:
         self.bound_port = 0
         # SRI for the bundle (computed once; injected into the shell).
         self.sri = {
+            "__SRI_THEME__": _sri(_STATIC / "theme.js"),
             "__SRI_KKCRYPTO__": _sri(_STATIC / "kkcrypto.mjs"),
             "__SRI_VAULT__": _sri(_STATIC / "vault.mjs"),
             "__SRI_VAULT_CSS__": _sri(_STATIC / "vault.css"),

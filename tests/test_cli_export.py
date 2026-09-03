@@ -125,3 +125,38 @@ def test_import_rejects_reserved_account_before_mutating_vault(cli_env, tmp_path
     with patch("getpass.getpass", return_value="pw"):
         assert cli.main(["import", str(backup)]) == 1
     assert MetadataStore(Paths()).list() == []
+
+
+def test_import_rejects_duplicate_id_without_overwriting_existing_secret(
+    cli_env, tmp_path, monkeypatch
+):
+    from keys_keeper.composition import build_backend
+
+    monkeypatch.setattr("sys.stdin", StringIO("sentinel-original\n"))
+    assert cli.main(["add", "original-entry", "--type", "api_key", "--stdin"]) == 0
+    store = MetadataStore(Paths())
+    original = store.get_by_name("original-entry")
+    payload = {
+        "schema_version": 1,
+        "entries": [{
+            "id": original.id,
+            "name": "collision-entry",
+            "type": "api_key",
+            "fields": {},
+            "tags": [],
+            "note": "",
+            "refs": [],
+            "created_at": "2026-07-20T00:00:00Z",
+            "updated_at": "2026-07-20T00:00:00Z",
+            "_secret": "sentinel-collision",
+            "_secret_passphrase": None,
+        }],
+    }
+    backup = tmp_path / "duplicate-id.kk"
+    backup.write_bytes(encrypt_blob(json.dumps(payload).encode(), password="pw"))
+
+    with patch("getpass.getpass", return_value="pw"):
+        assert cli.main(["import", str(backup)]) == 1
+
+    assert store.get_by_name("collision-entry") is None
+    assert build_backend().get(original.id).unseal() == "sentinel-original"

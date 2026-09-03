@@ -2,6 +2,7 @@
 from __future__ import annotations
 import subprocess
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from keys_keeper.macos_keychain import MacOSNativeKeychain, SecurityFrameworkError
 
@@ -66,6 +67,15 @@ class KeychainBackend(ABC):
     def list_ids(self) -> list[str]: ...
 
 
+@dataclass(frozen=True)
+class MacOSKeychainReadiness:
+    """Metadata-only state; obtaining it never reads a secret value."""
+
+    state: str
+    interaction_allowed: bool
+    legacy_bridge_allowed: bool
+
+
 class MacOSKeychainBackend(KeychainBackend):
     """macOS Keychain backend with native secret-value operations.
 
@@ -86,9 +96,11 @@ class MacOSKeychainBackend(KeychainBackend):
         service: str = "keys-keeper",
         keychain_path: str | None = None,
         allow_interaction: bool = True,
+        allow_legacy_bridge: bool = True,
     ):
         self.service = service
         self.keychain_path = keychain_path
+        self.allow_legacy_bridge = allow_legacy_bridge
         self._native = MacOSNativeKeychain(
             service=service,
             keychain_path=keychain_path,
@@ -102,12 +114,16 @@ class MacOSKeychainBackend(KeychainBackend):
             if ex.status == -25300:
                 raise KeychainError(f"keychain entry not found: {account}") from ex
             if not self._native.allow_interaction and ex.status in (-25293, -25308):
-                if self._native.legacy_security_read_allowed(account):
+                if (
+                    self.allow_legacy_bridge
+                    and self._native.legacy_security_read_allowed(account)
+                ):
                     return self._read_legacy_security_bridge(account)
                 raise KeychainError(
                     f"keychain entry {account} does not trust this Keys Keeper runtime; "
-                    "bypass blocked the authorization dialog. Use `keys keychain prompt` "
-                    "only if you want macOS to ask once."
+                    "Keychain UI is disabled for this operation. Use "
+                    "`keys keychain prompt` only for an explicit interactive command "
+                    "where you want macOS to ask once."
                 ) from ex
             raise KeychainError(f"failed to read keychain entry {account}: {ex}") from ex
 
@@ -156,11 +172,55 @@ class MacOSKeychainBackend(KeychainBackend):
             ) from ex
 
     def set(self, account: str, value: str) -> None:
-        self.delete(account)
         try:
-            self._native.add(account, value)
+            self._native.set(account, value)
         except (SecurityFrameworkError, UnicodeEncodeError) as ex:
             raise KeychainError(f"failed to set keychain entry {account}") from ex
+
+    def readiness(self) -> MacOSKeychainReadiness:
+        """Probe lock/readiness metadata without requesting secret data."""
+        try:
+            unlocked = self._native.is_unlocked()
+        except SecurityFrameworkError as ex:
+            raise KeychainError(f"failed to inspect Keychain readiness: {ex}") from ex
+        return MacOSKeychainReadiness(
+            state="ready" if unlocked else "locked",
+            interaction_allowed=self._native.allow_interaction,
+            legacy_bridge_allowed=self.allow_legacy_bridge,
+        )
+
+    def native_access_prepared(self, account: str) -> bool:
+        """Check the current runtime's decrypt ACL without reading the value."""
+        try:
+            return self._native.native_access_prepared(account)
+        except SecurityFrameworkError as ex:
+            if ex.status == -25300:
+                raise KeychainError(f"keychain entry not found: {account}") from ex
+            raise KeychainError(
+                f"failed to inspect native access for {account}: {ex}"
+            ) from ex
+
+    def native_access_state(self, account: str) -> str:
+        """Return prepared/needs-preparation/partitioned from ACL metadata."""
+        try:
+            return self._native.native_access_state(account)
+        except SecurityFrameworkError as ex:
+            if ex.status == -25300:
+                raise KeychainError(f"keychain entry not found: {account}") from ex
+            raise KeychainError(
+                f"failed to inspect native access for {account}: {ex}"
+            ) from ex
+
+    def prepare_native_access(self, account: str) -> bool:
+        """Prepare one original item for this runtime without copying its value."""
+        try:
+            return self._native.prepare_native_access(account)
+        except SecurityFrameworkError as ex:
+            if ex.status == -25300:
+                raise KeychainError(f"keychain entry not found: {account}") from ex
+            raise KeychainError(
+                f"failed to prepare native access for {account}: {ex}"
+            ) from ex
 
     def delete(self, account: str) -> None:
         try:

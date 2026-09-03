@@ -126,11 +126,14 @@ class SecretToolBackend(KeychainBackend):
 
     def delete(self, account: str) -> None:
         # `secret-tool clear` removes all items matching the attributes; a
-        # missing entry is a no-op with rc 0, so we don't inspect returncode.
-        subprocess.run(
+        # missing entry is a no-op with rc 0. Any other non-zero result means
+        # the delete did not complete and must block the metadata commit.
+        result = subprocess.run(
             [self.executable, "clear", *self._attrs(account)],
             capture_output=True, text=True,
         )
+        if result.returncode != 0:
+            raise KeychainError(f"failed to delete secret {account}")
 
     def list_ids(self) -> list[str]:
         result = subprocess.run(

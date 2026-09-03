@@ -6,7 +6,7 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.7.6 · macOS + Windows + Linux · single-user · MIT license
+**Status:** v0.7.7 · macOS + Windows + Linux · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -37,7 +37,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.6'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.7'
 keys doctor                                            # smoke check
 ```
 
@@ -113,10 +113,21 @@ If macOS starts showing repeated authorization windows, enable the persistent no
 
 ```bash
 keys keychain status     # metadata only; does not open Keychain
+keys keychain status --check  # no-UI lock/readiness probe; reads no secret
 keys keychain bypass    # keep native items, disable authorization dialogs
+keys keychain prepare NAME --check  # no-UI ACL preflight for one item
+keys keychain prepare NAME          # explicit one-item ACL setup
 ```
 
 Current items that already trust Keys Keeper continue working normally. For an older item whose decrypt ACL explicitly trusts Apple's fixed `/usr/bin/security`, bypass first verifies that ACL and that the Keychain is unlocked, then uses that already-authorized path for the read. The original item is not rewritten. Unknown, locked, or untrusted ACLs fail cleanly before any compatibility process starts, so they cannot open a system window. Nothing is exported, copied, migrated, or moved. Restore the standard interactive policy with `keys keychain prompt`.
+
+Admin, WebVault-adapter, and automatic sync operations use a stricter
+background context: Keychain UI and the compatibility bridge are both
+disabled, regardless of the persistent prompt/bypass preference. A background
+access problem therefore returns one error instead of opening an authorization
+dialog. If one legacy item fails because it does not trust the native runtime,
+`prepare NAME` updates only that original item's decrypt ACL; it neither reads
+nor copies the stored value. There is deliberately no bulk preparation mode.
 
 ## Quick start
 

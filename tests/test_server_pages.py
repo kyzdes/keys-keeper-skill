@@ -1,11 +1,14 @@
 import threading
 import time
+import urllib.error
 import urllib.request
-import pytest
 from io import StringIO
+
+import pytest
+
 from keys_keeper import cli
 from keys_keeper.paths import Paths
-from keys_keeper.server import AdminServer
+from keys_keeper.server import _NO_CACHE_HEADERS, AdminServer
 
 
 @pytest.fixture
@@ -43,7 +46,11 @@ def test_dashboard_returns_html_with_topbar(admin):
 def test_dashboard_has_unified_table_markup(admin):
     body = _get(admin, "/")
     # The locked variant per ux-spec § 8.4 DIM 1 is unified-table
-    assert "unified-table-head" in body or 'class="unified-table-head"' in body or 'data-grouping="unified"' in body
+    assert (
+        "unified-table-head" in body
+        or 'class="unified-table-head"' in body
+        or 'data-grouping="unified"' in body
+    )
 
 
 def test_dashboard_includes_search_and_palette_trigger(admin):
@@ -70,6 +77,13 @@ def test_theme_bootstrap_is_external_and_csp_compatible(admin):
     assert "keys-keeper-theme" in theme_js
 
 
+def test_admin_csp_has_no_stale_external_font_origins():
+    csp = _NO_CACHE_HEADERS["Content-Security-Policy"]
+    assert "fonts.googleapis.com" not in csp
+    assert "fonts.gstatic.com" not in csp
+    assert "font-src 'self'" in csp
+
+
 def test_settings_status_uses_dom_text_not_untrusted_html(admin):
     js = _get(admin, "/static/app.js")
     assert "${s.config_dir}" not in js
@@ -83,3 +97,34 @@ def test_entry_detail_renders(admin, monkeypatch):
     assert "detail-target" in body
     assert "Copy value" in body
     assert "Linked entries" in body or "fields-mount" in body
+
+
+@pytest.mark.parametrize(
+    ("path", "marker"),
+    [
+        ("/index.html", "Dashboard"),
+        ("/new", "New entry"),
+        ("/paste", "Bulk import"),
+        ("/audit", "audit-shell"),
+        ("/settings", "Server status"),
+    ],
+)
+def test_exact_page_routes_preserve_renderers(admin, path, marker):
+    assert marker in _get(admin, path)
+
+
+def test_entry_edit_route_renders_existing_entry(admin, monkeypatch):
+    _seed(monkeypatch, "edit-target")
+
+    body = _get(admin, "/entry/edit-target/edit")
+
+    assert "Edit edit-target" in body
+    assert 'value="edit-target"' in body
+
+
+def test_unknown_page_keeps_plain_text_404(admin):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get(admin, "/unknown-page")
+
+    assert exc_info.value.code == 404
+    assert exc_info.value.read() == b"not found"

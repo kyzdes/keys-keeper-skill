@@ -17,18 +17,26 @@ from datetime import datetime, timezone
 
 from keys_keeper.audit import AuditLog
 from keys_keeper.backend import KeychainError
-from keys_keeper.composition import build_backend
+from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.config import (
-    SyncConfig, SyncConfigError, load_sync_config, save_sync_config, set_mode,
+    SyncConfig,
+    SyncConfigError,
+    load_sync_config,
+    save_sync_config,
+    set_mode,
 )
+from keys_keeper.crypto import BadPassword
 from keys_keeper.models import now_iso
 from keys_keeper.paths import Paths
+from keys_keeper.service import compensating_secret_update
 from keys_keeper.store import MetadataStore
 from keys_keeper.sync import SyncEngine
 from keys_keeper.sync_remote import (
-    S3Remote, S3Signer, AuthError, TransportError,
+    AuthError,
+    S3Remote,
+    S3Signer,
+    TransportError,
 )
-from keys_keeper.crypto import BadPassword
 
 # Reserved keychain accounts. Namespaced so they can never collide with an
 # entry id (kk:<uuid4>) or be emitted into a snapshot's entries[] (S7).
@@ -78,11 +86,15 @@ def _build_remote(cfg: SyncConfig, backend) -> S3Remote:
                     prefix=cfg.prefix, addressing=cfg.addressing, proxy=cfg.proxy)
 
 
-def _build_engine(paths: Paths):
+def _build_engine(
+    paths: Paths,
+    *,
+    access: AccessContext = AccessContext.INTERACTIVE,
+):
     cfg = load_sync_config(paths)
     if not cfg.endpoint or not cfg.bucket:
         raise SyncConfigError("sync is not configured — run `keys sync setup`")
-    backend = build_backend()
+    backend = build_backend(access=access)
     remote = _build_remote(cfg, backend)
     engine = SyncEngine(remote=remote, store=MetadataStore(paths), backend=backend,
                         device_id=cfg.device_id, retain_snapshots=cfg.retain_snapshots,
@@ -115,6 +127,7 @@ def _loud(fn):
 
 @_loud
 def cmd_sync_setup(args: argparse.Namespace) -> int:
+    paths = Paths()
     cfg = SyncConfig(
         mode="auto" if args.auto else "manual",
         endpoint=args.endpoint, bucket=args.bucket, region=args.region,
@@ -138,17 +151,21 @@ def cmd_sync_setup(args: argparse.Namespace) -> int:
     except WeakPassphraseError as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
-    backend.set(SYNC_ACCESS, args.access_key_id)
-    backend.set(SYNC_SECRET, secret)
-    backend.set(SYNC_PASS, p1)
-
-    remote = _build_remote(cfg, backend)
-    remote.head_object("HEAD")          # probes credentials (AuthError if bad)
-    cas = remote.probe_cas()
-    cfg = replace(cfg, cas_supported=cas)  # persist so every push knows
-    save_sync_config(cfg, Paths())
-    AuditLog(Paths()).record(op="sync.setup", name="<all>", id_="-",
-                             file_target=cfg.endpoint)
+    with compensating_secret_update(
+        backend,
+        {
+            SYNC_ACCESS: args.access_key_id,
+            SYNC_SECRET: secret,
+            SYNC_PASS: p1,
+        },
+    ):
+        remote = _build_remote(cfg, backend)
+        remote.head_object("HEAD")      # probes credentials (AuthError if bad)
+        cas = remote.probe_cas()
+        cfg = replace(cfg, cas_supported=cas)  # persist so every push knows
+        save_sync_config(cfg, paths)
+    AuditLog(paths).record(op="sync.setup", name="<all>", id_="-",
+                           file_target=cfg.endpoint)
     print(f"sync configured ({cfg.mode}) -> {cfg.bucket} @ {cfg.endpoint}")
     if not cas:
         print("note: this provider ignores conditional writes (If-None-Match), so "
@@ -249,7 +266,9 @@ def cmd_sync_auto(args: argparse.Namespace) -> int:
 
 def _run_auto_worker(paths: Paths) -> None:
     try:
-        engine, cfg, backend = _build_engine(paths)
+        engine, cfg, backend = _build_engine(
+            paths, access=AccessContext.UI_FORBIDDEN
+        )
         pw = _sync_passphrase(backend, allow_prompt=False)  # never prompts (S6)
         engine.pull(pw)
         engine.push(pw)
@@ -327,7 +346,9 @@ def web_status(paths: Paths) -> dict:
     }
     if out["configured"]:
         try:
-            engine, _, _ = _build_engine(paths)
+            engine, _, _ = _build_engine(
+                paths, access=AccessContext.UI_FORBIDDEN
+            )
             st = engine.status()
             out.update(remote_version=st.remote_version,
                        local_synced=st.local_synced_version, dirty=st.dirty)
@@ -338,7 +359,9 @@ def web_status(paths: Paths) -> dict:
 
 
 def web_push(paths: Paths) -> dict:
-    engine, cfg, backend = _build_engine(paths)
+    engine, cfg, backend = _build_engine(
+        paths, access=AccessContext.UI_FORBIDDEN
+    )
     pw = _sync_passphrase(backend, allow_prompt=False)  # web cannot prompt
     n = engine.push(pw)
     AuditLog(paths).record(op="sync.push", name=f"<+{n}>", id_="-",
@@ -347,7 +370,9 @@ def web_push(paths: Paths) -> dict:
 
 
 def web_pull(paths: Paths) -> dict:
-    engine, cfg, backend = _build_engine(paths)
+    engine, cfg, backend = _build_engine(
+        paths, access=AccessContext.UI_FORBIDDEN
+    )
     pw = _sync_passphrase(backend, allow_prompt=False)
     n = engine.pull(pw)
     AuditLog(paths).record(op="sync.pull", name=f"<+{n}>", id_="-",
@@ -383,14 +408,19 @@ def web_setup(paths: Paths, data: dict) -> dict:
         insecure=bool(data.get("insecure")),
     ).with_device_id()
     cfg.validate()
-    backend = build_backend()
-    backend.set(SYNC_ACCESS, akid)
-    backend.set(SYNC_SECRET, secret)
-    backend.set(SYNC_PASS, passphrase)
-    remote = _build_remote(cfg, backend)
-    remote.head_object("HEAD")                      # probe credentials (AuthError if bad)
-    cfg = replace(cfg, cas_supported=remote.probe_cas())
-    save_sync_config(cfg, paths)
+    backend = build_backend(access=AccessContext.UI_FORBIDDEN)
+    with compensating_secret_update(
+        backend,
+        {
+            SYNC_ACCESS: akid,
+            SYNC_SECRET: secret,
+            SYNC_PASS: passphrase,
+        },
+    ):
+        remote = _build_remote(cfg, backend)
+        remote.head_object("HEAD")                  # probe credentials (AuthError if bad)
+        cfg = replace(cfg, cas_supported=remote.probe_cas())
+        save_sync_config(cfg, paths)
     AuditLog(paths).record(op="sync.setup", name="<all>", id_="-", file_target=cfg.endpoint)
     return {"ok": True, "mode": cfg.mode, "cas_supported": cfg.cas_supported}
 

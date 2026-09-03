@@ -1,7 +1,9 @@
 """Persistent macOS Keychain interaction policy.
 
-Bypass keeps the native Keychain backend and original items. It only disables
-Keychain UI, turning an untrusted-item authorization request into a clean error.
+Bypass keeps the native Keychain backend and original items. It disables
+Keychain UI for interactive CLI operations; an ACL-proven legacy item may still
+use the existing compatibility bridge. Background/server operations override
+either persistent mode with a stricter UI-forbidden access context.
 """
 from __future__ import annotations
 

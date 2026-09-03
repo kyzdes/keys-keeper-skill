@@ -4,12 +4,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from _sync_fakes import FakeBackend, FakeRemote
 
 from keys_keeper import cli
-from keys_keeper.paths import Paths
+from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_PASS, SYNC_SECRET
 from keys_keeper.config import load_sync_config
-from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_SECRET, SYNC_PASS
-from _sync_fakes import FakeRemote, FakeBackend
+from keys_keeper.paths import Paths
+from keys_keeper.sync_remote import AuthError
 
 AKID = "AKID-LEAKTEST"
 S3SECRET = "s3secret-LEAKTEST"
@@ -21,17 +22,29 @@ def sync_cli(kk_home, monkeypatch):
     backend = FakeBackend()
     remote = FakeRemote()
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", lambda: backend)
+    monkeypatch.setattr(
+        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+    )
     monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote)
 
 
-def _setup(extra=None):
+def _setup(
+    extra=None,
+    *,
+    access_key_id=AKID,
+    secret_key=S3SECRET,
+    passphrase=PASSPHRASE,
+):
     args = ["sync", "setup", "--endpoint", "https://s3.example.com",
-            "--bucket", "mybucket", "--access-key-id", AKID, "--prefix", "kk"]
+            "--bucket", "mybucket", "--access-key-id", access_key_id,
+            "--prefix", "kk"]
     if extra:
         args += extra
-    with patch("getpass.getpass", side_effect=[S3SECRET, PASSPHRASE, PASSPHRASE]):
+    with patch(
+        "getpass.getpass",
+        side_effect=[secret_key, passphrase, passphrase],
+    ):
         return cli.main(args)
 
 
@@ -53,6 +66,61 @@ def test_setup_stores_secrets_in_keychain_not_config(sync_cli):
     blob = Paths().config_toml.read_text()
     for secret in (AKID, S3SECRET, PASSPHRASE):
         assert secret not in blob
+
+
+def test_setup_rolls_back_partial_reserved_credential_write(sync_cli, capsys):
+    sync_cli.backend._fail_after = 1
+
+    assert _setup() == 1
+
+    assert not {SYNC_ACCESS, SYNC_SECRET, SYNC_PASS}.intersection(sync_cli.backend.d)
+    assert not Paths().config_toml.exists()
+    captured = capsys.readouterr()
+    for secret in (AKID, S3SECRET, PASSPHRASE):
+        assert secret not in captured.out + captured.err
+
+
+def test_setup_remote_probe_failure_restores_previous_credentials_and_config(
+    sync_cli,
+    monkeypatch,
+    capsys,
+):
+    assert _setup() == 0
+    previous = {
+        account: sync_cli.backend.get(account).unseal()
+        for account in (SYNC_ACCESS, SYNC_SECRET, SYNC_PASS)
+    }
+    previous_config = Paths().config_toml.read_text()
+    capsys.readouterr()
+
+    class RejectedRemote(FakeRemote):
+        def head_object(self, key):
+            raise AuthError("remote rejected credentials")
+
+    monkeypatch.setattr(
+        "keys_keeper.cli_sync._build_remote",
+        lambda cfg, backend: RejectedRemote(),
+    )
+    new_values = (
+        "AKID-REJECTED",
+        "s3secret-REJECTED",
+        "passphrase-REJECTED",
+    )
+
+    assert _setup(
+        access_key_id=new_values[0],
+        secret_key=new_values[1],
+        passphrase=new_values[2],
+    ) == 1
+
+    assert {
+        account: sync_cli.backend.get(account).unseal()
+        for account in (SYNC_ACCESS, SYNC_SECRET, SYNC_PASS)
+    } == previous
+    assert Paths().config_toml.read_text() == previous_config
+    captured = capsys.readouterr()
+    for secret in new_values:
+        assert secret not in captured.out + captured.err
 
 
 def test_push_then_status(sync_cli, capsys):

@@ -10,6 +10,28 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.7] — 2026-09-03
+
+### Added
+
+- Added `keys keychain status --check` for a metadata-only, no-dialog readiness probe and `keys keychain prepare NAME [--check]` for bounded preparation of one original Keychain item's native decrypt ACL.
+- Added an explicit access-context model so automatic sync, the local admin, and WebVault adapters cannot open macOS authorization UI or use the legacy compatibility bridge.
+
+### Security
+
+- Bulk-import preview now returns only secret presence, never the parser's secret-bearing value field.
+- CLI, admin, bulk import, sync apply, and sync setup now share compensating mutation boundaries so ordinary failures restore prior metadata and credential values instead of leaving partial state.
+- Tombstone pruning and snapshot application now reject or serialize concurrent metadata changes rather than overwriting them.
+
+### Changed
+
+- Split the agent skill into a short invariant-first entrypoint with six routed references, synchronized byte-for-byte between the source and Codex plugin payloads.
+- Centralized admin and WebVault theme tokens while preserving the warm evening and high-contrast daylight themes.
+- Decomposed the macOS native adapter, sync merge, and HTTP dispatch into smaller internal components without changing public formats or routes.
+- Expanded CI across supported Python versions and a live Linux Secret Service job, and added clean-wheel verification for versions, command surface, runtime assets, and generated skill hashes.
+
+---
+
 ## [0.7.6] — 2026-09-02
 
 ### Fixed

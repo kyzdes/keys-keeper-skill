@@ -4,42 +4,60 @@ This ctypes binding reads, writes, deletes, and enumerates generic-password
 items directly through Keychain Services, including multiline values and
 custom keychain files. No ``/usr/bin/security`` child process is involved.
 """
+
 from __future__ import annotations
 
 import ctypes
-import sys
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Iterator
 
+from keys_keeper.macos_keychain_abi import (
+    ACCOUNT_ITEM_ATTR as _ACCOUNT_ITEM_ATTR,
+)
+from keys_keeper.macos_keychain_abi import (
+    CF_STRING_ENCODING_UTF8 as _CF_STRING_ENCODING_UTF8,
+)
+from keys_keeper.macos_keychain_abi import (
+    ERR_SEC_ITEM_NOT_FOUND as _ERR_SEC_ITEM_NOT_FOUND,
+)
+from keys_keeper.macos_keychain_abi import (
+    ERR_SEC_SUCCESS as _ERR_SEC_SUCCESS,
+)
+from keys_keeper.macos_keychain_abi import (
+    GENERIC_PASSWORD_ITEM_CLASS as _GENERIC_PASSWORD_ITEM_CLASS,
+)
+from keys_keeper.macos_keychain_abi import (
+    MAX_LABEL_BYTES as _MAX_LABEL_BYTES,
+)
+from keys_keeper.macos_keychain_abi import (
+    MAX_SECRET_BYTES as _MAX_SECRET_BYTES,
+)
+from keys_keeper.macos_keychain_abi import (
+    SERVICE_ITEM_ATTR as _SERVICE_ITEM_ATTR,
+)
+from keys_keeper.macos_keychain_abi import (
+    SYSTEM_SECURITY_PATH as _SYSTEM_SECURITY_PATH,
+)
+from keys_keeper.macos_keychain_abi import (
+    UNLOCKED_STATUS as _UNLOCKED_STATUS,
+)
+from keys_keeper.macos_keychain_abi import (
+    FrameworkBindings as _Bindings,
+)
+from keys_keeper.macos_keychain_abi import (
+    FrameworkUnavailableError as _FrameworkUnavailableError,
+)
+from keys_keeper.macos_keychain_abi import (
+    KeychainAttribute as _KeychainAttribute,
+)
+from keys_keeper.macos_keychain_abi import (
+    KeychainAttributeList as _KeychainAttributeList,
+)
+from keys_keeper.macos_keychain_cf import release_cf_refs
 
-_ERR_SEC_SUCCESS = 0
-_ERR_SEC_ITEM_NOT_FOUND = -25300
-_MAX_LABEL_BYTES = 4096
-_MAX_SECRET_BYTES = 4 * 1024 * 1024
-_CF_STRING_ENCODING_UTF8 = 0x08000100
-_GENERIC_PASSWORD_ITEM_CLASS = 0x67656E70  # 'genp'
-_ACCOUNT_ITEM_ATTR = 0x61636374  # 'acct'
-_SERVICE_ITEM_ATTR = 0x73766365  # 'svce'
-_UNLOCKED_STATUS = 1
-_SYSTEM_SECURITY_PATH = b"/usr/bin/security"
 _INTERACTION_LOCK = threading.RLock()
-
-
-class _KeychainAttribute(ctypes.Structure):
-    _fields_ = [
-        ("tag", ctypes.c_uint32),
-        ("length", ctypes.c_uint32),
-        ("data", ctypes.c_void_p),
-    ]
-
-
-class _KeychainAttributeList(ctypes.Structure):
-    _fields_ = [
-        ("count", ctypes.c_uint32),
-        ("attr", ctypes.POINTER(_KeychainAttribute)),
-    ]
 
 
 class SecurityFrameworkError(RuntimeError):
@@ -52,183 +70,12 @@ class SecurityFrameworkError(RuntimeError):
         super().__init__(f"{operation} failed{suffix}")
 
 
-class _Bindings:
-    def __init__(self) -> None:
-        if sys.platform != "darwin":
-            raise SecurityFrameworkError("load macOS Security framework")
-        try:
-            self.security = ctypes.CDLL(
-                "/System/Library/Frameworks/Security.framework/Security"
-            )
-            self.core_foundation = ctypes.CDLL(
-                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
-            )
-        except OSError as ex:
-            raise SecurityFrameworkError("load macOS Security framework") from ex
-
-        void_p = ctypes.c_void_p
-        uint32 = ctypes.c_uint32
-        status = ctypes.c_int32
-
-        self.security.SecKeychainOpen.argtypes = [
-            ctypes.c_char_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainOpen.restype = status
-
-        self.security.SecKeychainGetUserInteractionAllowed.argtypes = [
-            ctypes.POINTER(ctypes.c_ubyte),
-        ]
-        self.security.SecKeychainGetUserInteractionAllowed.restype = status
-
-        self.security.SecKeychainSetUserInteractionAllowed.argtypes = [
-            ctypes.c_ubyte,
-        ]
-        self.security.SecKeychainSetUserInteractionAllowed.restype = status
-
-        self.security.SecKeychainGetStatus.argtypes = [
-            void_p,
-            ctypes.POINTER(uint32),
-        ]
-        self.security.SecKeychainGetStatus.restype = status
-
-        self.security.SecKeychainItemCreateFromContent.argtypes = [
-            uint32,
-            ctypes.POINTER(_KeychainAttributeList),
-            uint32,
-            void_p,
-            void_p,
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainItemCreateFromContent.restype = status
-
-        self.security.SecKeychainFindGenericPassword.argtypes = [
-            void_p,
-            uint32,
-            ctypes.c_char_p,
-            uint32,
-            ctypes.c_char_p,
-            ctypes.POINTER(uint32),
-            ctypes.POINTER(void_p),
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainFindGenericPassword.restype = status
-
-        self.security.SecKeychainItemFreeContent.argtypes = [
-            ctypes.POINTER(_KeychainAttributeList),
-            void_p,
-        ]
-        self.security.SecKeychainItemFreeContent.restype = status
-
-        self.security.SecKeychainItemDelete.argtypes = [void_p]
-        self.security.SecKeychainItemDelete.restype = status
-
-        self.security.SecKeychainSearchCreateFromAttributes.argtypes = [
-            void_p,
-            uint32,
-            ctypes.POINTER(_KeychainAttributeList),
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainSearchCreateFromAttributes.restype = status
-
-        self.security.SecKeychainSearchCopyNext.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainSearchCopyNext.restype = status
-
-        self.security.SecKeychainItemCopyContent.argtypes = [
-            void_p,
-            ctypes.POINTER(uint32),
-            ctypes.POINTER(_KeychainAttributeList),
-            ctypes.POINTER(uint32),
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainItemCopyContent.restype = status
-
-        self.security.SecTrustedApplicationCreateFromPath.argtypes = [
-            ctypes.c_char_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecTrustedApplicationCreateFromPath.restype = status
-
-        self.security.SecAccessCreate.argtypes = [
-            void_p,
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecAccessCreate.restype = status
-
-        self.security.SecKeychainItemCopyAccess.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecKeychainItemCopyAccess.restype = status
-
-        self.security.SecAccessCopyACLList.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecAccessCopyACLList.restype = status
-
-        self.security.SecACLCopyAuthorizations.argtypes = [void_p]
-        self.security.SecACLCopyAuthorizations.restype = void_p
-
-        self.security.SecACLCopyContents.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-            ctypes.POINTER(void_p),
-            ctypes.POINTER(uint32),
-        ]
-        self.security.SecACLCopyContents.restype = status
-
-        self.security.SecTrustedApplicationCopyData.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-        ]
-        self.security.SecTrustedApplicationCopyData.restype = status
-
-        self.core_foundation.CFStringCreateWithCString.argtypes = [
-            void_p,
-            ctypes.c_char_p,
-            uint32,
-        ]
-        self.core_foundation.CFStringCreateWithCString.restype = void_p
-
-        self.core_foundation.CFArrayCreate.argtypes = [
-            void_p,
-            ctypes.POINTER(void_p),
-            ctypes.c_long,
-            void_p,
-        ]
-        self.core_foundation.CFArrayCreate.restype = void_p
-
-        self.core_foundation.CFArrayGetCount.argtypes = [void_p]
-        self.core_foundation.CFArrayGetCount.restype = ctypes.c_long
-
-        self.core_foundation.CFArrayGetValueAtIndex.argtypes = [
-            void_p,
-            ctypes.c_long,
-        ]
-        self.core_foundation.CFArrayGetValueAtIndex.restype = void_p
-
-        self.core_foundation.CFDataGetLength.argtypes = [void_p]
-        self.core_foundation.CFDataGetLength.restype = ctypes.c_long
-
-        self.core_foundation.CFDataGetBytePtr.argtypes = [void_p]
-        self.core_foundation.CFDataGetBytePtr.restype = ctypes.POINTER(ctypes.c_ubyte)
-
-        self.core_foundation.CFEqual.argtypes = [void_p, void_p]
-        self.core_foundation.CFEqual.restype = ctypes.c_ubyte
-
-        self.core_foundation.CFRelease.argtypes = [void_p]
-        self.core_foundation.CFRelease.restype = None
-
-
 @lru_cache(maxsize=1)
 def _bindings() -> _Bindings:
-    return _Bindings()
+    try:
+        return _Bindings()
+    except (_FrameworkUnavailableError, OSError) as ex:
+        raise SecurityFrameworkError("load macOS Security framework") from ex
 
 
 def _encode_label(value: str, label: str) -> bytes:
@@ -290,7 +137,7 @@ class MacOSNativeKeychain:
         try:
             yield keychain
         finally:
-            self.api.core_foundation.CFRelease(keychain)
+            release_cf_refs(self.api.core_foundation, keychain)
 
     @contextmanager
     def _self_access(self) -> Iterator[ctypes.c_void_p]:
@@ -329,9 +176,13 @@ class MacOSNativeKeychain:
                 raise SecurityFrameworkError("create keychain access policy", status)
             yield access
         finally:
-            for value in (access, descriptor, trusted_apps, self_app):
-                if value.value is not None:
-                    self.api.core_foundation.CFRelease(value)
+            release_cf_refs(
+                self.api.core_foundation,
+                access,
+                descriptor,
+                trusted_apps,
+                self_app,
+            )
 
     def add(self, account_value: str, value: str) -> None:
         account = _encode_label(account_value, "keychain account")
@@ -373,9 +224,399 @@ class MacOSNativeKeychain:
                 if status != _ERR_SEC_SUCCESS:
                     raise SecurityFrameworkError("write keychain item", status)
         finally:
-            if item.value is not None:
-                self.api.core_foundation.CFRelease(item)
+            release_cf_refs(self.api.core_foundation, item)
             ctypes.memset(secret, 0, len(secret))
+
+    def set(self, account_value: str, value: str) -> None:
+        """Create or update one item without a destructive delete window.
+
+        Updating uses SecKeychainItemModifyContent on the existing native item.
+        Its ACL and identity remain intact, and a failed update leaves the old
+        value in place. The lookup requests only the item reference, not data.
+        """
+        account = _encode_label(account_value, "keychain account")
+        raw = value.encode("utf-8")
+        if len(raw) > _MAX_SECRET_BYTES:
+            raise SecurityFrameworkError("validate keychain value")
+        secret = ctypes.create_string_buffer(raw, max(1, len(raw)))
+        item = ctypes.c_void_p()
+        try:
+            with self._interaction_policy(), self._keychain_ref() as keychain:
+                status = self.api.security.SecKeychainFindGenericPassword(
+                    keychain,
+                    len(self.service),
+                    self.service,
+                    len(account),
+                    account,
+                    None,
+                    None,
+                    ctypes.byref(item),
+                )
+                if status == _ERR_SEC_ITEM_NOT_FOUND:
+                    # add() re-enters the process-wide interaction lock safely.
+                    self.add(account_value, value)
+                    return
+                if status != _ERR_SEC_SUCCESS:
+                    raise SecurityFrameworkError(
+                        "find keychain item for update", status
+                    )
+                status = self.api.security.SecKeychainItemModifyContent(
+                    item,
+                    None,
+                    len(raw),
+                    secret,
+                )
+                if status != _ERR_SEC_SUCCESS:
+                    raise SecurityFrameworkError("update keychain item", status)
+        finally:
+            release_cf_refs(self.api.core_foundation, item)
+            ctypes.memset(secret, 0, len(secret))
+
+    @contextmanager
+    def _readiness_keychain_ref(self) -> Iterator[ctypes.c_void_p]:
+        """Resolve a concrete Keychain ref for metadata-only status calls."""
+        if self.keychain_path is not None:
+            with self._keychain_ref() as keychain:
+                assert keychain is not None
+                yield keychain
+            return
+        keychain = ctypes.c_void_p()
+        status = self.api.security.SecKeychainCopyDefault(ctypes.byref(keychain))
+        if status != _ERR_SEC_SUCCESS or keychain.value is None:
+            raise SecurityFrameworkError("open default keychain", status)
+        try:
+            yield keychain
+        finally:
+            release_cf_refs(self.api.core_foundation, keychain)
+
+    def is_unlocked(self) -> bool:
+        """Return lock state without reading any item or secret value."""
+        with self._interaction_policy(), self._readiness_keychain_ref() as keychain:
+            keychain_status = ctypes.c_uint32()
+            status = self.api.security.SecKeychainGetStatus(
+                keychain,
+                ctypes.byref(keychain_status),
+            )
+            if status != _ERR_SEC_SUCCESS:
+                raise SecurityFrameworkError("read keychain status", status)
+            return bool(keychain_status.value & _UNLOCKED_STATUS)
+
+    @contextmanager
+    def _self_trusted_application(self) -> Iterator[ctypes.c_void_p]:
+        """Return Security.framework's identity for this executable, not a label."""
+        application = ctypes.c_void_p()
+        status = self.api.security.SecTrustedApplicationCreateFromPath(
+            None,
+            ctypes.byref(application),
+        )
+        if status != _ERR_SEC_SUCCESS or application.value is None:
+            raise SecurityFrameworkError("create current runtime identity", status)
+        try:
+            yield application
+        finally:
+            release_cf_refs(self.api.core_foundation, application)
+
+    @contextmanager
+    def _item_access(
+        self, account_value: str
+    ) -> Iterator[tuple[ctypes.c_void_p, ctypes.c_void_p]]:
+        """Copy one item's ACL metadata without requesting its secret data."""
+        account = _encode_label(account_value, "keychain account")
+        item = ctypes.c_void_p()
+        access = ctypes.c_void_p()
+        try:
+            with self._interaction_policy(), self._keychain_ref() as keychain:
+                status = self.api.security.SecKeychainFindGenericPassword(
+                    keychain,
+                    len(self.service),
+                    self.service,
+                    len(account),
+                    account,
+                    None,
+                    None,
+                    ctypes.byref(item),
+                )
+                if status != _ERR_SEC_SUCCESS:
+                    raise SecurityFrameworkError(
+                        "find keychain item for access preparation", status
+                    )
+                status = self.api.security.SecKeychainItemCopyAccess(
+                    item,
+                    ctypes.byref(access),
+                )
+                if status != _ERR_SEC_SUCCESS or access.value is None:
+                    raise SecurityFrameworkError("copy keychain item access", status)
+                yield item, access
+        finally:
+            release_cf_refs(self.api.core_foundation, access, item)
+
+    def native_access_prepared(self, account_value: str) -> bool:
+        """Return whether this exact runtime is trusted for decrypt.
+
+        The query copies only item and ACL metadata. It never asks Keychain for
+        the password bytes and is therefore safe to use for a no-UI preflight.
+        """
+        return self.native_access_state(account_value) == "prepared"
+
+    def native_access_state(self, account_value: str) -> str:
+        """Classify metadata for bounded preparation without reading data."""
+        with (
+            self._item_access(account_value) as (_, access),
+            self._self_trusted_application() as application,
+        ):
+            if self._access_has_authorization(
+                access, "kSecACLAuthorizationPartitionID"
+            ):
+                # Partition-list requirements are code-signature policy. This
+                # compatibility path must not weaken or guess them for a Python
+                # runtime; the future signed broker owns that migration.
+                return "partitioned"
+            if self._access_trusts_application(access, application):
+                return "prepared"
+            return "needs-preparation"
+
+    def prepare_native_access(self, account_value: str) -> bool:
+        """Add this exact runtime to one original item's decrypt ACL.
+
+        Returns True when the original ACL was changed and False when it was
+        already sufficient. No password value is read, copied, or rewritten.
+        The caller controls whether macOS interaction is allowed; production
+        code enables it only for an explicit single-item setup command.
+        """
+        with (
+            self._item_access(account_value) as (item, access),
+            self._self_trusted_application() as application,
+        ):
+            if self._access_has_authorization(
+                access, "kSecACLAuthorizationPartitionID"
+            ):
+                raise SecurityFrameworkError(
+                    "prepare partitioned keychain item access (signed broker required)"
+                )
+            if self._access_trusts_application(access, application):
+                return False
+            if not self._append_application_to_decrypt_acls(access, application):
+                raise SecurityFrameworkError(
+                    "prepare keychain item access (no decrypt ACL)"
+                )
+            status = self.api.security.SecKeychainItemSetAccess(item, access)
+            if status != _ERR_SEC_SUCCESS:
+                raise SecurityFrameworkError("set keychain item access", status)
+        if not self.native_access_prepared(account_value):
+            raise SecurityFrameworkError("verify keychain item access")
+        return True
+
+    def _access_trusts_application(
+        self,
+        access: ctypes.c_void_p,
+        application: ctypes.c_void_p,
+    ) -> bool:
+        acl_list = ctypes.c_void_p()
+        try:
+            status = self.api.security.SecAccessCopyACLList(
+                access,
+                ctypes.byref(acl_list),
+            )
+            if status != _ERR_SEC_SUCCESS or acl_list.value is None:
+                raise SecurityFrameworkError("copy keychain ACL list", status)
+            for index in range(self.api.core_foundation.CFArrayGetCount(acl_list)):
+                acl = self.api.core_foundation.CFArrayGetValueAtIndex(
+                    acl_list,
+                    index,
+                )
+                if not self._acl_allows_decrypt(acl):
+                    continue
+                applications = ctypes.c_void_p()
+                descriptor = ctypes.c_void_p()
+                prompt_selector = ctypes.c_uint32()
+                try:
+                    status = self.api.security.SecACLCopyContents(
+                        acl,
+                        ctypes.byref(applications),
+                        ctypes.byref(descriptor),
+                        ctypes.byref(prompt_selector),
+                    )
+                    if status != _ERR_SEC_SUCCESS:
+                        raise SecurityFrameworkError("copy decrypt ACL", status)
+                    # Apple defines a NULL application list as unrestricted.
+                    if applications.value is None:
+                        return True
+                    for app_index in range(
+                        self.api.core_foundation.CFArrayGetCount(applications)
+                    ):
+                        candidate = self.api.core_foundation.CFArrayGetValueAtIndex(
+                            applications,
+                            app_index,
+                        )
+                        if self._trusted_applications_equal(candidate, application):
+                            return True
+                finally:
+                    release_cf_refs(
+                        self.api.core_foundation,
+                        descriptor,
+                        applications,
+                    )
+            return False
+        finally:
+            release_cf_refs(self.api.core_foundation, acl_list)
+
+    def _append_application_to_decrypt_acls(
+        self,
+        access: ctypes.c_void_p,
+        application: ctypes.c_void_p,
+    ) -> bool:
+        acl_list = ctypes.c_void_p()
+        changed = False
+        try:
+            status = self.api.security.SecAccessCopyACLList(
+                access,
+                ctypes.byref(acl_list),
+            )
+            if status != _ERR_SEC_SUCCESS or acl_list.value is None:
+                raise SecurityFrameworkError("copy keychain ACL list", status)
+            for index in range(self.api.core_foundation.CFArrayGetCount(acl_list)):
+                acl = self.api.core_foundation.CFArrayGetValueAtIndex(
+                    acl_list,
+                    index,
+                )
+                if not self._acl_allows_decrypt(acl):
+                    continue
+                applications = ctypes.c_void_p()
+                descriptor = ctypes.c_void_p()
+                prompt_selector = ctypes.c_uint32()
+                replacement = ctypes.c_void_p()
+                try:
+                    status = self.api.security.SecACLCopyContents(
+                        acl,
+                        ctypes.byref(applications),
+                        ctypes.byref(descriptor),
+                        ctypes.byref(prompt_selector),
+                    )
+                    if status != _ERR_SEC_SUCCESS:
+                        raise SecurityFrameworkError("copy decrypt ACL", status)
+                    # NULL means every app is already trusted; do not narrow it
+                    # implicitly during a compatibility preparation command.
+                    if applications.value is None:
+                        continue
+                    if descriptor.value is None:
+                        raise SecurityFrameworkError("preserve decrypt ACL descriptor")
+                    count = self.api.core_foundation.CFArrayGetCount(applications)
+                    replacement = ctypes.c_void_p(
+                        self.api.core_foundation.CFArrayCreateMutableCopy(
+                            None,
+                            count + 1,
+                            applications,
+                        )
+                    )
+                    if replacement.value is None:
+                        raise SecurityFrameworkError(
+                            "create prepared decrypt ACL application list"
+                        )
+                    self.api.core_foundation.CFArrayAppendValue(
+                        replacement,
+                        application,
+                    )
+                    status = self.api.security.SecACLSetContents(
+                        acl,
+                        replacement,
+                        descriptor,
+                        prompt_selector.value,
+                    )
+                    if status != _ERR_SEC_SUCCESS:
+                        raise SecurityFrameworkError("update decrypt ACL", status)
+                    changed = True
+                finally:
+                    release_cf_refs(
+                        self.api.core_foundation,
+                        replacement,
+                        descriptor,
+                        applications,
+                    )
+            return changed
+        finally:
+            release_cf_refs(self.api.core_foundation, acl_list)
+
+    def _acl_allows_decrypt(self, acl: ctypes.c_void_p) -> bool:
+        return self._acl_has_authorization(acl, "kSecACLAuthorizationDecrypt")
+
+    def _access_has_authorization(
+        self,
+        access: ctypes.c_void_p,
+        symbol: str,
+    ) -> bool:
+        acl_list = ctypes.c_void_p()
+        try:
+            status = self.api.security.SecAccessCopyACLList(
+                access,
+                ctypes.byref(acl_list),
+            )
+            if status != _ERR_SEC_SUCCESS or acl_list.value is None:
+                raise SecurityFrameworkError("copy keychain ACL list", status)
+            return any(
+                self._acl_has_authorization(
+                    self.api.core_foundation.CFArrayGetValueAtIndex(acl_list, index),
+                    symbol,
+                )
+                for index in range(self.api.core_foundation.CFArrayGetCount(acl_list))
+            )
+        finally:
+            release_cf_refs(self.api.core_foundation, acl_list)
+
+    def _acl_has_authorization(
+        self,
+        acl: ctypes.c_void_p,
+        symbol: str,
+    ) -> bool:
+        authorizations = ctypes.c_void_p(
+            self.api.security.SecACLCopyAuthorizations(acl)
+        )
+        if authorizations.value is None:
+            return False
+        try:
+            authorization = ctypes.c_void_p.in_dll(
+                self.api.security,
+                symbol,
+            ).value
+            return any(
+                self.api.core_foundation.CFEqual(
+                    self.api.core_foundation.CFArrayGetValueAtIndex(
+                        authorizations, index
+                    ),
+                    authorization,
+                )
+                for index in range(
+                    self.api.core_foundation.CFArrayGetCount(authorizations)
+                )
+            )
+        finally:
+            release_cf_refs(self.api.core_foundation, authorizations)
+
+    def _trusted_applications_equal(
+        self,
+        left: ctypes.c_void_p,
+        right: ctypes.c_void_p,
+    ) -> bool:
+        left_data = ctypes.c_void_p()
+        right_data = ctypes.c_void_p()
+        try:
+            left_status = self.api.security.SecTrustedApplicationCopyData(
+                left,
+                ctypes.byref(left_data),
+            )
+            right_status = self.api.security.SecTrustedApplicationCopyData(
+                right,
+                ctypes.byref(right_data),
+            )
+            if (
+                left_status != _ERR_SEC_SUCCESS
+                or right_status != _ERR_SEC_SUCCESS
+                or left_data.value is None
+                or right_data.value is None
+            ):
+                return False
+            return bool(self.api.core_foundation.CFEqual(left_data, right_data))
+        finally:
+            release_cf_refs(self.api.core_foundation, right_data, left_data)
 
     def get(self, account_value: str) -> str:
         """Read one value natively; the framework-owned buffer is zeroed/freed."""
@@ -457,9 +698,7 @@ class MacOSNativeKeychain:
                 self.api.security,
                 "kSecACLAuthorizationDecrypt",
             ).value
-            for index in range(
-                self.api.core_foundation.CFArrayGetCount(acl_list)
-            ):
+            for index in range(self.api.core_foundation.CFArrayGetCount(acl_list)):
                 acl = self.api.core_foundation.CFArrayGetValueAtIndex(
                     acl_list,
                     index,
@@ -479,13 +718,11 @@ class MacOSNativeKeychain:
                             decrypt,
                         )
                         for auth_index in range(
-                            self.api.core_foundation.CFArrayGetCount(
-                                authorizations
-                            )
+                            self.api.core_foundation.CFArrayGetCount(authorizations)
                         )
                     )
                 finally:
-                    self.api.core_foundation.CFRelease(authorizations)
+                    release_cf_refs(self.api.core_foundation, authorizations)
                 if is_decrypt_acl and self._acl_trusts_system_security(acl):
                     return True
             return False
@@ -498,9 +735,7 @@ class MacOSNativeKeychain:
         ):
             return False
         finally:
-            for value in (acl_list, access, item):
-                if value.value is not None:
-                    self.api.core_foundation.CFRelease(value)
+            release_cf_refs(self.api.core_foundation, acl_list, access, item)
 
     def _acl_trusts_system_security(self, acl: ctypes.c_void_p) -> bool:
         applications = ctypes.c_void_p()
@@ -515,9 +750,7 @@ class MacOSNativeKeychain:
             )
             if status != _ERR_SEC_SUCCESS or applications.value is None:
                 return False
-            for index in range(
-                self.api.core_foundation.CFArrayGetCount(applications)
-            ):
+            for index in range(self.api.core_foundation.CFArrayGetCount(applications)):
                 application = self.api.core_foundation.CFArrayGetValueAtIndex(
                     applications,
                     index,
@@ -537,13 +770,10 @@ class MacOSNativeKeychain:
                     if raw == _SYSTEM_SECURITY_PATH:
                         return True
                 finally:
-                    if data.value is not None:
-                        self.api.core_foundation.CFRelease(data)
+                    release_cf_refs(self.api.core_foundation, data)
             return False
         finally:
-            for value in (descriptor, applications):
-                if value.value is not None:
-                    self.api.core_foundation.CFRelease(value)
+            release_cf_refs(self.api.core_foundation, descriptor, applications)
 
     def delete(self, account_value: str) -> bool:
         """Delete one item natively; return False when it did not exist."""
@@ -564,14 +794,15 @@ class MacOSNativeKeychain:
                 if status == _ERR_SEC_ITEM_NOT_FOUND:
                     return False
                 if status != _ERR_SEC_SUCCESS:
-                    raise SecurityFrameworkError("find keychain item for deletion", status)
+                    raise SecurityFrameworkError(
+                        "find keychain item for deletion", status
+                    )
                 status = self.api.security.SecKeychainItemDelete(item)
                 if status != _ERR_SEC_SUCCESS:
                     raise SecurityFrameworkError("delete keychain item", status)
             return True
         finally:
-            if item.value is not None:
-                self.api.core_foundation.CFRelease(item)
+            release_cf_refs(self.api.core_foundation, item)
 
     def list_accounts(self) -> list[str]:
         """Enumerate accounts for this service without requesting secret data."""
@@ -612,7 +843,9 @@ class MacOSNativeKeychain:
                         account_attributes = (_KeychainAttribute * 1)(
                             _KeychainAttribute(_ACCOUNT_ITEM_ATTR, 0, None)
                         )
-                        account_attribute_list = _KeychainAttributeList(1, account_attributes)
+                        account_attribute_list = _KeychainAttributeList(
+                            1, account_attributes
+                        )
                         status = self.api.security.SecKeychainItemCopyContent(
                             item,
                             None,
@@ -621,7 +854,9 @@ class MacOSNativeKeychain:
                             None,
                         )
                         if status != _ERR_SEC_SUCCESS:
-                            raise SecurityFrameworkError("read keychain account attribute", status)
+                            raise SecurityFrameworkError(
+                                "read keychain account attribute", status
+                            )
                         try:
                             raw = ctypes.string_at(
                                 account_attributes[0].data,
@@ -629,16 +864,16 @@ class MacOSNativeKeychain:
                             )
                             accounts.append(raw.decode("utf-8"))
                         except UnicodeDecodeError as ex:
-                            raise SecurityFrameworkError("decode keychain account") from ex
+                            raise SecurityFrameworkError(
+                                "decode keychain account"
+                            ) from ex
                         finally:
                             self.api.security.SecKeychainItemFreeContent(
                                 ctypes.byref(account_attribute_list),
                                 None,
                             )
                     finally:
-                        if item.value is not None:
-                            self.api.core_foundation.CFRelease(item)
+                        release_cf_refs(self.api.core_foundation, item)
         finally:
-            if search.value is not None:
-                self.api.core_foundation.CFRelease(search)
+            release_cf_refs(self.api.core_foundation, search)
         return accounts

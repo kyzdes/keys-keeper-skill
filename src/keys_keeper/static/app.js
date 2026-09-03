@@ -704,7 +704,7 @@
             return sel;
           })(),
           el('span', { class: 'summary' },
-            el('span', { class: 'muted' }, r.value.includes('\n') ? `${r.value.split('\n').length} lines` : `${r.value.length} chars`),
+            el('span', { class: 'muted' }, r.has_value ? 'value present' : 'no value'),
             ' ',
             el('span', { style: 'color:var(--type-domain)' }, r.tags.length ? `[${r.tags.join(',')}]` : ''),
           ),

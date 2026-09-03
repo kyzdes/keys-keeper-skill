@@ -30,9 +30,9 @@ must be treated as exposed to other processes with access to that destination:
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
-- `keys sync status` — sync mode + local/remote versions (metadata only, no values)
+- `keys sync status` — reads sync credentials and contacts the remote; output contains metadata only
 - `keys keychain status` — current macOS prompt/bypass policy; does not open Keychain
-- `keys doctor` — paths + keychain sync check, useful when a value is missing
+- `keys doctor` — vault-wide checks that inspect keychain presence but never print values
 - `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values
 
 ## Common flows
@@ -47,10 +47,10 @@ migrate existing secrets or restructure their setup unprompted.
    `which keys` / `Get-Command keys`). If it works → skip to step 4.
 2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
    silently. One line on what it is, then the platform command:
-   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.6'`
+   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.7'`
      (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
      `python3 -m pip install --user pipx && pipx ensurepath`)
-   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.6"`
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.7"`
    - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
 3. **After install, note that `keys` may need a fresh terminal** for PATH to
    pick it up. Re-check with `keys --version`.
@@ -77,8 +77,21 @@ migrate existing secrets or restructure their setup unprompted.
    read may use `/usr/bin/security` only after native ACL inspection proves that
    the unlocked original item already grants it decrypt access. Unknown,
    locked, or untrusted ACLs fail before a compatibility process can start.
-5. Verify with `keys keychain status`, then run the requested operation once.
-   `keys keychain prompt` restores normal macOS authorization dialogs.
+5. Verify policy and unlocked readiness with `keys keychain status --check`;
+   this metadata-only probe also forbids UI. Then run the requested operation
+   once.
+6. If that one attempt fails because the original item's ACL does not trust the
+   native runtime, `keys keychain prepare NAME --check` is a metadata-only
+   preflight. Only when the user explicitly asks to change that exact item, run
+   `keys keychain prepare NAME`. It changes the decrypt ACL of that one original
+   item without reading or copying its value; macOS may ask the human to
+   authorize this setup step.
+7. Never loop or bulk-run preparation and never interact with the system dialog
+   for the user. The trusted identity comes from Security.framework's current
+   executable identity, not a caller-supplied client label. This compatibility
+   setup is not signed-broker isolation; partitioned items are refused rather
+   than weakened. `keys keychain prompt` restores normal macOS authorization
+   dialogs.
 
 ### User wants to save a secret
 
