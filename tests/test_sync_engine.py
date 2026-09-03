@@ -1,21 +1,29 @@
 """Sync engine — offline, FakeRemote + FakeBackend. The correctness core."""
 import json
-import pytest
 
-from keys_keeper.models import Entry, EntryType, now_iso
+import pytest
+from _sync_fakes import (
+    FakeBackend,
+    FakeRemote,
+    NonCasRemote,
+    RaceOnceRemote,
+    add_entry,
+    live_ids,
+    make_device,
+    names,
+)
+
 from keys_keeper.backend import KeychainError
+from keys_keeper.models import Entry, EntryType
+from keys_keeper.service import VaultService
 from keys_keeper.sync import (
     SnapshotValidationError,
-    build_snapshot_payload,
     content_hash,
     encrypt_snapshot,
     merge,
     vkey,
 )
-from _sync_fakes import (
-    FakeRemote, RaceOnceRemote, NonCasRemote, FakeBackend, make_device, add_entry,
-    live_ids, names,
-)
+from keys_keeper.sync_remote import TransportError
 
 PW = "correct horse battery staple"
 
@@ -159,6 +167,105 @@ def test_merge_tombstone_vs_resurrect_unit():
     res2 = merge([live], [], [], [{"id": e.id, "name": "xx", "deleted_at": newer}])
     assert res2.entries == []
     assert any(t["id"] == e.id for t in res2.tombstones)
+
+
+def test_merge_remote_delete_vs_local_update_timestamp_boundaries():
+    entry = Entry.new(name="remote-delete", type=EntryType.API_KEY)
+    older = "2026-06-01T00:00:00Z"
+    equal = "2026-06-02T00:00:00Z"
+    local = Entry.from_dict({**entry.to_dict(), "updated_at": equal})
+
+    older_delete = {"id": entry.id, "name": entry.name, "deleted_at": older}
+    live_result = merge([local], [], [], [older_delete])
+    assert [item.id for item in live_result.entries] == [entry.id]
+    assert live_result.tombstones == []
+    assert live_result.remote_win_ids == set()
+    assert live_result.secret_delete_ids == set()
+    assert live_result.changed is False
+
+    equal_delete = {"id": entry.id, "name": entry.name, "deleted_at": equal}
+    deleted_result = merge([local], [], [], [equal_delete])
+    assert deleted_result.entries == []
+    assert deleted_result.tombstones == [equal_delete]
+    assert deleted_result.remote_win_ids == set()
+    assert deleted_result.secret_delete_ids == {entry.id}
+    assert deleted_result.changed is True
+
+
+def test_merge_local_delete_vs_remote_update_timestamp_boundaries():
+    entry = Entry.new(name="local-delete", type=EntryType.API_KEY)
+    delete_ts = "2026-06-02T00:00:00Z"
+    newer = "2026-06-03T00:00:00Z"
+    local_delete = {
+        "id": entry.id,
+        "name": entry.name,
+        "deleted_at": delete_ts,
+    }
+
+    remote_newer = Entry.from_dict({**entry.to_dict(), "updated_at": newer})
+    live_result = merge([], [local_delete], [remote_newer], [])
+    assert [item.id for item in live_result.entries] == [entry.id]
+    assert live_result.tombstones == []
+    assert live_result.remote_win_ids == {entry.id}
+    assert live_result.secret_delete_ids == set()
+    assert live_result.changed is True
+
+    remote_equal = Entry.from_dict({**entry.to_dict(), "updated_at": delete_ts})
+    deleted_result = merge([], [local_delete], [remote_equal], [])
+    assert deleted_result.entries == []
+    assert deleted_result.tombstones == [local_delete]
+    assert deleted_result.remote_win_ids == set()
+    assert deleted_result.secret_delete_ids == set()
+    assert deleted_result.changed is False
+
+
+def test_merge_latest_tombstone_prefers_local_on_equal_timestamp():
+    entry = Entry.new(name="tombstone-order", type=EntryType.API_KEY)
+    equal = "2026-06-02T00:00:00Z"
+    newer = "2026-06-03T00:00:00Z"
+    local = {"id": entry.id, "name": "local-name", "deleted_at": equal}
+    remote_equal = {"id": entry.id, "name": "remote-name", "deleted_at": equal}
+    remote_newer = {"id": entry.id, "name": "remote-name", "deleted_at": newer}
+
+    equal_result = merge([], [local], [], [remote_equal])
+    assert equal_result.tombstones == [local]
+
+    newer_result = merge([], [local], [], [remote_newer])
+    assert newer_result.tombstones == [remote_newer]
+
+
+def test_merge_disjoint_entries_has_deterministic_id_order():
+    ids = [
+        "kk:00000000-0000-4000-8000-000000000001",
+        "kk:00000000-0000-4000-8000-000000000002",
+        "kk:00000000-0000-4000-8000-000000000003",
+        "kk:00000000-0000-4000-8000-000000000004",
+    ]
+    entries = [
+        Entry.new(name=f"order-{index}", type=EntryType.API_KEY)
+        for index in range(4)
+    ]
+    for entry, id_ in zip(entries, ids, strict=True):
+        entry.id = id_
+
+    result = merge([entries[2], entries[0]], [], [entries[3], entries[1]], [])
+    reversed_result = merge(
+        [entries[0], entries[2]],
+        [],
+        [entries[1], entries[3]],
+        [],
+    )
+
+    assert [entry.id for entry in result.entries] == ids
+    assert [entry.to_dict() for entry in reversed_result.entries] == [
+        entry.to_dict() for entry in result.entries
+    ]
+    assert result.remote_win_ids == reversed_result.remote_win_ids == {
+        ids[1],
+        ids[3],
+    }
+    assert result.tombstones == reversed_result.tombstones == []
+    assert result.changed is True
 
 
 # ---------- LWW + tiebreak ----------
@@ -322,6 +429,60 @@ def test_keychain_failure_leaves_no_orphan_secrets(tmp_path):
         victim.engine.pull(PW)
     assert victim.store.list() == []
     assert victim.backend.d == {}    # no orphan secret left behind
+
+
+def test_pull_retries_when_local_metadata_changes_before_apply(tmp_path, monkeypatch):
+    remote = FakeRemote()
+    source = make_device(remote, tmp_path, "SRC")
+    add_entry(source, "remote-entry", "sentinel-remote")
+    source.engine.push(PW)
+    victim = make_device(remote, tmp_path, "V")
+    original_apply = VaultService.apply_snapshot
+    raced = False
+    concurrent = Entry.new(name="local-concurrent", type=EntryType.API_KEY)
+
+    def racing_apply(service, *args, **kwargs):
+        nonlocal raced
+        if not raced:
+            raced = True
+            service.store.add(concurrent)
+            service.backend.set(concurrent.id, "sentinel-local")
+        return original_apply(service, *args, **kwargs)
+
+    monkeypatch.setattr(VaultService, "apply_snapshot", racing_apply)
+    assert victim.engine.pull(PW) == 1
+
+    assert raced is True
+    assert names(victim) == ["local-concurrent", "remote-entry"]
+    assert victim.backend.d[concurrent.id] == "sentinel-local"
+
+
+def test_rollback_refuses_local_metadata_race_without_loss(tmp_path, monkeypatch):
+    remote = FakeRemote()
+    device = make_device(remote, tmp_path, "A")
+    add_entry(device, "first", "sentinel-first")
+    device.engine.push(PW)
+    add_entry(device, "second", "sentinel-second")
+    device.engine.push(PW)
+    original_apply = VaultService.apply_snapshot
+    raced = False
+    concurrent = Entry.new(name="rollback-concurrent", type=EntryType.API_KEY)
+
+    def racing_apply(service, *args, **kwargs):
+        nonlocal raced
+        if not raced:
+            raced = True
+            service.store.add(concurrent)
+            service.backend.set(concurrent.id, "sentinel-concurrent")
+        return original_apply(service, *args, **kwargs)
+
+    monkeypatch.setattr(VaultService, "apply_snapshot", racing_apply)
+    with pytest.raises(TransportError, match="local vault changed during rollback"):
+        device.engine.rollback(1, PW)
+
+    assert names(device) == ["first", "rollback-concurrent", "second"]
+    assert device.backend.d[concurrent.id] == "sentinel-concurrent"
+    assert device.engine._current_tip().version == 2
 
 
 def test_rollback_delete_propagates_to_peer(tmp_path):

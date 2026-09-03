@@ -1,7 +1,9 @@
 # Security remediation roadmap
 
-Status: active on `security/keys-keeper-hardening`  
-Baseline: `df2a9e8`  
+Status: active in the current worktree; release status is tracked separately
+
+Baseline: `v0.7.7`
+
 Target: truthful compatibility mode in 0.8, isolated broker mode in 1.0
 
 ## Product contract
@@ -38,10 +40,12 @@ an agent-readable file are explicit human exposure operations.
 |---|---|
 | SEC-0 release containment | Complete in `56c0833` |
 | SEC-1 trust-boundary validation | Complete in `f591bdc` |
-| SEC-2 secure local sinks and subprocesses | In progress: local sinks, audit metadata, clipboard pipe, macOS/Linux credential subprocess containment, and SSH executable/tempfile hardening implemented |
-| SEC-3 through SEC-5 | Planned |
+| SEC-2 secure local sinks and subprocesses | In progress: local sinks, audit metadata, clipboard pipe, native macOS operations, explicit no-UI background context, bounded one-item legacy ACL preparation, Linux credential subprocess containment, and SSH executable/tempfile hardening implemented |
+| SEC-3 transactional secret generations | First slice implemented: one application service, one metadata lock, compensating rollback and fault injection; durable generations/journal remain planned |
+| SEC-4 authenticated sync and crypto envelope v2 | Planned |
+| SEC-5 isolated broker | Proposed: client policy and boundary documented; signed identity, broker and ACL normalization unresolved |
 | SEC-6 web and account-state hardening | In progress: HttpOnly admin session, strict script CSP, DOM-safe status rendering, and request body limits implemented |
-| SEC-7 supply chain and release engineering | Planned |
+| SEC-7 supply chain and release engineering | In progress: supported Python floor/ceiling and real-OS CI matrix expanded; provenance, SBOM and signed artifacts remain planned |
 
 ## Workstreams
 

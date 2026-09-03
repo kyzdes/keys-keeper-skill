@@ -8,6 +8,7 @@ import pytest
 from keys_keeper import cli
 from keys_keeper.paths import Paths
 from keys_keeper.cli_sync import SYNC_PASS
+from keys_keeper.composition import AccessContext
 from _sync_fakes import FakeRemote, FakeBackend
 
 AKID, S3SECRET, PW = "AKID", "s3secret", "passphrase-X"
@@ -17,10 +18,14 @@ AKID, S3SECRET, PW = "AKID", "s3secret", "passphrase-X"
 def sync_cli(kk_home, monkeypatch):
     backend = FakeBackend()
     remote = FakeRemote()
+    access_calls = []
+    def make_backend(*, access=AccessContext.INTERACTIVE):
+        access_calls.append(access)
+        return backend
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", lambda: backend)
+    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", make_backend)
     monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
-    return SimpleNamespace(backend=backend, remote=remote)
+    return SimpleNamespace(backend=backend, remote=remote, access_calls=access_calls)
 
 
 def _setup_auto():
@@ -46,6 +51,7 @@ def test_auto_foreground_pulls_and_pushes(sync_cli):
     _add("api-1", "sk-AAA")
     assert cli.main(["sync", "auto", "--foreground", "--force"]) == 0
     assert any(k.startswith("versions/000001") for k in sync_cli.remote.objs)
+    assert sync_cli.access_calls[-1] is AccessContext.UI_FORBIDDEN
 
 
 def test_F46_fails_open_on_missing_passphrase(sync_cli, capsys):

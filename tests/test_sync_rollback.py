@@ -12,7 +12,6 @@ These cover client-side defences against a malicious/MITM bucket that can only
 No on-disk crypto format changes: the watermark lives in the 0600 sync-state
 sidecar, and the integrity check recomputes the SAME client-side content hash.
 """
-import io
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -199,7 +198,9 @@ def sync_cli(kk_home, monkeypatch):
     backend = FakeBackend()
     remote = FakeRemote()
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", lambda: backend)
+    monkeypatch.setattr(
+        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+    )
     monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote)
 
@@ -250,7 +251,9 @@ def test_web_setup_accepts_strong_passphrase(monkeypatch, kk_home):
     from keys_keeper.cli_sync import web_setup, SYNC_PASS
     backend = FakeBackend()
     remote = FakeRemote()
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", lambda: backend)
+    monkeypatch.setattr(
+        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+    )
     monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
     data = {"endpoint": "https://s3.example.com", "bucket": "b",
             "access_key_id": "AKID", "secret_key": "s3secret",

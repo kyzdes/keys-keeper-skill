@@ -1,10 +1,12 @@
 import json
 import threading
 import time
-import urllib.request
 import urllib.error
-import pytest
+import urllib.request
 from io import StringIO
+
+import pytest
+
 from keys_keeper import cli
 from keys_keeper.paths import Paths
 from keys_keeper.server import AdminServer
@@ -51,6 +53,7 @@ def _seed(monkeypatch, name, value="v"):
 def test_api_env_names_returns_names_only(monkeypatch):
     """The env panel must never leak values — only names cross the wire."""
     from keys_keeper.api import _env_names
+
     monkeypatch.setenv("KK_PANEL_TEST_VAR", "this-must-not-leak")
     captured = {}
 
@@ -69,6 +72,35 @@ def test_api_env_names_returns_names_only(monkeypatch):
     assert names == sorted(names)
 
 
+def test_bulk_dry_run_returns_presence_without_secret_value(kk_home):
+    """Preview responses must never carry plaintext back into the browser."""
+    from keys_keeper.api import _bulk_import
+
+    captured = {}
+
+    class FakeHandler:
+        def _send_json(self, status, body):
+            captured["status"] = status
+            captured["body"] = body
+
+    sentinel = "sentinel-must-not-cross-api"
+    source = json.dumps({"source": f"preview-key = {sentinel}"}).encode()
+    _bulk_import(FakeHandler(), Paths(), "dry-run=1", source)
+
+    assert captured["status"] == 200
+    assert captured["body"]["rows"] == [
+        {
+            "line": 1,
+            "name": "preview-key",
+            "type": "api_key",
+            "has_value": True,
+            "tags": [],
+            "error": None,
+        }
+    ]
+    assert sentinel not in json.dumps(captured["body"])
+
+
 def test_api_entries_returns_seeded_data(admin, monkeypatch):
     _seed(monkeypatch, "api-test-1")
     _seed(monkeypatch, "api-test-2")
@@ -80,7 +112,9 @@ def test_api_entries_returns_seeded_data(admin, monkeypatch):
     # values must NEVER appear in response
     body_str = json.dumps(data)
     assert "v\n" not in body_str
-    assert "value" not in body_str.lower() or "value" not in [k for e in data["entries"] for k in e.get("fields", {})]
+    assert "value" not in body_str.lower() or "value" not in [
+        k for e in data["entries"] for k in e.get("fields", {})
+    ]
 
 
 @pytest.mark.macos
@@ -94,10 +128,12 @@ def test_api_copy_writes_clipboard_and_audits(admin, monkeypatch):
     # default mirrors CLI's --clear-after default of 30s
     assert payload["clear_after"] == 30
     import subprocess
+
     pasted = subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
     assert pasted == "copy-secret-v"
     # audit
     from keys_keeper.audit import AuditLog
+
     events = list(AuditLog(Paths()).search(op="copy"))
     assert any(e["name"] == "copy-target" for e in events)
 
@@ -133,10 +169,13 @@ def test_api_heartbeat_returns_ok(admin):
 def test_api_shutdown_stops_server(admin):
     # In production this os._exit's; we patch it for the test.
     import os as _os
+
     real_exit = _os._exit
     called = threading.Event()
+
     def fake_exit(_):
         called.set()
+
     _os._exit = fake_exit
     try:
         _post(admin, "/api/shutdown")
@@ -178,13 +217,14 @@ def _delete(admin, eid: str, *, cascade: bool = False):
 
 def test_api_delete_with_dependents_returns_409_without_cascade(admin, monkeypatch):
     """Mirrors CLI rm: refusing to delete an entry with reverse-refs."""
-    from keys_keeper.audit import AuditLog
     from keys_keeper.store import MetadataStore
+
     _seed(monkeypatch, "ssh-parent")
     # add a server entry that refs the ssh-parent (manually via store, simpler than CLI add)
     store = MetadataStore(Paths())
     parent = store.get_by_name("ssh-parent")
     from keys_keeper.models import Entry, EntryType
+
     server_entry = Entry.new(
         name="server-child",
         type=EntryType.SERVER,
@@ -204,8 +244,9 @@ def test_api_delete_with_dependents_returns_409_without_cascade(admin, monkeypat
 
 def test_api_delete_with_cascade_strips_refs_and_deletes(admin, monkeypatch):
     """Mirrors CLI rm --cascade: strip dangling refs from dependents, then delete."""
-    from keys_keeper.store import MetadataStore
     from keys_keeper.models import Entry, EntryType
+    from keys_keeper.store import MetadataStore
+
     _seed(monkeypatch, "ssh-parent-2")
     store = MetadataStore(Paths())
     parent = store.get_by_name("ssh-parent-2")

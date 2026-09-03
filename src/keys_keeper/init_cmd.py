@@ -40,6 +40,7 @@ class TargetSpec:
     default_path: str | None  # relative to cwd; None for stdout-only
     write_mode: WriteMode
     post_write_hint: str | None = None
+    reference_files: Callable[[], dict[str, str]] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +109,7 @@ TARGETS: dict[str, TargetSpec] = {
         default_path="skills/keys-keeper/SKILL.md",
         write_mode="single-file",
         post_write_hint=None,
+        reference_files=render.render_claude_reference_files,
     ),
     "cursor": TargetSpec(
         render_fn=_render_cursor,
@@ -306,6 +308,50 @@ def _check_marker_section(path: Path, body: str) -> tuple[bool, str]:
     return False, diff
 
 
+def _reference_paths(spec: TargetSpec, dest: Path) -> dict[Path, str]:
+    if spec.reference_files is None:
+        return {}
+    return {
+        dest.parent / "references" / name: content
+        for name, content in spec.reference_files().items()
+    }
+
+
+def _check_references(spec: TargetSpec, dest: Path) -> int:
+    all_ok = True
+    for path, expected in _reference_paths(spec, dest).items():
+        ok, diff = _check_single_file(path, expected)
+        if ok:
+            print(f"{path}: up to date")
+            continue
+        all_ok = False
+        sys.stderr.write(diff or f"{path}: missing generated reference\n")
+        print(f"{path}: out of date (see diff above)", file=sys.stderr)
+    return 0 if all_ok else 1
+
+
+def _write_references(spec: TargetSpec, dest: Path, *, force: bool) -> int:
+    targets = _reference_paths(spec, dest)
+    if not targets:
+        return 0
+    conflicts = [
+        path
+        for path, expected in targets.items()
+        if path.exists() and _safe_read(path) != expected
+    ]
+    if conflicts and not force:
+        joined = ", ".join(str(path) for path in conflicts)
+        sys.stderr.write(
+            f"error: generated reference exists with different content: {joined}; "
+            "pass --force to overwrite\n"
+        )
+        return 1
+    for path, content in targets.items():
+        _safe_atomic_write(path, content)
+        print(f"wrote {path}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Public entrypoint — called by cli.cmd_init
 # ---------------------------------------------------------------------------
@@ -351,10 +397,28 @@ def _cmd_init_inner(args: argparse.Namespace) -> int:
         )
 
     if args.check:
-        return _do_check(spec, dest, content)
+        main_rc = _do_check(spec, dest, content)
+        refs_rc = _check_references(spec, dest)
+        return max(main_rc, refs_rc)
 
     if spec.write_mode == "single-file":
-        return _do_single_file(dest, content, force=args.force, spec=spec)
+        if not args.force:
+            conflicts = [
+                path
+                for path, expected in _reference_paths(spec, dest).items()
+                if path.exists() and _safe_read(path) != expected
+            ]
+            if conflicts:
+                joined = ", ".join(str(path) for path in conflicts)
+                sys.stderr.write(
+                    "error: generated reference exists with different content: "
+                    f"{joined}; pass --force to overwrite\n"
+                )
+                return 1
+        rc = _do_single_file(dest, content, force=args.force, spec=spec)
+        if rc != 0:
+            return rc
+        return _write_references(spec, dest, force=args.force)
     elif spec.write_mode == "marker-append":
         return _do_marker_append(dest, content, spec=spec)
     else:

@@ -31,6 +31,7 @@ from keys_keeper.models import (
     now_iso,
     validate_snapshot_payload,
 )
+from keys_keeper.service import ConcurrentMutation, VaultService
 from keys_keeper.store import SCHEMA_VERSION, MetadataStore
 from keys_keeper.sync_remote import NotFound, PreconditionFailed, TransportError
 
@@ -147,6 +148,92 @@ def _suffix_name(name: str, id_: str) -> str:
     return f"{name[:56]}-{short}"
 
 
+def _latest_tombstone(local: dict | None, remote: dict | None) -> dict | None:
+    if local and remote:
+        return local if local["deleted_at"] >= remote["deleted_at"] else remote
+    return local or remote
+
+
+def _live_winner(
+    local: Entry | None,
+    remote: Entry | None,
+) -> tuple[Entry | None, str | None]:
+    if local is None:
+        return (remote, "remote") if remote is not None else (None, None)
+    if remote is None:
+        return local, "local"
+    if _sort_key(remote) > _sort_key(local):
+        return remote, "remote"
+    return local, "local"
+
+
+def _resolve_entry_state(
+    id_: str,
+    local_entry: Entry | None,
+    remote_entry: Entry | None,
+    local_tombstone: dict | None,
+    remote_tombstone: dict | None,
+) -> tuple[Entry | None, str | None, dict | None]:
+    tombstone = _latest_tombstone(local_tombstone, remote_tombstone)
+    winner, source = _live_winner(local_entry, remote_entry)
+    if winner is not None and (
+        tombstone is None or winner.updated_at > tombstone["deleted_at"]
+    ):
+        return winner, source, None
+    if tombstone is None:
+        return None, None, None
+    name = tombstone.get("name") or (
+        local_entry.name
+        if local_entry is not None
+        else remote_entry.name
+        if remote_entry is not None
+        else ""
+    )
+    return None, None, {
+        "id": id_,
+        "name": name,
+        "deleted_at": tombstone["deleted_at"],
+    }
+
+
+def _disambiguate_live_names(
+    live: dict[str, tuple[Entry, str]],
+) -> dict[str, tuple[Entry, str]]:
+    result = dict(live)
+    by_name: dict[str, list[str]] = {}
+    for id_, (entry, _source) in result.items():
+        by_name.setdefault(entry.name, []).append(id_)
+    for name, ids in by_name.items():
+        if len(ids) <= 1:
+            continue
+        ids.sort(key=lambda id_: _sort_key(result[id_][0]), reverse=True)
+        for loser in ids[1:]:
+            entry, source = result[loser]
+            result[loser] = (
+                replace(entry, name=_suffix_name(name, entry.id)),
+                source,
+            )
+    return result
+
+
+def _metadata_changed(
+    local_entries: list[Entry],
+    local_tombstones: list[dict],
+    merged_entries: list[Entry],
+    merged_tombstones: list[dict],
+) -> bool:
+    local_entry_records = sorted(
+        (entry.to_dict() for entry in local_entries),
+        key=lambda record: record["id"],
+    )
+    merged_entry_records = [entry.to_dict() for entry in merged_entries]
+    local_tombstone_records = sorted(local_tombstones, key=lambda item: item["id"])
+    return (
+        merged_entry_records != local_entry_records
+        or merged_tombstones != local_tombstone_records
+    )
+
+
 def merge(local_entries: list[Entry], local_tombs: list[dict],
           remote_entries: list[Entry], remote_tombs: list[dict]) -> MergeResult:
     local_by_id = {e.id: e for e in local_entries}
@@ -160,59 +247,35 @@ def merge(local_entries: list[Entry], local_tombs: list[dict],
     remote_win_ids: set[str] = set()
 
     for id_ in all_ids:
-        le, re_ = local_by_id.get(id_), remote_by_id.get(id_)
-        lt, rt = ltomb.get(id_), rtomb.get(id_)
-        # latest deletion wins between the two tombstones
-        tomb = None
-        if lt and rt:
-            tomb = lt if lt["deleted_at"] >= rt["deleted_at"] else rt
-        else:
-            tomb = lt or rt
-        # live winner between the two live versions
-        if le and re_:
-            if _sort_key(re_) > _sort_key(le):
-                winner, src = re_, "remote"
-            else:
-                winner, src = le, "local"
-        elif re_:
-            winner, src = re_, "remote"
-        elif le:
-            winner, src = le, "local"
-        else:
-            winner, src = None, None
-        # live vs tombstone: tombstone wins unless the live edit is strictly newer
-        if winner is not None and (tomb is None or winner.updated_at > tomb["deleted_at"]):
-            live[id_] = (winner, src)
-            if src == "remote":
+        winner, source, tombstone = _resolve_entry_state(
+            id_,
+            local_by_id.get(id_),
+            remote_by_id.get(id_),
+            ltomb.get(id_),
+            rtomb.get(id_),
+        )
+        if winner is not None and source is not None:
+            live[id_] = (winner, source)
+            if source == "remote":
                 remote_win_ids.add(id_)
-        elif tomb is not None:
-            nm = tomb.get("name") or (le.name if le else re_.name if re_ else "")
-            tombs[id_] = {"id": id_, "name": nm, "deleted_at": tomb["deleted_at"]}
+        elif tombstone is not None:
+            tombs[id_] = tombstone
 
     # deterministic name disambiguation among live winners (F19)
-    by_name: dict[str, list[str]] = {}
-    for id_, (e, _src) in live.items():
-        by_name.setdefault(e.name, []).append(id_)
-    for name, ids in by_name.items():
-        if len(ids) <= 1:
-            continue
-        ids.sort(key=lambda i: _sort_key(live[i][0]), reverse=True)
-        for loser in ids[1:]:
-            e, src = live[loser]
-            live[loser] = (replace(e, name=_suffix_name(name, e.id)), src)
+    live = _disambiguate_live_names(live)
 
-    merged_entries = [e for (e, _src) in live.values()]
-    merged_entries.sort(key=lambda e: e.id)
-    merged_tombstones = sorted(tombs.values(), key=lambda t: t["id"])
+    merged_entries = sorted((entry for entry, _source in live.values()), key=lambda e: e.id)
+    merged_tombstones = sorted(tombs.values(), key=lambda item: item["id"])
 
     # secrets to purge: ids now tombstoned that were live locally
     secret_delete_ids = set(tombs) & set(local_by_id)
 
-    # changed?  compare to local metadata exactly
-    local_e_sorted = sorted((e.to_dict() for e in local_entries), key=lambda d: d["id"])
-    merged_e_sorted = [e.to_dict() for e in merged_entries]
-    local_t_sorted = sorted(local_tombs, key=lambda t: t["id"])
-    changed = (merged_e_sorted != local_e_sorted) or (merged_tombstones != local_t_sorted)
+    changed = _metadata_changed(
+        local_entries,
+        local_tombs,
+        merged_entries,
+        merged_tombstones,
+    )
 
     return MergeResult(merged_entries, merged_tombstones, remote_win_ids,
                        secret_delete_ids, changed)
@@ -364,47 +427,53 @@ class SyncEngine:
             r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
             for r in payload["entries"]
         }
-        result = merge(self.store.list(), self.store.tombstones(),
-                       remote_entries, remote_tombstones)
-        if not result.changed:
-            return 0
-        self._apply_merge_result(result, remote_secrets)
-        return len(result.remote_win_ids) + len(result.secret_delete_ids)
+        for _ in range(self.max_retries):
+            local = self.store.snapshot()
+            result = merge(local.entries, local.tombstones,
+                           remote_entries, remote_tombstones)
+            if not result.changed:
+                return 0
+            try:
+                self._apply_merge_result(
+                    result,
+                    remote_secrets,
+                    expected_revision=local.revision,
+                )
+            except ConcurrentMutation:
+                continue
+            return len(result.remote_win_ids) + len(result.secret_delete_ids)
+        raise TransportError(
+            "local vault changed repeatedly while sync was applying; retry the command"
+        )
 
-    def _apply_merge_result(self, result: MergeResult, remote_secrets: dict) -> None:
+    def _apply_merge_result(
+        self,
+        result: MergeResult,
+        remote_secrets: dict,
+        *,
+        expected_revision: str,
+    ) -> None:
         # Pre-validate (F20/KI-002): every remote-win id must have a secret slot.
         for id_ in result.remote_win_ids:
             if id_ not in remote_secrets:
                 raise TransportError(f"remote snapshot missing secret for {id_}")
-        # Secrets first, so metadata never references an unwritten secret. Track
-        # what we wrote so a mid-way KeychainError doesn't leave orphan secrets
-        # (no metadata pointing at them) in the keychain (KI-002/KI-011).
-        written: list[str] = []
-        try:
-            for id_ in result.remote_win_ids:
-                sec, pf = remote_secrets[id_]
-                if sec is not None:
-                    self.backend.set(id_, sec)
-                    written.append(id_)
-                if pf is not None:
-                    self.backend.set(id_ + ":passphrase", pf)
-                    written.append(id_ + ":passphrase")
-        except Exception:
-            for acct in written:  # best-effort unwind of this attempt's writes
-                try:
-                    self.backend.delete(acct)
-                except KeychainError:
-                    pass
-            raise
-        # Atomic metadata swap.
-        self.store.apply_merge(result.entries, result.tombstones)
-        # Purge secrets of newly-tombstoned ids (best-effort).
+        writes: dict[str, str] = {}
+        for id_ in result.remote_win_ids:
+            sec, pf = remote_secrets[id_]
+            if sec is not None:
+                writes[id_] = sec
+            if pf is not None:
+                writes[id_ + ":passphrase"] = pf
+        deletes: list[str] = []
         for id_ in result.secret_delete_ids:
-            for acct in (id_, id_ + ":passphrase"):
-                try:
-                    self.backend.delete(acct)
-                except KeychainError:
-                    pass
+            deletes.extend((id_, id_ + ":passphrase"))
+        VaultService(self.store, self.backend).apply_snapshot(
+            result.entries,
+            result.tombstones,
+            secret_writes=writes,
+            secret_deletes=deletes,
+            expected_revision=expected_revision,
+        )
 
     # -- anti-rollback watermark (monotonic highest-seen version) --
     def _watermark(self) -> int | None:
@@ -557,26 +626,36 @@ class SyncEngine:
         target_secrets = {r["id"]: (r.get("_secret"), r.get("_secret_passphrase"))
                           for r in payload["entries"]}
         target_ids = {e.id for e in target_entries}
-        local_ids = {e.id for e in self.store.list()}
+        local = self.store.snapshot()
+        local_ids = {e.id for e in local.entries}
 
         now = now_iso()
         removed = [{"id": e.id, "name": e.name, "deleted_at": now}
-                   for e in self.store.list() if e.id not in target_ids]
+                   for e in local.entries if e.id not in target_ids]
         tombs = _dedupe_tombstones(list(target_tombstones) + removed)
 
+        writes: dict[str, str] = {}
         for id_ in target_ids:
             sec, pf = target_secrets[id_]
             if sec is not None:
-                self.backend.set(id_, sec)
+                writes[id_] = sec
             if pf is not None:
-                self.backend.set(id_ + ":passphrase", pf)
-        self.store.apply_merge(target_entries, tombs)
+                writes[id_ + ":passphrase"] = pf
+        deletes: list[str] = []
         for id_ in local_ids - target_ids:
-            for acct in (id_, id_ + ":passphrase"):
-                try:
-                    self.backend.delete(acct)
-                except KeychainError:
-                    pass
+            deletes.extend((id_, id_ + ":passphrase"))
+        try:
+            VaultService(self.store, self.backend).apply_snapshot(
+                target_entries,
+                tombs,
+                secret_writes=writes,
+                secret_deletes=deletes,
+                expected_revision=local.revision,
+            )
+        except ConcurrentMutation as ex:
+            raise TransportError(
+                "local vault changed during rollback; retry so no local change is lost"
+            ) from ex
         # Commit the restored state directly — do NOT pre-merge the current tip,
         # which would re-resurrect exactly what we just rolled away. Guard the
         # commit so a concurrent peer-added entry isn't silently overwritten.
@@ -638,9 +717,7 @@ class SyncEngine:
         return len(doomed)
 
     def _gc_local_tombstones(self, horizon_ts: str) -> None:
-        keep = [t for t in self.store.tombstones() if t["deleted_at"] >= horizon_ts]
-        if len(keep) != len(self.store.tombstones()):
-            self.store.apply_merge(self.store.list(), keep)
+        self.store.prune_tombstones_before(horizon_ts)
 
     def _gc_quiet(self) -> None:
         try:

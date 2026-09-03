@@ -7,13 +7,11 @@ import os
 import re
 import subprocess
 import sys
-import threading
 import webbrowser
 from pathlib import Path
 
 from keys_keeper import __version__, clipboard
 from keys_keeper.audit import AuditLog
-from keys_keeper.backend import KeychainError
 from keys_keeper.composition import build_backend
 from keys_keeper.models import (
     Entry,
@@ -24,7 +22,8 @@ from keys_keeper.models import (
 )
 from keys_keeper.paths import Paths
 from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
-from keys_keeper.store import MetadataStore, NameConflict, NotFound, StoreError
+from keys_keeper.service import HasDependents, SecretInput, VaultService
+from keys_keeper.store import MetadataStore, NameConflict
 
 
 # ----- input source resolution -----
@@ -111,19 +110,20 @@ def cmd_add(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {e}\n")
         return 2
 
+    service = VaultService(store, backend)
     try:
-        if args.replace and store.get_by_name(args.name):
-            existing = store.get_by_name(args.name)
-            entry.id = existing.id
-            store.replace_by_name(entry)
-        else:
-            store.add(entry)
+        service.create_entry(
+            entry,
+            secrets=SecretInput(value=value) if needs_secret else None,
+            replace=args.replace,
+        )
     except NameConflict as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
-
-    if needs_secret:
-        backend.set(entry.id, value)
+    except Exception as e:
+        audit.record(op="add", name=entry.name, id_=entry.id, success=False, error=str(e))
+        sys.stderr.write(f"error: failed to add {entry.name!r}: {e}\n")
+        return 1
     audit.record(op="add", name=entry.name, id_=entry.id, success=True)
     print(f"added {entry.type.value} '{entry.name}' (id={entry.id})")
     return 0
@@ -391,25 +391,20 @@ def cmd_rm(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    # check reverse refs
-    dependents = [
-        x for x in store.list()
-        if any(r.get("name") == e.name for r in x.refs)
-    ]
-    if dependents and not args.cascade:
+    backend = build_backend()
+    service = VaultService(store, backend)
+    try:
+        service.delete_entry(e.id, cascade=args.cascade)
+    except HasDependents as ex:
         sys.stderr.write(
-            f"error: {e.name} is referenced by: {[d.name for d in dependents]}. "
+            f"error: {e.name} is referenced by: {ex.dependents}. "
             f"Use --cascade to remove the references too.\n"
         )
         return 1
-    if dependents and args.cascade:
-        for d in dependents:
-            d.refs = [r for r in d.refs if r.get("name") != e.name]
-            store.update(d)
-    store.delete_by_name(args.name)
-    backend = build_backend()
-    backend.delete(e.id)
-    backend.delete(e.id + ":passphrase")  # in case ssh_key had passphrase
+    except Exception as ex:
+        audit.record(op="delete", name=e.name, id_=e.id, success=False, error=str(ex))
+        sys.stderr.write(f"error: failed to remove {e.name!r}: {ex}\n")
+        return 1
     audit.record(op="delete", name=e.name, id_=e.id, success=True)
     print(f"removed {e.name}")
     return 0
@@ -459,7 +454,15 @@ def cmd_edit(args: argparse.Namespace) -> int:
             return 1
         e.name = args.new_name
     e.updated_at = now_iso()
-    store.update(e)
+    try:
+        VaultService(store, build_backend()).update_entry(e)
+    except NameConflict as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
+    except Exception as ex:
+        audit.record(op="update", name=e.name, id_=e.id, success=False, error=str(ex))
+        sys.stderr.write(f"error: failed to update {e.name!r}: {ex}\n")
+        return 1
     audit.record(op="update", name=e.name, id_=e.id, success=True)
     print(f"updated {e.name}")
     return 0
@@ -723,6 +726,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         return 1
     store = MetadataStore(paths)
     backend = build_backend()
+    service = VaultService(store, backend)
     audit = AuditLog(paths)
     existing = {e.name for e in store.list()}
     imported = 0
@@ -732,26 +736,16 @@ def cmd_import(args: argparse.Namespace) -> int:
         fresh = e.name not in existing
         if not fresh and not args.replace:
             continue
-        if fresh:
-            store.add(e)
-        else:
-            store.replace_by_name(e)
         try:
-            if secret:
-                backend.set(e.id, secret)
-            if passphrase:
-                backend.set(e.id + ":passphrase", passphrase)
-        except KeychainError as ex:
-            # The secret didn't land. Roll back the metadata we just added so a
-            # re-run (after the user fixes the cause) retries this entry cleanly
-            # instead of skipping it as "already imported". Stop here: the most
-            # common cause (Windows' per-app credential cap) fails every
-            # subsequent write too, so one clear message beats a flood.
-            if fresh:
-                try:
-                    store.delete_by_name(e.name)
-                except Exception:
-                    pass
+            service.create_entry(
+                e,
+                secrets=SecretInput(value=secret, passphrase=passphrase),
+                replace=not fresh,
+            )
+        except Exception as ex:
+            # ``VaultService`` has already compensated metadata and secret
+            # writes. Stop after the first failure so a rerun can resume at the
+            # same entry without a flood of repeated backend errors.
             audit.record(op="import", name=e.name, id_=e.id,
                          file_target=args.file, success=False)
             sys.stderr.write(

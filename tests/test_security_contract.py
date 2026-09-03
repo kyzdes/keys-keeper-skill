@@ -57,6 +57,23 @@ def test_release_versions_are_consistent():
     assert codex_plugin["version"] == __version__
 
 
+def test_public_current_version_surfaces_match():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    landing = (ROOT / "docs" / "landing" / "index.html").read_text(encoding="utf-8")
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    source_skill = (ROOT / "skills" / "keys-keeper" / "references" / "install.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert f"**Status:** v{__version__}" in readme
+    assert f"keys-keeper-skill.git@v{__version__}" in readme
+    assert f"v{__version__}" in landing
+    first_release = re.search(r"^## \[(\d+\.\d+\.\d+)]", changelog, re.MULTILINE)
+    assert first_release is not None
+    assert first_release.group(1) == __version__
+    assert f"keys-keeper-skill.git@v{__version__}" in source_skill
+
+
 def test_codex_plugin_is_skill_only_and_implicitly_invokable():
     plugin = json.loads(
         (CODEX_PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(
@@ -81,11 +98,19 @@ def test_codex_plugin_is_skill_only_and_implicitly_invokable():
     for relative_path in (
         Path("SKILL.md"),
         Path("agents/openai.yaml"),
-        Path("references/examples.md"),
+        Path("references/diagnostics.md"),
+        Path("references/install.md"),
+        Path("references/keychain-bypass.md"),
+        Path("references/save-and-route.md"),
+        Path("references/sync.md"),
+        Path("references/temporary-sinks.md"),
     ):
         assert (packaged_skill_root / relative_path).read_bytes() == (
             source_skill_root / relative_path
         ).read_bytes()
+
+    assert not (source_skill_root / "references" / "examples.md").exists()
+    assert not (packaged_skill_root / "references" / "examples.md").exists()
 
     agent_manifest = (packaged_skill_root / "agents" / "openai.yaml").read_text(
         encoding="utf-8"

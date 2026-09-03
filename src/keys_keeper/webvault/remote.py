@@ -34,14 +34,16 @@ def load_s3_base() -> S3Base:
             secret_key=Sealed(os.environ["WEBVAULT_S3_SECRET_KEY"]),
         )
     from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_SECRET
-    from keys_keeper.composition import build_backend
+    from keys_keeper.composition import AccessContext, build_backend
     from keys_keeper.config import load_sync_config
     from keys_keeper.paths import Paths
     cfg = load_sync_config(Paths())
     if not cfg.endpoint or not cfg.bucket:
         raise RuntimeError(
             "no S3 config — set WEBVAULT_S3_* env vars or run `keys sync setup`")
-    backend = build_backend()
+    # A long-running server must never inherit the user's interactive prompt
+    # preference. Missing or inaccessible original Keychain items fail closed.
+    backend = build_backend(access=AccessContext.UI_FORBIDDEN)
     return S3Base(
         endpoint=cfg.endpoint, bucket=cfg.bucket, region=cfg.region,
         addressing=cfg.addressing,

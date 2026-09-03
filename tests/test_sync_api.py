@@ -4,13 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from _sync_fakes import FakeBackend, FakeRemote
 
 from keys_keeper import cli
 from keys_keeper.api import handle_api
-from keys_keeper.paths import Paths
+from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_PASS, SYNC_SECRET
+from keys_keeper.composition import AccessContext
 from keys_keeper.config import load_sync_config
-from keys_keeper.cli_sync import SYNC_PASS
-from _sync_fakes import FakeRemote, FakeBackend
+from keys_keeper.paths import Paths
+from keys_keeper.sync_remote import TransportError
 
 AKID, S3SECRET, PW = "AKID-WEBLEAK", "s3secret-WEBLEAK", "passphrase-WEBLEAK"
 
@@ -29,10 +31,15 @@ class FakeHandler:
 def sync_web(kk_home, monkeypatch):
     backend = FakeBackend()
     remote = FakeRemote()
+    access_calls = []
+
+    def make_backend(*, access=AccessContext.INTERACTIVE):
+        access_calls.append(access)
+        return backend
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", lambda: backend)
+    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", make_backend)
     monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
-    return SimpleNamespace(backend=backend, remote=remote)
+    return SimpleNamespace(backend=backend, remote=remote, access_calls=access_calls)
 
 
 def _setup(auto=False):
@@ -70,6 +77,7 @@ def test_status_after_setup_and_push(sync_web):
     assert h.body["configured"] is True
     assert h.body["mode"] == "manual"
     assert h.body["remote_version"] == 1
+    assert sync_web.access_calls[-1] is AccessContext.UI_FORBIDDEN
 
 
 def test_web_push_and_pull(sync_web):
@@ -116,7 +124,6 @@ def test_no_secret_in_any_sync_api_response(sync_web):
 
 def test_web_setup_configures_and_stores_secrets(sync_web):
     import json
-    from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_SECRET
     body = json.dumps({
         "endpoint": "https://s3.example.com", "bucket": "b",
         "access_key_id": AKID, "secret_key": S3SECRET, "passphrase": PW,
@@ -132,6 +139,56 @@ def test_web_setup_configures_and_stores_secrets(sync_web):
     raw = str(h.body) + Paths().config_toml.read_text()
     for s in (S3SECRET, PW, AKID):
         assert s not in raw
+
+
+def test_web_setup_cas_probe_failure_restores_credentials_and_config(
+    sync_web,
+    monkeypatch,
+):
+    import json
+
+    assert _setup() == 0
+    previous = {
+        account: sync_web.backend.get(account).unseal()
+        for account in (SYNC_ACCESS, SYNC_SECRET, SYNC_PASS)
+    }
+    previous_config = Paths().config_toml.read_text()
+
+    class CasProbeFailure(FakeRemote):
+        def probe_cas(self):
+            raise TransportError("CAS capability probe failed")
+
+    monkeypatch.setattr(
+        "keys_keeper.cli_sync._build_remote",
+        lambda cfg, backend: CasProbeFailure(),
+    )
+    new_values = (
+        "AKID-WEB-REJECTED",
+        "s3secret-WEB-REJECTED",
+        "passphrase-WEB-REJECTED",
+    )
+    body = json.dumps({
+        "endpoint": "https://other-s3.example.com",
+        "bucket": "other-bucket",
+        "access_key_id": new_values[0],
+        "secret_key": new_values[1],
+        "passphrase": new_values[2],
+        "region": "auto",
+        "prefix": "other-prefix",
+        "mode": "manual",
+    }).encode()
+
+    response = _call("POST", "/api/sync/setup", body=body)
+
+    assert response.status == 502
+    assert {
+        account: sync_web.backend.get(account).unseal()
+        for account in (SYNC_ACCESS, SYNC_SECRET, SYNC_PASS)
+    } == previous
+    assert Paths().config_toml.read_text() == previous_config
+    assert sync_web.access_calls[-1] is AccessContext.UI_FORBIDDEN
+    for secret in new_values:
+        assert secret not in str(response.body)
 
 
 def test_web_setup_missing_fields_is_400(sync_web):

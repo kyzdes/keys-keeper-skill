@@ -1,17 +1,18 @@
 """Metadata store backed by a JSON file with atomic writes + exclusive lock."""
 from __future__ import annotations
+
+import hashlib
 import json
 import os
 import shutil
 import tempfile
-from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from keys_keeper._locking import lock_exclusive, unlock
-from keys_keeper.models import Entry, EntryType, now_iso
+from keys_keeper.models import Entry, now_iso
 from keys_keeper.paths import Paths, ensure_private_dir
-
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
 # S3 sync instead of being resurrected by an older peer snapshot. See sync.py.
@@ -28,6 +29,165 @@ class NameConflict(StoreError):
 
 class NotFound(StoreError):
     pass
+
+
+def _metadata_revision(data: dict) -> str:
+    canonical = json.dumps(
+        {
+            "schema_version": data.get("schema_version", SCHEMA_VERSION),
+            "entries": data.get("entries", []),
+            "tombstones": data.get("tombstones", []),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+@dataclass(frozen=True)
+class MetadataSnapshot:
+    entries: list[Entry]
+    tombstones: list[dict]
+    revision: str
+
+
+class MetadataTransaction:
+    """Mutable metadata view held under ``MetadataStore``'s write lock.
+
+    The application service uses this boundary to keep multi-entry metadata
+    changes atomic while it coordinates compensating secret-backend writes.
+    Nothing is persisted when the surrounding context exits with an error.
+    """
+
+    def __init__(self, data: dict):
+        self._data = data
+        self._records_by_slot: dict[int, dict] = {}
+        self._slot_by_name: dict[str, int] = {}
+        self._slot_by_id: dict[str, int] = {}
+        self._order: list[int] = []
+        self._next_slot = 0
+        self._reset_entries(data["entries"])
+
+    def list(self) -> list[Entry]:
+        return [
+            Entry.from_dict(self._records_by_slot[slot])
+            for slot in self._order
+            if slot in self._records_by_slot
+        ]
+
+    def get_by_name(self, name: str) -> Entry | None:
+        slot = self._slot_by_name.get(name)
+        if slot is None:
+            return None
+        return Entry.from_dict(self._records_by_slot[slot])
+
+    def get_by_id(self, id_: str) -> Entry | None:
+        slot = self._slot_by_id.get(id_)
+        if slot is None:
+            return None
+        return Entry.from_dict(self._records_by_slot[slot])
+
+    def add(self, entry: Entry) -> None:
+        if entry.name in self._slot_by_name:
+            raise NameConflict(
+                f"entry with name {entry.name!r} already exists "
+                f"(use --replace to overwrite or --rename to pick a new name)"
+            )
+        if entry.id in self._slot_by_id:
+            raise NameConflict(f"entry with id {entry.id!r} already exists")
+        self._append_record(entry.to_dict())
+
+    def update(self, entry: Entry) -> None:
+        slot = self._slot_by_id.get(entry.id)
+        if slot is None:
+            raise NotFound(f"no entry with id {entry.id}")
+        conflict_slot = self._slot_by_name.get(entry.name)
+        if conflict_slot is not None and conflict_slot != slot:
+            raise NameConflict(f"entry with name {entry.name!r} already exists")
+
+        previous = self._records_by_slot[slot]
+        previous_name = previous["name"]
+        self._records_by_slot[slot] = entry.to_dict()
+        if previous_name != entry.name:
+            del self._slot_by_name[previous_name]
+            self._slot_by_name[entry.name] = slot
+
+    def replace_by_name(self, entry: Entry) -> None:
+        slot = self._slot_by_name.get(entry.name)
+        if slot is None:
+            self.add(entry)
+            return
+
+        previous = self._records_by_slot[slot]
+        previous_id = previous["id"]
+        conflict_slot = self._slot_by_id.get(entry.id)
+        if conflict_slot is not None and conflict_slot != slot:
+            raise NameConflict(f"entry with id {entry.id!r} already exists")
+
+        self._records_by_slot[slot] = entry.to_dict()
+        if previous_id != entry.id:
+            del self._slot_by_id[previous_id]
+            self._slot_by_id[entry.id] = slot
+
+    def delete_by_name(self, name: str) -> Entry:
+        slot = self._slot_by_name.get(name)
+        if slot is None:
+            raise NotFound(f"no entry with name {name!r}")
+        record = self._records_by_slot.pop(slot)
+        del self._slot_by_name[record["name"]]
+        del self._slot_by_id[record["id"]]
+        entry = Entry.from_dict(record)
+        self._data.setdefault("tombstones", []).append(
+            {"id": entry.id, "name": entry.name, "deleted_at": now_iso()}
+        )
+        return entry
+
+    def replace_all(self, entries: list[Entry], tombstones: list[dict]) -> None:
+        self._reset_entries([entry.to_dict() for entry in entries])
+        self._data["tombstones"] = list(tombstones)
+
+    def prune_tombstones_before(self, horizon_ts: str) -> int:
+        tombstones = self._data.get("tombstones", [])
+        kept = [
+            tombstone
+            for tombstone in tombstones
+            if tombstone["deleted_at"] >= horizon_ts
+        ]
+        self._data["tombstones"] = kept
+        return len(tombstones) - len(kept)
+
+    def revision(self) -> str:
+        data = dict(self._data)
+        data["entries"] = self._materialize_entries()
+        return _metadata_revision(data)
+
+    def _append_record(self, record: dict) -> None:
+        slot = self._next_slot
+        self._next_slot += 1
+        self._records_by_slot[slot] = record
+        self._slot_by_name.setdefault(record["name"], slot)
+        self._slot_by_id.setdefault(record["id"], slot)
+        self._order.append(slot)
+
+    def _reset_entries(self, records: list[dict]) -> None:
+        self._records_by_slot.clear()
+        self._slot_by_name.clear()
+        self._slot_by_id.clear()
+        self._order.clear()
+        self._next_slot = 0
+        for record in records:
+            self._append_record(record)
+
+    def _materialize_entries(self) -> list[dict]:
+        return [
+            self._records_by_slot[slot]
+            for slot in self._order
+            if slot in self._records_by_slot
+        ]
+
+    def _commit(self) -> None:
+        self._data["entries"] = self._materialize_entries()
 
 
 class MetadataStore:
@@ -65,6 +225,8 @@ class MetadataStore:
                         f"entry with name {entry.name!r} already exists "
                         f"(use --replace to overwrite or --rename to pick a new name)"
                     )
+                if d["id"] == entry.id:
+                    raise NameConflict(f"entry with id {entry.id!r} already exists")
             data["entries"].append(entry.to_dict())
 
     def update(self, entry: Entry) -> None:
@@ -80,8 +242,15 @@ class MetadataStore:
         with self._locked_write() as data:
             for i, d in enumerate(data["entries"]):
                 if d["name"] == entry.name:
+                    if any(
+                        other["id"] == entry.id and other["name"] != entry.name
+                        for other in data["entries"]
+                    ):
+                        raise NameConflict(f"entry with id {entry.id!r} already exists")
                     data["entries"][i] = entry.to_dict()
                     return
+            if any(d["id"] == entry.id for d in data["entries"]):
+                raise NameConflict(f"entry with id {entry.id!r} already exists")
             data["entries"].append(entry.to_dict())
 
     def delete_by_name(self, name: str) -> Entry:
@@ -101,6 +270,22 @@ class MetadataStore:
         """Soft-delete records: [{'id', 'name', 'deleted_at'}]. Read-only copy."""
         return list(self._read().get("tombstones", []))
 
+    def snapshot(self) -> MetadataSnapshot:
+        """Read entries, tombstones, and their revision under one lock."""
+        ensure_private_dir(self.paths.root)
+        lock_fd = os.open(self._lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            lock_exclusive(lock_fd)
+            data = self._read()
+            return MetadataSnapshot(
+                entries=[Entry.from_dict(record) for record in data["entries"]],
+                tombstones=list(data.get("tombstones", [])),
+                revision=_metadata_revision(data),
+            )
+        finally:
+            unlock(lock_fd)
+            os.close(lock_fd)
+
     def apply_merge(self, entries: list[Entry], tombstones: list[dict]) -> None:
         """Atomically replace the whole metadata set (entries + tombstones).
 
@@ -112,6 +297,24 @@ class MetadataStore:
         with self._locked_write() as data:
             data["entries"] = [e.to_dict() for e in entries]
             data["tombstones"] = list(tombstones)
+
+    def prune_tombstones_before(self, horizon_ts: str) -> int:
+        """Remove expired tombstones without replacing concurrent entries."""
+        with self.transaction() as tx:
+            return tx.prune_tombstones_before(horizon_ts)
+
+    @contextmanager
+    def transaction(self) -> Iterator[MetadataTransaction]:
+        """Hold one metadata lock across an application-level mutation.
+
+        This is intentionally a small public facade over ``_locked_write`` so
+        callers never depend on the JSON representation. If the caller raises,
+        ``_locked_write`` skips its atomic commit.
+        """
+        with self._locked_write() as data:
+            tx = MetadataTransaction(data)
+            yield tx
+            tx._commit()
 
     # ---------- internal ----------
 

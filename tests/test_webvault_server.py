@@ -1,5 +1,6 @@
 """Web-vault proxy: auth, session-derived namespacing, read-only vault, hardened
 headers, and the never-decrypts invariant. Uses a fake S3 remote (no network)."""
+import base64
 import hashlib
 import http.cookiejar
 import http.server
@@ -166,7 +167,13 @@ def test_hardened_headers_and_csp(vaultsrv):
     assert h["X-Content-Type-Options"] == "nosniff"
     assert h["X-Frame-Options"] == "DENY"
     assert h["Cache-Control"] == "no-store"
-    assert "sha384-" in body.decode()              # SRI injected into the shell
+    shell = body.decode()
+    assert shell.count('integrity="sha384-') == 5  # every executable/style asset
+    assert shell.index('/static/theme.js') < shell.index('/static/app.css')
+    static = server_mod._STATIC
+    for asset in ("theme.js", "app.css", "vault.css", "kkcrypto.mjs", "vault.mjs"):
+        digest = base64.b64encode(hashlib.sha384((static / asset).read_bytes()).digest()).decode()
+        assert f'integrity="sha384-{digest}"' in shell
 
 
 def test_auth_params_does_not_leak_account_existence(vaultsrv):

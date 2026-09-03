@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from keys_keeper.agent_rules.canonical import (
     MCP_INSTRUCTIONS,
+    SKILL_BODY,
+    SKILL_REFERENCE_FILES,
     common_body,
 )
 
@@ -22,11 +24,10 @@ from keys_keeper.agent_rules.canonical import (
 # falls back to these.
 CLAUDE_SKILL_NAME = "keys-keeper"
 CLAUDE_SKILL_DESCRIPTION = (
-    "Securely save, retrieve, or reference API keys, SSH keys, server "
-    "credentials, and domain info via the `keys` CLI using workflows that "
-    "avoid returning plaintext in normal tool output. Use when the user mentions saving, getting, "
-    "injecting, or referencing secrets, API keys, tokens, SSH keys, server "
-    "addresses, or domain configs."
+    "Use saved secrets through the `keys` CLI without printing their values. "
+    "Activate for requests to save, rotate, retrieve, inject, resolve, copy, "
+    "sync, audit, or use a credential. Do not activate for generic discussion "
+    "of APIs, domains, servers, or configuration that does not require a secret."
 )
 
 # Cursor MDC frontmatter values. alwaysApply=true makes the rule fire on
@@ -69,8 +70,13 @@ def render_claude_skill_md(
         "\n"
         f"# {name}\n"
         "\n"
-        f"{common_body(include_examples_pointer=True)}"
+        f"{SKILL_BODY.rstrip()}\n"
     )
+
+
+def render_claude_reference_files() -> dict[str, str]:
+    """Generated on-demand references installed next to Claude SKILL.md."""
+    return dict(SKILL_REFERENCE_FILES)
 
 
 def render_cursor_mdc() -> str:

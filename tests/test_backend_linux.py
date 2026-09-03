@@ -112,6 +112,25 @@ def test_lookup_uses_resolved_absolute_executable(monkeypatch):
     assert os.path.basename(captured["command"][0]) == "secret-tool"
 
 
+def test_delete_propagates_secret_tool_failure(monkeypatch):
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = "keyring locked"
+
+    monkeypatch.setattr(
+        "keys_keeper.backend_linux.shutil.which",
+        lambda _name: "/usr/bin/secret-tool",
+    )
+    monkeypatch.setattr(
+        "keys_keeper.backend_linux.subprocess.run",
+        lambda *args, **kwargs: _R(),
+    )
+
+    with pytest.raises(KeychainError, match="failed to delete"):
+        SecretToolBackend(service="keys-keeper").delete("kk:test")
+
+
 def test_availability_false_when_secret_tool_absent(monkeypatch):
     monkeypatch.setattr("keys_keeper.backend_linux.shutil.which", lambda _n: None)
     assert secret_service_available() is False
