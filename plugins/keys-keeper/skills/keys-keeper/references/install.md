@@ -10,10 +10,10 @@ migrate existing secrets or restructure their setup unprompted.
    `which keys` / `Get-Command keys`). If it works → skip to step 4.
 2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
    silently. One line on what it is, then the platform command:
-   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.7'`
+   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.8'`
      (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
      `python3 -m pip install --user pipx && pipx ensurepath`)
-   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.7"`
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.7.8"`
    - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
 3. **After install, note that `keys` may need a fresh terminal** for PATH to
    pick it up. Re-check with `keys --version`.

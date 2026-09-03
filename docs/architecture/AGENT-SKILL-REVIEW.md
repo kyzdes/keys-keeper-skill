@@ -1,6 +1,6 @@
 # Agent experience and skill review
 
-Status: release review for `v0.7.7` of the agent workflows exercised during the
+Status: release review for `v0.7.8` of the agent workflows exercised during the
 Keychain, sync, admin, and installation work.
 
 ## What made agents unreliable

@@ -2,7 +2,7 @@
 
 Status: active in the current worktree; release status is tracked separately
 
-Baseline: `v0.7.7`
+Baseline: `v0.7.8`
 
 Target: truthful compatibility mode in 0.8, isolated broker mode in 1.0
 

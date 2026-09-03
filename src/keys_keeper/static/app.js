@@ -7,7 +7,7 @@
     document.documentElement.dataset.theme = next;
     document.querySelector('meta[name="theme-color"]')?.setAttribute(
       'content',
-      next === 'light' ? '#f3eee8' : '#120f0d',
+      next === 'light' ? '#f4f3f1' : '#0a0b0c',
     );
     const toggle = document.getElementById('theme-toggle');
     if (toggle) {

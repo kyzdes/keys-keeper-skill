@@ -10,6 +10,16 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ---
 
+## [0.7.8] — 2026-09-03
+
+### Changed
+
+- Aligned the admin and WebVault dark themes with the landing page's graphite surfaces, terracotta action color, semantic status colors, and restrained shadow system.
+- Replaced the warm beige daylight palette with a neutral, high-contrast light theme that preserves the same product identity without a green or sepia cast.
+- Added release contracts for landing-palette parity, browser chrome colors, quiet-text readability, and control-boundary contrast across both themes.
+
+---
+
 ## [0.7.7] — 2026-09-03
 
 ### Added
