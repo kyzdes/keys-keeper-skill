@@ -231,6 +231,31 @@ def test_cli_init_and_push_against_real_syncd(tmp_path, monkeypatch, capsys):
         assert "cli-secret" not in database.read_bytes().decode("latin-1")
 
 
+def test_cli_init_can_use_a_stored_admin_token_without_prompt(tmp_path, monkeypatch, capsys):
+    with running_syncd(tmp_path) as (endpoint, _database):
+        home = tmp_path / "cli-home"
+        home.mkdir()
+        backend = FakeBackend()
+        monkeypatch.setenv("KEYS_KEEPER_HOME", str(home))
+        monkeypatch.setattr("keys_keeper.cli_sync_vps.build_backend", lambda: backend)
+        holder = type(
+            "Holder", (), {"store": MetadataStore(Paths()), "backend": backend}
+        )()
+        add_entry(holder, "bootstrap-admin", "admin-token-for-e2e")
+
+        with patch("getpass.getpass", side_effect=AssertionError("must not prompt")):
+            assert cli.main(
+                [
+                    "sync", "vps", "init", "--endpoint", endpoint,
+                    "--recovery-file", str(tmp_path / "offline-recovery.json"),
+                    "--admin-token-entry", "bootstrap-admin",
+                ]
+            ) == 0
+
+        captured = capsys.readouterr()
+        assert "admin-token-for-e2e" not in captured.out + captured.err
+
+
 def test_complete_cli_device_enrollment(tmp_path, monkeypatch, capsys):
     with running_syncd(tmp_path) as (endpoint, _database):
         root_home = tmp_path / "root-home"

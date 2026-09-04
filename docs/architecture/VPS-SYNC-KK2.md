@@ -74,6 +74,20 @@ the command line. The recovery bundle contains a random recovery secret and is
 written as an owner-only file; move it offline. Device tokens, the VaultKey,
 and private signing/wrapping keys stay in the OS credential backend.
 
+For unattended setup, keep the bootstrap token in an existing Keys Keeper
+entry and pass only its non-sensitive name:
+
+```bash
+keys sync vps init \
+  --endpoint https://keys.example.net \
+  --recovery-file /path/on/offline-media/keys-keeper-recovery.json \
+  --admin-token-entry keys-keeper-syncd-admin
+```
+
+The CLI resolves that entry directly through the credential backend and keeps
+the value sealed until it builds the authenticated HTTPS request. The token is
+never placed in argv, stdout, or a temporary plaintext file.
+
 ## Add a device
 
 On the original root device:

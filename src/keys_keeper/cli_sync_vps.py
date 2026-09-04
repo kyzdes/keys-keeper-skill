@@ -110,6 +110,28 @@ def _require_vps_unconfigured(paths: Paths) -> None:
         raise VpsSyncError("VPS sync is already configured on this device")
 
 
+def _bootstrap_admin_token(args: argparse.Namespace, paths: Paths, backend):
+    """Return a sealed bootstrap token without putting it on the command line.
+
+    Interactive prompting remains the default.  Automation may instead name an
+    existing Keys Keeper entry; only the non-sensitive entry name is passed as
+    an argument and the value stays sealed until the HTTP client builds the
+    authenticated request.
+    """
+    entry_name = getattr(args, "admin_token_entry", None)
+    if entry_name:
+        store = MetadataStore(paths)
+        entry = store.get_by_id(entry_name) or store.get_by_name(entry_name)
+        if entry is None:
+            raise VpsSyncError(f"bootstrap admin token entry not found: {entry_name}")
+        return backend.get(entry.id), entry
+
+    admin_token = getpass.getpass("syncd bootstrap admin token: ")
+    if not admin_token:
+        raise VpsSyncError("bootstrap admin token is empty")
+    return Sealed(admin_token), None
+
+
 def _read_json_file(path: str, *, expected_type: str) -> dict[str, Any]:
     try:
         payload = json.loads(read_secure_text(Path(path).expanduser(), missing_ok=False).text)
@@ -172,10 +194,8 @@ def cmd_vps_init(args: argparse.Namespace) -> int:
     backend = build_backend()
     identity = generate_device_identity()
     device_token = new_device_token()
-    admin_token = getpass.getpass("syncd bootstrap admin token: ")
-    if not admin_token:
-        raise VpsSyncError("bootstrap admin token is empty")
-    bootstrap = VpsSyncClient(base_url=args.endpoint, token=Sealed(admin_token), proxy=args.proxy)
+    admin_token, admin_entry = _bootstrap_admin_token(args, paths, backend)
+    bootstrap = VpsSyncClient(base_url=args.endpoint, token=admin_token, proxy=args.proxy)
     result = bootstrap.create_vault(
         device_token=Sealed(device_token),
         sign_public_key=_b64(identity.signing_public_bytes),
@@ -223,6 +243,13 @@ def cmd_vps_init(args: argparse.Namespace) -> int:
     ):
         save_vps_config(config, paths)
     AuditLog(paths).record(op="sync.vps.init", name="<all>", id_="-", file_target=args.endpoint)
+    if admin_entry is not None:
+        AuditLog(paths).record(
+            op="sync.vps.bootstrap",
+            name=admin_entry.name,
+            id_=admin_entry.id,
+            file_target=args.endpoint,
+        )
     print(f"VPS sync initialized for device {device_id}")
     print(f"recovery bundle written to {Path(args.recovery_file).expanduser()}")
     return 0
@@ -627,6 +654,10 @@ def register_vps_sync(subparsers) -> None:
     init.add_argument("--endpoint", required=True)
     init.add_argument("--recovery-file", required=True)
     init.add_argument("--proxy", default="direct")
+    init.add_argument(
+        "--admin-token-entry",
+        help="read the bootstrap token from an existing Keys Keeper entry",
+    )
     init.set_defaults(func=cmd_vps_init)
 
     for name, handler, help_text in (
