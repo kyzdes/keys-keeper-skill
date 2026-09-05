@@ -130,6 +130,18 @@ def test_quiet_text_and_primary_actions_pass_in_both_themes():
         assert _contrast(tokens["accent"], tokens["accent-ink"]) >= 4.5
 
 
+def test_type_icons_use_readable_ink_and_theme_matched_backgrounds():
+    css = ADMIN_CSS.read_text(encoding="utf-8")
+    roles = ("type-api", "type-ssh", "type-server", "type-domain", "type-note")
+    for selector in (":root", ':root[data-theme="light"]'):
+        tokens = _tokens(css, selector)
+        for role in roles:
+            background = tokens[f"{role}-icon-bg"]
+            ink = tokens[f"{role}-icon-ink"]
+            assert _contrast(ink, background) >= 4.5
+            assert _contrast(background, tokens["surface"]) >= 1.2
+
+
 def test_browser_theme_color_tracks_theme_canvas_tokens():
     source = json.loads(TOKEN_SOURCE.read_text(encoding="utf-8"))
     dark = source["themes"]["evening"]["tokens"]["bg"]

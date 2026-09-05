@@ -40,11 +40,11 @@
   }
 
   const TYPE_META = {
-    api_key: { short: 'AP', color: 'var(--type-api)' },
-    ssh_key: { short: 'SSH', color: 'var(--type-ssh)' },
-    server:  { short: 'SV', color: 'var(--type-server)' },
-    domain:  { short: 'DM', color: 'var(--type-domain)' },
-    note:    { short: 'NT', color: 'var(--type-note)' },
+    api_key: { short: 'AP', background: 'var(--type-api-icon-bg)', ink: 'var(--type-api-icon-ink)' },
+    ssh_key: { short: 'SSH', background: 'var(--type-ssh-icon-bg)', ink: 'var(--type-ssh-icon-ink)' },
+    server:  { short: 'SV', background: 'var(--type-server-icon-bg)', ink: 'var(--type-server-icon-ink)' },
+    domain:  { short: 'DM', background: 'var(--type-domain-icon-bg)', ink: 'var(--type-domain-icon-ink)' },
+    note:    { short: 'NT', background: 'var(--type-note-icon-bg)', ink: 'var(--type-note-icon-ink)' },
   };
 
   const state = {
@@ -150,7 +150,7 @@
   }
 
   function rowEl(e) {
-    const meta = TYPE_META[e.type] || { short: '?', color: 'var(--text-3)' };
+    const meta = TYPE_META[e.type] || { short: '?', background: 'var(--surface-2)', ink: 'var(--text-3)' };
     const row = el('div', {
       class: 'entry-row unified',
       tabindex: '0',
@@ -170,7 +170,7 @@
       })(),
       el('span', {
         class: 'type-icon',
-        style: `background:${meta.color}`,
+        style: `background:${meta.background};color:${meta.ink}`,
       }, meta.short),
       el('span', { class: 'type-label-mono' }, e.type),
       (() => {
@@ -638,7 +638,7 @@
         onclick: () => { paletteClose(); location.href = `/entry/${encodeURIComponent(e.id)}`; },
       });
       row.append(
-        el('span', { class: 'type-icon', style: `background:${meta.color};color:var(--bg);font-weight:700;display:inline-flex;align-items:center;justify-content:center;border-radius:4px` }, meta.short || '?'),
+        el('span', { class: 'type-icon', style: `background:${meta.background || 'var(--surface-2)'};color:${meta.ink || 'var(--text-3)'};font-weight:700;display:inline-flex;align-items:center;justify-content:center;border-radius:4px` }, meta.short || '?'),
         el('span', { class: 'name', style: 'flex:1' }, e.name),
         el('span', { style: 'color:var(--text-3);font-size:11px' }, e.type),
       );
