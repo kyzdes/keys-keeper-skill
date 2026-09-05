@@ -59,11 +59,11 @@
   }
 
   const TYPE_META = {
-    api_key: { short: 'AP', color: 'var(--type-api)' },
-    ssh_key: { short: 'SSH', color: 'var(--type-ssh)' },
-    server:  { short: 'SV', color: 'var(--type-server)' },
-    domain:  { short: 'DM', color: 'var(--type-domain)' },
-    note:    { short: 'NT', color: 'var(--type-note)' },
+    api_key: { short: 'AP', background: 'var(--type-api-icon-bg)', ink: 'var(--type-api-icon-ink)' },
+    ssh_key: { short: 'SSH', background: 'var(--type-ssh-icon-bg)', ink: 'var(--type-ssh-icon-ink)' },
+    server:  { short: 'SV', background: 'var(--type-server-icon-bg)', ink: 'var(--type-server-icon-ink)' },
+    domain:  { short: 'DM', background: 'var(--type-domain-icon-bg)', ink: 'var(--type-domain-icon-ink)' },
+    note:    { short: 'NT', background: 'var(--type-note-icon-bg)', ink: 'var(--type-note-icon-ink)' },
   };
 
   const state = {
@@ -71,6 +71,8 @@
     activeTags: new Set(),
     search: '',
     selected: new Set(),
+    tagSort: 'popular',
+    tagQuery: '',
   };
 
   function relTime(iso) {
@@ -167,7 +169,7 @@
   }
 
   function rowEl(e) {
-    const meta = TYPE_META[e.type] || { short: '?', color: 'var(--text-3)' };
+    const meta = TYPE_META[e.type] || { short: '?', background: 'var(--surface-2)', ink: 'var(--text-3)' };
     const row = el('div', {
       class: 'entry-row unified',
       tabindex: '0',
@@ -187,7 +189,7 @@
       })(),
       el('span', {
         class: 'type-icon',
-        style: `background:${meta.color}`,
+        style: `background:${meta.background};color:${meta.ink}`,
       }, meta.short),
       el('span', { class: 'type-label-mono' }, e.type),
       (() => {
@@ -372,7 +374,7 @@
     }
     setDeletionBusy(false);
     if (document.getElementById('entries-mount')) {
-      renderTagRail();
+      renderTagDirectory();
       render();
     }
     if (deletion.pending.length) {
@@ -406,78 +408,134 @@
     requestDelete(state.entries.filter(e => state.selected.has(e.id)));
   });
 
-  // Fade the right edge only while there is more to scroll to, so the last chip
-  // is never left dimmed once you reach the end, and a rail that fits shows no fade.
-  function updateRailFade(rail) {
-    const overflow = rail.scrollWidth - rail.clientWidth > 1;
-    const atEnd = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 1;
-    rail.classList.toggle('has-overflow', overflow && !atEnd);
+  const tagDialog = document.getElementById('tag-dialog');
+  let tagDialogOpener = null;
+
+  function tagStats() {
+    const stats = new Map();
+    state.entries.forEach(entry => {
+      new Set(entry.tags || []).forEach(tag => stats.set(tag, (stats.get(tag) || 0) + 1));
+    });
+    state.activeTags.forEach(tag => { if (!stats.has(tag)) state.activeTags.delete(tag); });
+    return [...stats].map(([name, count]) => ({ name, count }));
   }
 
-  function renderTagRail() {
-    const rail = document.getElementById('tag-rail');
-    if (!rail) return;
-
-    // Bind once (guarded): vertical wheel -> horizontal scroll, but only while the
-    // rail overflows so a short rail lets the page scroll normally; scroll/resize
-    // keep the edge-fade in sync.
-    if (!rail.dataset.railBound) {
-      rail.addEventListener('wheel', (e) => {
-        if (!e.deltaY || rail.scrollWidth <= rail.clientWidth) return;
-        e.preventDefault();
-        rail.scrollLeft += e.deltaY;
-      }, { passive: false });
-      rail.addEventListener('scroll', () => updateRailFade(rail), { passive: true });
-      window.addEventListener('resize', () => updateRailFade(rail));
-      rail.dataset.railBound = '1';
-    }
-
-    const allTags = new Set();
-    state.entries.forEach(e => (e.tags || []).forEach(t => allTags.add(t)));
-    state.activeTags.forEach(tag => { if (!allTags.has(tag)) state.activeTags.delete(tag); });
-    rail.querySelectorAll('.tag-chip').forEach(n => n.remove());
-
-    // Active chips first -> they sit flush against the pinned FILTER label and
-    // never scroll out of view; everything else stays alphabetical.
-    const tags = [...allTags].sort((a, b) => {
-      const aOn = state.activeTags.has(a), bOn = state.activeTags.has(b);
-      if (aOn !== bOn) return aOn ? -1 : 1;
-      return a.localeCompare(b);
+  function orderedTags(sort = state.tagSort) {
+    return tagStats().sort((a, b) => {
+      if (sort === 'alpha') return a.name.localeCompare(b.name);
+      return b.count - a.count || a.name.localeCompare(b.name);
     });
-
-    const toggle = (t) => {
-      if (state.activeTags.has(t)) state.activeTags.delete(t);
-      else state.activeTags.add(t);
-      renderTagRail();
-      rail.scrollLeft = 0;       // snap to front so the now-leading active chips are visible
-      updateRailFade(rail);
-      render();
-    };
-
-    tags.forEach(t => {
-      const on = state.activeTags.has(t);
-      const chip = el('button', {
-        class: 'tag-chip' + (on ? ' active' : ''),
-        type: 'button',
-        'aria-pressed': on ? 'true' : 'false',
-        onclick: () => toggle(t),
-      }, t);
-      // el() stringifies unknown attrs via setAttribute, so bind keydown as a property.
-      chip.onkeydown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(t); }
-      };
-      rail.append(chip);
-    });
-
-    updateRailFade(rail);
   }
+
+  function toggleTag(name) {
+    if (state.activeTags.has(name)) state.activeTags.delete(name);
+    else state.activeTags.add(name);
+    renderTagDirectory();
+    render();
+  }
+
+  function tagOption(tag, className) {
+    const checked = state.activeTags.has(tag.name);
+    const input = el('input', {
+      type: 'checkbox',
+      'aria-label': `Filter by ${tag.name}`,
+    });
+    input.checked = checked;
+    input.onchange = () => toggleTag(tag.name);
+    return el(
+      'label',
+      { class: `${className}${checked ? ' active' : ''}` },
+      input,
+      el('span', { class: 'tag-option-name', title: tag.name }, tag.name),
+      el('span', { class: 'tag-option-count' }, `${tag.count}`),
+    );
+  }
+
+  function renderTagDirectory() {
+    const popularMount = document.getElementById('tag-popular-list');
+    if (!popularMount) return;
+    const tags = orderedTags('popular');
+    const popular = tags.slice(0, 4);
+    document.getElementById('tag-directory-total').textContent = tags.length ? `(${tags.length})` : '';
+    popularMount.replaceChildren(...popular.map(tag => tagOption(tag, 'tag-popular-item')));
+    if (!popular.length) popularMount.append(el('p', { class: 'tag-directory-empty' }, 'Tags appear here when entries are labeled.'));
+
+    const selectedCount = state.activeTags.size;
+    document.getElementById('tag-filter-summary').hidden = selectedCount === 0;
+    document.getElementById('tag-filter-count').textContent = `${selectedCount} tag${selectedCount === 1 ? '' : 's'} selected`;
+    const activeCount = document.getElementById('tag-directory-active-count');
+    activeCount.hidden = selectedCount === 0;
+    activeCount.textContent = selectedCount ? `${selectedCount}` : '';
+    document.getElementById('tag-directory-open').setAttribute(
+      'aria-label',
+      selectedCount ? `All tags. ${selectedCount} selected` : 'All tags',
+    );
+
+    if (!tagDialog?.open) return;
+    const query = state.tagQuery.trim().toLocaleLowerCase();
+    const dialogTags = orderedTags().filter(tag => tag.name.toLocaleLowerCase().includes(query));
+    const list = document.getElementById('tag-directory-list');
+    list.replaceChildren(...dialogTags.map(tag => tagOption(tag, 'tag-directory-row')));
+    if (!dialogTags.length) list.append(el('p', { class: 'tag-directory-empty' }, 'No tags match this search.'));
+    const overflowHint = document.getElementById('tag-directory-overflow');
+    const firstRow = list.querySelector('.tag-directory-row');
+    const visibleRows = firstRow ? Math.floor((list.clientHeight + 1) / firstRow.getBoundingClientRect().height) : 0;
+    const remainingTags = Math.max(0, dialogTags.length - visibleRows);
+    overflowHint.hidden = remainingTags === 0;
+    overflowHint.textContent = remainingTags ? `Scroll for ${remainingTags} more` : '';
+    document.getElementById('tag-dialog-count').textContent = `${dialogTags.length} of ${tags.length}`;
+    document.querySelectorAll('[data-tag-sort]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.tagSort === state.tagSort));
+    });
+  }
+
+  function openTagDirectory() {
+    if (tagDialog?.open) return;
+    tagDialogOpener = document.activeElement;
+    state.tagQuery = '';
+    document.getElementById('tag-dialog-search').value = '';
+    tagDialog.showModal();
+    renderTagDirectory();
+    document.getElementById('tag-dialog-search').focus();
+  }
+
+  function closeTagDirectory() {
+    if (tagDialog?.open) tagDialog.close();
+  }
+
+  document.getElementById('tag-directory-open')?.addEventListener('click', openTagDirectory);
+  document.getElementById('clear-tag-filters')?.addEventListener('click', () => {
+    state.activeTags.clear();
+    renderTagDirectory();
+    render();
+  });
+  document.getElementById('tag-dialog-close')?.addEventListener('click', closeTagDirectory);
+  document.getElementById('tag-dialog-done')?.addEventListener('click', closeTagDirectory);
+  document.getElementById('tag-dialog-clear')?.addEventListener('click', () => {
+    state.activeTags.clear();
+    renderTagDirectory();
+    render();
+  });
+  document.getElementById('tag-dialog-search')?.addEventListener('input', event => {
+    state.tagQuery = event.target.value;
+    renderTagDirectory();
+  });
+  document.querySelectorAll('[data-tag-sort]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.tagSort = button.dataset.tagSort;
+      renderTagDirectory();
+    });
+  });
+  tagDialog?.addEventListener('close', () => {
+    if (tagDialogOpener?.isConnected) tagDialogOpener.focus();
+  });
 
   async function load() {
     const data = await api('/api/entries');
     state.entries = data.entries;
     const ids = new Set(state.entries.map(e => e.id));
     state.selected.forEach(id => { if (!ids.has(id)) state.selected.delete(id); });
-    renderTagRail();
+    renderTagDirectory();
     render();
     loadEnvPanel().catch(() => { /* panel is best-effort; never blocks dashboard */ });
   }
@@ -536,6 +594,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (deleteDialog.open) return;
+    if (tagDialog?.open) return;
     if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       e.preventDefault();
       document.getElementById('search')?.focus();
@@ -546,7 +605,7 @@
         s.value = '';
         state.search = '';
         state.activeTags.clear();
-        renderTagRail();
+        renderTagDirectory();
         render();
       }
     }
@@ -599,7 +658,7 @@
         onclick: () => { paletteClose(); location.href = `/entry/${encodeURIComponent(e.id)}`; },
       });
       row.append(
-        el('span', { class: 'type-icon', style: `background:${meta.color};color:var(--bg);font-weight:700;display:inline-flex;align-items:center;justify-content:center;border-radius:4px` }, meta.short || '?'),
+        el('span', { class: 'type-icon', style: `background:${meta.background || 'var(--surface-2)'};color:${meta.ink || 'var(--text-3)'};font-weight:700;display:inline-flex;align-items:center;justify-content:center;border-radius:4px` }, meta.short || '?'),
         el('span', { class: 'name', style: 'flex:1' }, e.name),
         el('span', { style: 'color:var(--text-3);font-size:11px' }, e.type),
       );

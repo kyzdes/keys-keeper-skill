@@ -61,6 +61,20 @@ def test_dashboard_includes_search_and_palette_trigger(admin):
     assert "Names only · values stay in the backend" not in body
 
 
+def test_dashboard_uses_compact_tag_directory(admin):
+    body = _get(admin, "/")
+    assert 'class="dash-toolbar dash-filterbar"' in body
+    assert 'id="tag-directory"' in body
+    assert 'aria-label="Popular tag filters"' in body
+    assert 'id="tag-directory-open"' in body
+    assert 'id="tag-directory-active-count"' in body
+    assert 'id="tag-dialog"' in body
+    assert 'id="tag-directory-overflow"' in body
+    assert 'tag-directory-title' not in body
+    assert 'tag-directory-caption' not in body
+    assert "tag-rail" not in body
+
+
 def test_app_js_fetches_entries_with_token(admin):
     js = _get(admin, "/static/app.js")
     assert "fetch" in js or "XMLHttpRequest" in js

@@ -1,15 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="dash-toolbar">
+<div class="dash-toolbar dash-filterbar">
   <div class="search-input" id="search-shell">
     <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13 13 3.5 3.5"/></svg>
     <input id="search" aria-label="Search vault" placeholder="Search names, tags, and notes">
     <span class="kbd">/</span>
   </div>
-</div>
-<div class="tag-rail" id="tag-rail">
-  <span class="label">Tags</span>
-  {# tags rendered dynamically by JS once entries load #}
+  <section class="tag-directory" id="tag-directory" aria-label="Popular tag filters">
+  <div class="tag-popular-list" id="tag-popular-list" aria-label="Most used tag filters"></div>
+  <div class="tag-filter-summary" id="tag-filter-summary" role="status" hidden>
+    <span id="tag-filter-count"></span>
+    <button class="text-button" id="clear-tag-filters" type="button">Clear filters</button>
+  </div>
+  </section>
+  <button class="btn btn-ghost btn-sm tag-directory-open" id="tag-directory-open" type="button">
+    <span>All tags</span>
+    <span class="tag-directory-total" id="tag-directory-total"></span>
+    <span class="tag-directory-active-count" id="tag-directory-active-count" aria-hidden="true" hidden></span>
+  </button>
 </div>
 <div class="selection-bar" id="selection-bar" hidden>
   <div class="selection-summary" role="status">
@@ -45,4 +53,32 @@
   <input class="env-search" id="env-search" placeholder="filter env names · type to search">
   <div class="env-list" id="env-list"></div>
 </details>
+
+<dialog class="modal tag-dialog" id="tag-dialog" aria-labelledby="tag-dialog-title">
+  <div class="modal-header">
+    <div>
+      <h2 class="modal-title" id="tag-dialog-title">All tags</h2>
+      <p class="tag-dialog-subtitle" id="tag-dialog-subtitle">Selections apply immediately</p>
+    </div>
+    <button class="icon-btn" id="tag-dialog-close" type="button" aria-label="Close all tags">
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+    </button>
+  </div>
+  <div class="modal-body tag-dialog-body">
+    <input class="text-input tag-dialog-search" id="tag-dialog-search" type="search" autocomplete="off" placeholder="Search tags" aria-label="Search all tags">
+    <div class="tag-dialog-controls">
+      <div class="tag-sort" role="group" aria-label="Sort tags">
+        <button class="tag-sort-option" data-tag-sort="popular" type="button" aria-pressed="true">Most used</button>
+        <button class="tag-sort-option" data-tag-sort="alpha" type="button" aria-pressed="false">A–Z</button>
+      </div>
+      <span class="tag-dialog-count" id="tag-dialog-count" aria-live="polite"></span>
+    </div>
+    <div class="tag-directory-list" id="tag-directory-list" aria-label="All tag filters"></div>
+    <p class="tag-directory-overflow" id="tag-directory-overflow" aria-live="polite" hidden></p>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost btn-sm" id="tag-dialog-clear" type="button">Clear filters</button>
+    <button class="btn btn-primary btn-sm" id="tag-dialog-done" type="button">Done</button>
+  </div>
+</dialog>
 {% endblock %}
