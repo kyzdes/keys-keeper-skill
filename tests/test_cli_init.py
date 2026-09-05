@@ -174,6 +174,50 @@ def test_codex_writes_agents_md(chdir, capsys):
     assert "AGENTS.md is auto-loaded by Codex CLI" in captured.err
 
 
+def test_codex_skill_installs_to_stable_personal_path(
+    chdir, tmp_path, monkeypatch, capsys
+):
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    rc = _run("init", "codex-skill")
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    skill_root = codex_home / "skills" / "keys-keeper"
+    assert (skill_root / "SKILL.md").exists()
+    assert {path.name for path in (skill_root / "references").iterdir()} == set(
+        render.render_claude_reference_files()
+    )
+    assert "outside the versioned plugin cache" in captured.err
+
+
+def test_codex_skill_check_and_force_refresh(chdir, tmp_path, monkeypatch, capsys):
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    target = codex_home / "skills" / "keys-keeper" / "SKILL.md"
+
+    assert _run("init", "codex-skill") == 0
+    capsys.readouterr()
+    assert _run("init", "codex-skill", "--check") == 0
+    capsys.readouterr()
+
+    target.write_text("stale\n", encoding="utf-8", newline="\n")
+    assert _run("init", "codex-skill", "--force") == 0
+    assert "Storage CLI is `keys`" in target.read_text(encoding="utf-8")
+
+
+def test_codex_skill_explicit_out_overrides_codex_home(
+    chdir, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ignored"))
+    target = tmp_path / "custom" / "SKILL.md"
+
+    assert _run("init", "codex-skill", "--out", str(target)) == 0
+    assert target.exists()
+    assert not (tmp_path / "ignored").exists()
+
+
 # ---------------------------------------------------------------------------
 # --check drift detection
 # ---------------------------------------------------------------------------

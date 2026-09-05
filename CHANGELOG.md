@@ -4,14 +4,57 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace updates are explicit by default; mutable-HEAD SessionStart updates remain an opt-in compatibility mode.
 
----
-
-## [Unreleased]
+## [0.9.0] — 2026-09-05
 
 ### Added
 
-- Added per-row deletion and multi-select deletion to the local admin dashboard, including selection across search/tag filters and a visible-entry select-all control.
-- Replaced browser deletion prompts with a themed, keyboard-accessible confirmation showing entry names, explicit linked-entry consent, progress, and retry of remaining entries after a partial failure.
+- KK3 project-scoped folders, projects, environments and explicit shared-entry
+  assignments in the CLI and Admin UI, with metadata-only previews and device
+  access summaries.
+- S3-free KK2 multi-device sync through a private `keys-keeper-syncd` service:
+  encrypted snapshots, Ed25519-signed hash-chain commits, SQLite CAS,
+  root-key pinning, one-time device enrollment, X25519 VaultKey wrapping, and a
+  separate offline recovery bundle.
+- A hardened stdlib HTTP client, the `keys-keeper-syncd` process entrypoint, a
+  non-root container definition, and VPS deployment/threat-model guidance.
+- Independent encrypted project profiles, read/create-only workers, authenticated
+  enrollment, immutable submission queues, idempotent master import and scoped
+  publication through a bounded `/v2/` relay API.
+- Durable local revocation, epoch rekey, encrypted mutation recovery, verified
+  migration backups, recovery-only restore and fresh-authority takeover.
+- `keys project-sync watch` for background delivery and `keys-keeper-syncd backup`
+  for consistent relay backups. Generated agent instructions describe these flows.
+- `keys init codex-skill`, which installs Keys Keeper into Codex's stable
+  personal skill directory instead of a versioned plugin-cache path.
+- Per-row and multi-select deletion in the local admin dashboard, including
+  linked-entry consent, progress, and retry after a partial failure.
+
+### Security
+
+- Project selection reaches CLI/API/sinks without a master-backend fallback.
+  Legacy full-vault writers refuse the migrated catalog. Read/create permission
+  is enforced independently by the worker service, master importer and relay.
+- VPS sync requires HTTPS outside loopback, refuses redirects, bounds all wire
+  payloads, and fails closed on rollback, pointer swap, unknown-device, or
+  invalid membership/signature evidence. Device enrollment claims are idempotent
+  across lost responses; root-only device administration is enforced by the CLI
+  and sync service.
+- Custom KK3 wire composition has cross-author internal review and independent
+  byte tests; no external audit or production rollout is claimed.
+
+### Fixed
+
+- Interrupted imports revalidate reference identities, scope assignments and graph
+  cycles inside the metadata transaction; older journals without pinned reference
+  identities fail closed.
+- Worker enrollment refuses pre-existing master artifacts, and direct master
+  backend access is rejected for worker roots before any native backend opens.
+- Restore and takeover serialize all recovery-root mutations. Activation and
+  replay require the exact authenticated backup identity, including after a crash.
+- Completed outbox history no longer permanently reserves unused names. The UI
+  distinguishes pending, unavailable and conflicted delivery states and identifies
+  the exact device and scope before revocation.
+- `python -m keys_keeper` propagates command failures to the process exit code.
 
 ---
 
@@ -356,7 +399,8 @@ Initial public release. macOS-only.
 
 ---
 
-[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.9.0
 [0.5.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.5.0
 [0.4.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.1
 [0.4.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.0

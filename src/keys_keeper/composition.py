@@ -11,8 +11,14 @@ from __future__ import annotations
 import os
 import sys
 from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from keys_keeper.backend import KeychainBackend, MacOSKeychainBackend
+from keys_keeper.paths import Paths
+
+if TYPE_CHECKING:
+    from keys_keeper.profiles import ProfileContext
 
 
 class AccessContext(str, Enum):
@@ -24,18 +30,41 @@ class AccessContext(str, Enum):
 
 
 def build_backend(
-    *, access: AccessContext = AccessContext.INTERACTIVE,
+    *,
+    access: AccessContext = AccessContext.INTERACTIVE,
+    paths: Paths | None = None,
+    service: str | None = None,
+    profile: "ProfileContext | None" = None,
+    password_file: Path | None = None,
+    password_fd: int | None = None,
 ) -> KeychainBackend:
     try:
         access = AccessContext(access)
     except ValueError as ex:
         raise ValueError(f"unsupported backend access context: {access!r}") from ex
-    service = os.environ.get("KEYS_KEEPER_TEST_SERVICE", "keys-keeper")
+    if profile is not None:
+        if paths is not None or service is not None:
+            raise ValueError("an explicit profile owns its paths and backend service")
+        paths = profile.paths
+        service = profile.backend_service
+        if profile.is_replica and password_file is None and password_fd is None:
+            password_file = profile.paths.backend_password_file
+        allow_env_password = profile.is_master
+    else:
+        paths = paths or Paths()
+        service = service or os.environ.get("KEYS_KEEPER_TEST_SERVICE", "keys-keeper")
+        allow_env_password = password_file is None and password_fd is None
     if sys.platform == "win32":
         from keys_keeper.backend_windows import WindowsCredentialBackend
         return WindowsCredentialBackend(service=service)
     if sys.platform.startswith("linux"):
-        return _build_linux_backend(service)
+        return _build_linux_backend(
+            service,
+            paths=paths,
+            password_file=password_file,
+            password_fd=password_fd,
+            allow_env_password=allow_env_password,
+        )
     keychain_path = os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN")
     if keychain_path is not None:
         # Tests must never open a login/UI prompt, including preparation tests.
@@ -47,7 +76,7 @@ def build_backend(
         allow_interaction = True
     elif access is AccessContext.INTERACTIVE:
         from keys_keeper.keychain_config import interaction_allowed
-        allow_interaction = interaction_allowed()
+        allow_interaction = interaction_allowed(paths)
     else:
         # Explicit background access must never open a login/UI prompt, even
         # when the persistent policy allows interactive commands to do so.
@@ -66,7 +95,14 @@ def build_backend(
     )
 
 
-def _build_linux_backend(service: str) -> KeychainBackend:
+def _build_linux_backend(
+    service: str,
+    *,
+    paths: Paths,
+    password_file: Path | None,
+    password_fd: int | None,
+    allow_env_password: bool,
+) -> KeychainBackend:
     """Pick the Linux backend.
 
     Explicit `KEYS_KEEPER_BACKEND=secret-tool|file` wins. Otherwise auto-detect:
@@ -76,7 +112,13 @@ def _build_linux_backend(service: str) -> KeychainBackend:
     choice = (os.environ.get("KEYS_KEEPER_BACKEND") or "").strip().lower()
     if choice == "file":
         from keys_keeper.backend_file import EncryptedFileBackend
-        return EncryptedFileBackend(service=service)
+        return EncryptedFileBackend(
+            service=service,
+            paths=paths,
+            password_file=password_file,
+            password_fd=password_fd,
+            allow_env_password=allow_env_password,
+        )
     if choice in ("secret-tool", "secret_service", "keyring"):
         from keys_keeper.backend_linux import SecretToolBackend
         return SecretToolBackend(service=service)
@@ -90,4 +132,10 @@ def _build_linux_backend(service: str) -> KeychainBackend:
     if secret_service_available(service):
         return SecretToolBackend(service=service)
     from keys_keeper.backend_file import EncryptedFileBackend
-    return EncryptedFileBackend(service=service)
+    return EncryptedFileBackend(
+        service=service,
+        paths=paths,
+        password_file=password_file,
+        password_fd=password_fd,
+        allow_env_password=allow_env_password,
+    )

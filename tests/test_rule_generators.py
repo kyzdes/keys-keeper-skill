@@ -68,6 +68,14 @@ def test_renderers_are_deterministic():
         assert a == b, f"{filename}: render is non-deterministic"
 
 
+def test_claude_sync_reference_routes_project_profiles_and_recovery():
+    sync = render.render_claude_reference_files()["sync.md"]
+    assert "keys --profile PROFILE_UUID" in sync
+    assert "keys project-sync init --scope SCOPE" in sync
+    assert "selected replica profile" in sync
+    assert "project-sync restore" in sync
+
+
 def test_no_plaintext_markers_leak_into_single_file_renders():
     """Marker tokens are appended by the writer, not embedded in renderers'
     output. If they appear in a single-file render (claude/cursor/cline/generic),

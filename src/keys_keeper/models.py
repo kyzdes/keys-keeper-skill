@@ -28,10 +28,11 @@ _SSH_USER_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,63}$")
 _SSH_HOST_RE = re.compile(r"^[A-Za-z0-9:\[][A-Za-z0-9._:\[\]%-]{0,252}$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
-_ENTRY_KEYS = {
+_LEGACY_ENTRY_KEYS = {
     "id", "name", "type", "fields", "tags", "note", "refs",
     "created_at", "updated_at",
 }
+_PROJECT_ENTRY_KEYS = {"folder_id", "distribution", "provenance", "content_revision"}
 _SECRET_KEYS = {"_secret", "_secret_passphrase"}
 _MAX_ENTRY_RECORDS = 10_000
 _MAX_TOMBSTONES = 20_000
@@ -77,6 +78,39 @@ def validate_entry_id(id_: str) -> None:
         raise ValidationError("id must have the form kk:<uuid4>") from ex
     if parsed.version != 4 or str(parsed) != raw:
         raise ValidationError("id must contain a canonical lowercase UUIDv4")
+
+
+def _validate_uuid4(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationError(f"{label} must be a UUID string")
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as ex:
+        raise ValidationError(f"{label} must be a UUID string") from ex
+    if parsed.version != 4 or str(parsed) != value:
+        raise ValidationError(f"{label} must be a canonical lowercase UUIDv4")
+    return value
+
+
+def _validate_provenance(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValidationError("provenance must be an object")
+    source = value.get("source")
+    if source not in {"local", "legacy_migration", "project_submission"}:
+        raise ValidationError("provenance source is invalid")
+    allowed = {"source"}
+    if source == "project_submission":
+        allowed |= {"scope_id", "device_id", "grant_id", "request_id"}
+        required = {"source", "scope_id", "device_id", "grant_id", "request_id"}
+        if set(value) != required:
+            raise ValidationError("project_submission provenance fields are invalid")
+        for key in sorted(required - {"source"}):
+            _validate_uuid4(value[key], f"provenance {key}")
+    elif set(value) != allowed:
+        raise ValidationError("provenance fields are invalid")
+    return dict(value)
 
 
 def _validate_text(
@@ -202,9 +236,16 @@ class Entry:
     refs: list[dict[str, str]]
     created_at: str
     updated_at: str
+    # These fields are absent from legacy records.  ``to_dict`` retains the
+    # legacy byte shape while they have their safe defaults; schema-v3 store
+    # validation requires their explicit persisted form.
+    folder_id: str | None = None
+    distribution: str = "local_only"
+    provenance: dict[str, Any] | None = None
+    content_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        record = {
             "id": self.id,
             "name": self.name,
             "type": self.type.value,
@@ -215,6 +256,15 @@ class Entry:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.folder_id is not None:
+            record["folder_id"] = self.folder_id
+        if self.distribution != "local_only":
+            record["distribution"] = self.distribution
+        if self.provenance is not None:
+            record["provenance"] = self.provenance
+        if self.content_revision is not None:
+            record["content_revision"] = self.content_revision
+        return record
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Entry:
@@ -228,6 +278,10 @@ class Entry:
             refs=list(d.get("refs", [])),
             created_at=d["created_at"],
             updated_at=d["updated_at"],
+            folder_id=d.get("folder_id"),
+            distribution=d.get("distribution", "local_only"),
+            provenance=dict(d["provenance"]) if d.get("provenance") is not None else None,
+            content_revision=d.get("content_revision"),
         )
 
     @classmethod
@@ -236,13 +290,16 @@ class Entry:
         d: Any,
         *,
         allow_secret_fields: bool = False,
+        allow_project_fields: bool = False,
     ) -> Entry:
         """Parse an import/sync record before it can mutate local state."""
         if not isinstance(d, dict):
             raise ValidationError("entry record must be an object")
         if any(not isinstance(key, str) for key in d):
             raise ValidationError("entry field names must be strings")
-        allowed = _ENTRY_KEYS | (_SECRET_KEYS if allow_secret_fields else set())
+        allowed = _LEGACY_ENTRY_KEYS | (_SECRET_KEYS if allow_secret_fields else set())
+        if allow_project_fields:
+            allowed |= _PROJECT_ENTRY_KEYS
         unknown = set(d) - allowed
         if unknown:
             raise ValidationError(f"entry contains unknown fields: {sorted(unknown)}")
@@ -274,6 +331,16 @@ class Entry:
         refs = _validate_refs(d.get("refs", []))
         created_at = _validate_timestamp(d["created_at"], "created_at")
         updated_at = _validate_timestamp(d["updated_at"], "updated_at")
+        folder_id = d.get("folder_id")
+        if folder_id is not None:
+            _validate_uuid4(folder_id, "folder_id")
+        distribution = d.get("distribution", "local_only")
+        if distribution not in {"local_only", "project_allowed"}:
+            raise ValidationError("distribution must be local_only or project_allowed")
+        provenance = _validate_provenance(d.get("provenance"))
+        content_revision = d.get("content_revision")
+        if content_revision is not None:
+            _validate_uuid4(content_revision, "content_revision")
 
         if allow_secret_fields:
             for key in _SECRET_KEYS:
@@ -296,6 +363,10 @@ class Entry:
             refs=refs,
             created_at=created_at,
             updated_at=updated_at,
+            folder_id=folder_id,
+            distribution=distribution,
+            provenance=provenance,
+            content_revision=content_revision,
         )
 
     @classmethod

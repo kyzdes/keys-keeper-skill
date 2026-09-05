@@ -13,42 +13,62 @@ _env = Environment(
 )
 
 
-def render_dashboard(*, paths: Paths, token: str) -> str:
+def _context_template(context) -> dict:
+    kind = getattr(context, "kind", "master")
+    return {
+        "profile_kind": kind,
+        "profile_id": getattr(context, "profile_id", "master"),
+        "scope_id": getattr(context, "scope_id", None),
+        "can_create": kind in {"master", "replica"},
+        "can_mutate": kind == "master",
+    }
+
+
+def render_dashboard(*, paths: Paths, token: str, context=None) -> str:
     return _env.get_template("dashboard.html").render(
         active_nav="dashboard",
         token=token,
+        **_context_template(context),
     )
 
 
-def render_entry_detail(*, paths: Paths, token: str, entry) -> str:
+def render_entry_detail(*, paths: Paths, token: str, entry, context=None) -> str:
     return _env.get_template("entry_detail.html").render(
         active_nav="dashboard",
         token=token,
         entry=entry,
+        **_context_template(context),
     )
 
 
-def render_new_edit(*, paths: Paths, token: str, entry=None) -> str:
+def render_new_edit(*, paths: Paths, token: str, entry=None, context=None) -> str:
     return _env.get_template("new_edit.html").render(
         active_nav="dashboard",
         token=token,
         entry=entry,
+        **_context_template(context),
     )
 
 
-def render_bulk_paste(*, paths: Paths, token: str) -> str:
+def render_bulk_paste(*, paths: Paths, token: str, context=None) -> str:
     return _env.get_template("bulk_paste.html").render(
-        active_nav="dashboard", token=token,
+        active_nav="dashboard", token=token, **_context_template(context),
     )
 
 
-def render_audit(*, paths: Paths, token: str) -> str:
+def render_audit(*, paths: Paths, token: str, context=None) -> str:
     return _env.get_template("audit.html").render(
-        active_nav="audit", token=token,
+        active_nav="audit", token=token, **_context_template(context),
     )
 
 
-def render_settings(*, paths: Paths, token: str) -> str:
+def render_settings(*, paths: Paths, token: str, context=None) -> str:
     return _env.get_template("settings.html").render(
-        active_nav="settings", token=token,
+        active_nav="settings", token=token, **_context_template(context),
+    )
+
+
+def render_projects(*, paths: Paths, token: str, context=None) -> str:
+    return _env.get_template("projects.html").render(
+        active_nav="projects", token=token, **_context_template(context)
     )

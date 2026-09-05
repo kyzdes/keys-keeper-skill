@@ -428,8 +428,13 @@ def web_setup(paths: Paths, data: dict) -> dict:
 # ---------------- registration ----------------
 
 def register_sync(sub) -> None:
-    sp = sub.add_parser("sync", help="back up / sync the vault to S3")
+    sp = sub.add_parser("sync", help="sync the vault through S3 or a zero-knowledge VPS")
     ss = sp.add_subparsers(dest="sync_command", required=True)
+
+    # The VPS workflow is namespaced so existing `keys sync setup/push/pull`
+    # commands remain backwards-compatible with the S3 transport.
+    from keys_keeper.cli_sync_vps import register_vps_sync
+    register_vps_sync(ss)
 
     setup = ss.add_parser("setup", help="configure an S3 endpoint (stores creds in the keychain)")
     setup.add_argument("--endpoint", required=True)

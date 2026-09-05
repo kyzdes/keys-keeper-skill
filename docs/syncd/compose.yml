@@ -1,0 +1,26 @@
+services:
+  syncd:
+    build:
+      context: ../..
+      dockerfile: docs/syncd/Dockerfile
+    restart: unless-stopped
+    environment:
+      KEYS_KEEPER_SYNC_ADMIN_TOKEN: ${KEYS_KEEPER_SYNC_ADMIN_TOKEN:?set in a mode-0600 .env file}
+    volumes:
+      - syncd-data:/var/lib/keys-keeper-syncd
+    # Keep the Python service private. Terminate HTTPS in Caddy/nginx on the VPS.
+    ports:
+      - "127.0.0.1:8787:8787"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  syncd-data:

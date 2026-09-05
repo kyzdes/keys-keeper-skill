@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Projects · Keys Keeper{% endblock %}
+{% block content %}
+<main class="projects-shell" id="projects-shell">
+  <div class="projects-heading">
+    <div><h1>Projects</h1><p>Organize keys and choose which projects receive them.</p></div>
+    <span class="catalog-status" id="catalog-status">Loading catalog…</span>
+  </div>
+  <p class="catalog-message" id="catalog-message" aria-live="polite"></p>
+  <section class="catalog-enable" id="catalog-enable" hidden>
+    <h2>Enable project catalog</h2>
+    <p>Existing entries stay private and are not assigned to any project. Enable this only through the recovery-backed migration command:</p>
+    <code>keys project-sync migrate --out BACKUP --password-file FILE</code>
+  </section>
+  <div class="projects-grid" id="projects-grid" hidden>
+    <section class="project-card"><div class="card-heading"><h2>Folders</h2><button class="btn btn-sm" id="folder-create" type="button">New folder</button></div><div id="folder-tree"></div><div class="scope-preview" id="folder-label">Choose a folder to organize keys.</div><div id="folder-entries"></div></section>
+    <section class="project-card"><div class="card-heading"><h2>Projects & environments</h2><button class="btn btn-sm" id="project-create" type="button">New project</button></div><div id="project-list"></div></section>
+    <section class="project-card project-card-wide"><div class="card-heading"><div><h2>Scope membership</h2><p id="scope-label">Choose an environment to manage its explicit entries.</p></div></div><div class="scope-preview">Assignment is explicit. Delivery occurs only after a configured scope is synchronized.</div><div id="scope-entries"></div></section>
+  </div>
+  <section class="project-card project-delivery" id="project-delivery">
+    <div class="card-heading"><div><h2>Delivery</h2><p>Check updates, connected devices, and synchronization after organizing keys.</p></div></div>
+    <div id="delivery-status" aria-live="polite"></div>
+    <p class="catalog-meta" id="delivery-message"></p>
+  </section>
+</main>
+{% endblock %}
+{% block extra_js %}<script src="/static/projects.js"></script>{% endblock %}
