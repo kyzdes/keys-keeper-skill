@@ -11,15 +11,46 @@ visible. Store backups on an encrypted, access-controlled volume.
 
 Use the installed `keys-keeper-syncd backup` command as the service account, with
 read access to the source database and its SQLite WAL files. The destination
-parent must already exist, belong to the invoking user and have no group/other
-permissions. An existing destination, including a symlink, is rejected. Parent
-symlinks are rejected. Each backup has a new filename.
+parent must already exist. On POSIX it must belong to the invoking user and
+have no group/other permissions. On Windows it must have a protected DACL that
+grants access only to the process-token user, SYSTEM and Administrators; its
+owner must also be one of those principals. Access by privileged Windows system
+accounts is part of the local OS trust boundary. An existing destination, including a symlink, is rejected. Parent
+symlinks and Windows reparse points (including junctions) are rejected. Each backup has a new filename.
 
 ```sh
 umask 077
 mkdir -m 700 /secure/relay-backups
 keys-keeper-syncd --database /var/lib/keys-keeper-syncd/syncd.sqlite3 backup /secure/relay-backups/syncd-20260905-01.sqlite3 --timeout 60
 ```
+
+For Windows, prepare a **new** backup directory with a protected ACL in PowerShell
+before running the command. The example grants no ordinary additional users; it
+uses the actual Windows identity SID rather than trusting a username environment
+variable. Substitute the source database path if the service uses another path.
+
+```powershell
+$relayBackupRoot = Join-Path $env:LOCALAPPDATA 'KeysKeeperRelayBackups'
+New-Item -ItemType Directory -Path $relayBackupRoot -ErrorAction Stop | Out-Null
+$relayBackupSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$relayBackupAcl = Get-Acl -LiteralPath $relayBackupRoot
+$relayBackupAcl.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$relayBackupSid)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", [System.Security.AccessControl.AccessControlSections]::Access)
+Set-Acl -LiteralPath $relayBackupRoot -AclObject $relayBackupAcl
+keys-keeper-syncd backup (Join-Path $relayBackupRoot 'syncd-20260905-01.sqlite3') --database 'C:\ProgramData\keys-keeper-syncd\syncd.sqlite3'
+```
+
+Use an ACL-capable filesystem supporting hard links, such as NTFS. Permission
+inspection or hard-link failure aborts; there is no fallback to a public copy.
+Windows flushes the completed file before publishing its exclusive hard link.
+Python's portable API does not provide Windows directory fsync here, so crash
+persistence of the new directory entry depends on Windows and the filesystem.
+POSIX additionally fsyncs the parent directory. This distinction does not weaken
+the no-overwrite check or permit a permission-validation failure to proceed.
+
+The native validation follows Microsoft's [GetNamedSecurityInfoW contract](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getnamedsecurityinfow),
+[SetNamedSecurityInfoW contract](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfow),
+[process-token identity API](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation)
+and [access-allowed ACE layout](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-access_allowed_ace).
 
 `--database` can also follow `backup`. The existing serving command without a
 subcommand is unchanged. Backup does not require the HTTP admin token and does
@@ -30,7 +61,8 @@ The command opens the source read-only with WAL awareness and uses Python's
 uncommitted transactions are excluded. It checks the temporary copy with SQLite
 `quick_check`, converts it to a self-contained main database, fsyncs it and
 publishes it through an atomic no-overwrite hard link. The completed file is mode
-0600. Temporary database and sidecars are confined to a private directory and
+0600 on POSIX; on Windows its protected DACL has the same restricted principals
+as above. An existing parent DACL is validated and never silently rewritten. Temporary database and sidecars are confined to a private directory and
 removed on handled failure. A process kill can leave a private `.relay-backup-*`
 directory; inventory it before manual cleanup. Do not copy the live main database
 with `cp`, omit its WAL, or independently copy changing main/WAL/SHM files.

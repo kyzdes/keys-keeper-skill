@@ -7,6 +7,7 @@ complete or close it during recovery.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -515,7 +516,14 @@ def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
     if os.name == "posix":
         if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077:
             raise JournalError("durable state file has unsafe ownership or permissions")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    # Windows CRT descriptors default to text mode.  Ciphertext can contain
+    # CRLF and CTRL-Z bytes, so os.read() must use an explicitly binary fd.
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
         fd = os.open(path, flags)
     except OSError as ex:
@@ -576,16 +584,26 @@ def _fsync_parent(directory: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
         fd = os.open(directory, flags)
-    except OSError:
-        return
+    except OSError as ex:
+        if _directory_fsync_unsupported(ex):
+            return
+        raise
     try:
         os.fsync(fd)
-    except OSError:
-        # Some filesystems do not implement directory fsync.  The file itself
-        # is still atomically installed and synced.
-        pass
+    except OSError as ex:
+        if not _directory_fsync_unsupported(ex):
+            raise
     finally:
         os.close(fd)
+
+
+def _directory_fsync_unsupported(error: OSError) -> bool:
+    unsupported = {errno.EINVAL, errno.ENOSYS}
+    for name in ("ENOTSUP", "EOPNOTSUPP"):
+        value = getattr(errno, name, None)
+        if value is not None:
+            unsupported.add(value)
+    return error.errno in unsupported
 
 
 def _now() -> str:

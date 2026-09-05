@@ -18,7 +18,7 @@ from keys_keeper import crypto
 from keys_keeper.backend import KeychainBackend, Sealed
 from keys_keeper.backend_file import EncryptedFileBackend
 from keys_keeper.models import Entry, EntryType, ValidationError, validate_tombstone
-from keys_keeper.operation_journal import OperationJournal
+from keys_keeper.operation_journal import OperationJournal, _fsync_parent
 from keys_keeper.paths import Paths, ensure_private_dir
 from keys_keeper.project_models import CatalogState, CatalogValidationError
 from keys_keeper.project_replica import ReplicaStore, validate_checkpoint, validate_replica_payload
@@ -620,7 +620,12 @@ def _secure_read(path: Path) -> bytes:
         before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077
     ):
         raise ProjectBackupError("project backup file must be owner-only")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     fd = os.open(path, flags)
     try:
         opened = os.fstat(fd)
@@ -653,11 +658,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_parent(path.parent)
     except BaseException:
         try:
             os.close(fd)

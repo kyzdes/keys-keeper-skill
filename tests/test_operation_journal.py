@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import subprocess
@@ -9,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from keys_keeper import operation_journal as journal_module
 from keys_keeper.operation_journal import (
     JournalError,
     OperationJournal,
@@ -24,6 +26,56 @@ JOURNAL_KEY = b"j" * 32
 
 def _journal(root) -> OperationJournal:
     return OperationJournal(paths=Paths(root), password_provider=lambda: JOURNAL_KEY)
+
+
+def test_secure_read_uses_binary_descriptor_for_ciphertext(tmp_path, monkeypatch):
+    path = tmp_path / "ciphertext.enc"
+    ciphertext = b"header\r\nbody\x1a\r\ntail"
+    path.write_bytes(ciphertext)
+    if os.name == "posix":
+        path.chmod(0o600)
+    real_open = os.open
+    binary_flag = getattr(os, "O_BINARY", getattr(os, "O_NONBLOCK", 0x4))
+    seen = []
+    monkeypatch.setattr(journal_module.os, "O_BINARY", binary_flag, raising=False)
+
+    def recording_open(target, flags, mode=0o777):
+        seen.append(flags)
+        return real_open(target, flags, mode)
+
+    monkeypatch.setattr(journal_module.os, "open", recording_open)
+    assert journal_module._secure_read(path) == ciphertext
+    assert seen and seen[0] & binary_flag
+
+
+def test_unsupported_directory_fsync_is_best_effort(tmp_path, monkeypatch):
+    closed = []
+    monkeypatch.setattr(journal_module.os, "name", "posix")
+    monkeypatch.setattr(journal_module.os, "open", lambda *_args: 91)
+    monkeypatch.setattr(
+        journal_module.os,
+        "fsync",
+        lambda _fd: (_ for _ in ()).throw(OSError(errno.EINVAL, "unsupported")),
+    )
+    monkeypatch.setattr(journal_module.os, "close", closed.append)
+    journal_module._fsync_parent(tmp_path)
+    assert closed == [91]
+
+
+def test_directory_fsync_propagates_real_io_failure(tmp_path, monkeypatch):
+    closed = []
+    monkeypatch.setattr(journal_module.os, "name", "posix")
+    monkeypatch.setattr(journal_module.os, "open", lambda *_args: 92)
+    monkeypatch.setattr(
+        journal_module.os,
+        "fsync",
+        lambda _fd: (_ for _ in ()).throw(OSError(errno.EIO, "durability failed")),
+    )
+    monkeypatch.setattr(journal_module.os, "close", closed.append)
+    with pytest.raises(OSError) as caught:
+        journal_module._fsync_parent(tmp_path)
+    assert caught.value.errno == errno.EIO
+    assert closed == [92]
 
 
 def test_begin_stage_finish_survive_new_process_instance(tmp_path):

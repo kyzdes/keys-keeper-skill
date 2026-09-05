@@ -20,11 +20,30 @@ Review: [wire decision and cross-author evidence](PROJECT-PROTOCOL-INDEPENDENT-R
 
 ## Validation record
 
-Final integration validation is in progress. Focused suites from the three
-implementation agents pass, including real HTTP/SQLite, native Keychain CLI,
-subprocess interruption, enrollment/revocation races and recovery takeover.
-Final full-suite, artifact and CI results will replace this paragraph before
-the implementation handoff.
+| Check | Recorded result |
+|---|---|
+| Full local suite, integration commit `46dc35f`, macOS / Python 3.14.5 | **875 passed, 13 skipped**, 472.11 seconds |
+| Wheel at `46dc35f` | Built and installed in clean environments; release artifact verifier passed, including runtime assets, project commands, versions and generated skill hashes |
+| Actual installed CLI, separate Python 3.12.11 environment | **1 passed**, 26.90 seconds; native dedicated macOS test Keychain master, independent file-backed worker, HTTP relay, create/use/import and mutation denial |
+| Compile, both JS modules, generated UI tokens and both skill bundles | Passed |
+| Windows correction: journal/backup/replica/runtime/recovery | **49 targeted tests passed**, plus **24 passed** after narrowing directory-fsync error handling |
+| Relay backup portability | **12 passed, 1 Windows-only skipped locally**; actual Windows ACL and backup behavior are covered by CI |
+
+The authoritative platform result for each exact revision is the
+[PR #11 checks](https://github.com/kyzdes/keys-keeper-skill/pull/11/checks).
+The matrix runs macOS and Windows Python 3.12, Linux Python 3.10/3.12/3.14,
+and installed-wheel validation. Linux 3.12 gates on a real Secret Service
+store/lookup before running tests, so a missing keyring cannot silently pass.
+
+The [first integrated CI run](https://github.com/kyzdes/keys-keeper-skill/actions/runs/33975264230)
+passed macOS, all three Linux jobs and artifact verification, and found Windows
+portability defects. The corrective change explicitly opens raw ciphertext in
+binary mode, replaces unsupported directory operations, validates native backup
+DACLs and accepts Windows' intentional connection-abort result in the capacity
+test. POSIX I/O and permission errors during directory fsync still propagate;
+only unsupported-operation errors are ignored. New Windows functional tests are
+retained in the matrix rather than broadly skipped. These fixes and any later
+revision must have successful PR checks before release.
 
 Browser QA used an isolated synthetic Admin server with an intentionally
 unavailable secret backend. Projects was inspected at 1280×900 and 390×844 in

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,7 +18,12 @@ from uuid import UUID, uuid4
 from keys_keeper import crypto, project_protocol as wire
 from keys_keeper.backend import KeychainError, Sealed
 from keys_keeper.backend_file import EncryptedFileBackend
-from keys_keeper.operation_journal import JournalNotFound, OperationJournal, _secure_read
+from keys_keeper.operation_journal import (
+    JournalNotFound,
+    OperationJournal,
+    _fsync_parent,
+    _secure_read,
+)
 from keys_keeper.paths import Paths
 from keys_keeper.project_backup import ProjectBackupError, RecoveryProfile, _atomic_write
 from keys_keeper.project_client import ProjectClient
@@ -170,7 +174,7 @@ def activate_takeover(profile: RecoveryProfile) -> TakeoverResult:
     _remove_takeover_journal(profile.paths)
     try:
         marker_path.unlink()
-        _fsync_dir(profile.paths.root)
+        _fsync_parent(profile.paths.root)
     except OSError as ex:
         raise ProjectRecoveryError("cannot activate recovered profile") from ex
     return _result(activation)
@@ -600,17 +604,9 @@ def _remove_takeover_journal(paths: Paths) -> None:
         if directory.is_symlink():
             raise ProjectRecoveryError("takeover journal path is unsafe")
         shutil.rmtree(directory)
-        _fsync_dir(paths.root)
+        _fsync_parent(paths.root)
     except OSError as ex:
         raise ProjectRecoveryError("cannot retire takeover journal") from ex
-
-
-def _fsync_dir(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _canonical(value) -> bytes:

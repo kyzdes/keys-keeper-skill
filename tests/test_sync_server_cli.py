@@ -22,6 +22,8 @@ def database(tmp_path):
     connection.commit()
     directory = tmp_path / "private"
     directory.mkdir(mode=0o700)
+    if os.name == "nt":
+        cli._windows_private_acl(directory, restrict=True)
     yield source, connection, directory
     connection.close()
 
@@ -32,7 +34,10 @@ def test_backup_includes_live_wal_excludes_uncommitted_and_restores(database):
     writer.execute("INSERT INTO backup_fixture VALUES(2, ?)", (b"not-committed",))
     destination = directory / "copy.sqlite3"
     cli.backup_database(source, destination)
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    if os.name == "nt":
+        cli._windows_private_acl(destination)
+    else:
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o600
     assert list(directory.iterdir()) == [destination]
     with sqlite3.connect(destination) as restored:
         assert restored.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
@@ -76,6 +81,7 @@ def test_atomic_destination_race_preserves_other_process_file(database, monkeypa
     assert list(directory.iterdir()) == [destination]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits; Windows has a separate real DACL rejection test")
 @pytest.mark.parametrize("mode", [0o755, 0o770, 0o777])
 def test_backup_rejects_nonprivate_directory(database, mode):
     source, _, directory = database
@@ -122,9 +128,28 @@ def test_backup_cli_requires_no_admin_token_and_accepts_both_database_positions(
 def test_invalid_database_error_does_not_echo_contents_or_create_destination(tmp_path, capsys):
     directory = tmp_path / "private"
     directory.mkdir(mode=0o700)
+    if os.name == "nt":
+        cli._windows_private_acl(directory, restrict=True)
     source = tmp_path / "bad.sqlite3"
     source.write_text("SYNTHETIC-SECRET-CANARY")
     assert cli.main(["backup", str(directory / "copy.sqlite3"), "--database", str(source)]) == 1
     output = capsys.readouterr()
     assert "SYNTHETIC" not in output.err + output.out
+    assert not list(directory.iterdir())
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires real Windows DACL APIs")
+def test_windows_backup_rejects_other_principal_without_changing_acl(database):
+    import subprocess
+    from keys_keeper.ssh_runner import _windows_system_directory
+    source, _, directory = database
+    executable = str(_windows_system_directory() / "icacls.exe")
+    # Add an explicit Everyone read ACE to a protected synthetic directory.
+    # This is not inheritance, so merely stripping inheritance would be unsafe.
+    subprocess.run([executable, str(directory), "/grant", "*S-1-1-0:(OI)(CI)(R)"], capture_output=True, check=True)
+    before = subprocess.run([executable, str(directory)], capture_output=True, check=True).stdout
+    with pytest.raises(cli.BackupError, match="another Windows principal"):
+        cli.backup_database(source, directory / "copy.sqlite3")
+    after = subprocess.run([executable, str(directory)], capture_output=True, check=True).stdout
+    assert before == after
     assert not list(directory.iterdir())

@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from keys_keeper import crypto
+from keys_keeper import project_backup as backup_module
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 from keys_keeper.master_journal import MASTER_MUTATION_KIND, MasterMutationManager
 from keys_keeper.models import Entry, EntryType
@@ -54,6 +55,26 @@ class MemoryBackend(KeychainBackend):
 
 def _journal(paths: Paths) -> OperationJournal:
     return OperationJournal(paths=paths, password_provider=lambda: b"runtime-key")
+
+
+def test_backup_reader_uses_binary_descriptor(tmp_path, monkeypatch):
+    path = tmp_path / "backup.enc"
+    ciphertext = b"header\r\nbody\x1a\r\ntail"
+    path.write_bytes(ciphertext)
+    if os.name == "posix":
+        path.chmod(0o600)
+    real_open = os.open
+    binary_flag = getattr(os, "O_BINARY", getattr(os, "O_NONBLOCK", 0x4))
+    seen = []
+    monkeypatch.setattr(backup_module.os, "O_BINARY", binary_flag, raising=False)
+
+    def recording_open(target, flags, mode=0o777):
+        seen.append(flags)
+        return real_open(target, flags, mode)
+
+    monkeypatch.setattr(backup_module.os, "open", recording_open)
+    assert backup_module._secure_read(path) == ciphertext
+    assert seen and seen[0] & binary_flag
 
 
 def _checkpoint(scope_id: str, vault_id: str) -> dict:

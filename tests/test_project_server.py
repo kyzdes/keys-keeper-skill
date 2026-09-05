@@ -568,10 +568,14 @@ def test_connections_are_bounded_before_header_worker_creation(tmp_path, monkeyp
         assert entered.wait(2)
         second = socket.create_connection(server.server_address, timeout=3)
         try:
-            second.sendall(b"GET /healthz HTTP/1.0\r\n\r\n")
             try:
+                second.sendall(b"GET /healthz HTTP/1.0\r\n\r\n")
                 assert second.recv(1) == b""
-            except ConnectionResetError:
+            # A full connection slot closes the socket before a handler exists.
+            # POSIX normally reports that as ECONNRESET; Windows can report the
+            # equally expected host-side abort (WinError 10053), possibly on
+            # send rather than recv.
+            except (ConnectionResetError, ConnectionAbortedError):
                 pass
         finally:
             second.close()
