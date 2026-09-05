@@ -1,29 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="dash-toolbar">
+<div class="dash-toolbar dash-filterbar">
   <div class="search-input" id="search-shell">
     <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13 13 3.5 3.5"/></svg>
     <input id="search" aria-label="Search vault" placeholder="Search names, tags, and notes">
     <span class="kbd">/</span>
   </div>
-</div>
-<section class="tag-directory" id="tag-directory" aria-labelledby="tag-directory-title">
-  <div class="tag-directory-header">
-    <div>
-      <h2 id="tag-directory-title">Tags</h2>
-      <p id="tag-directory-caption">Most used in this vault</p>
-    </div>
-    <button class="btn btn-ghost btn-sm tag-directory-open" id="tag-directory-open" type="button">
-      <span>All tags</span>
-      <span class="tag-directory-total" id="tag-directory-total"></span>
-    </button>
-  </div>
+  <section class="tag-directory" id="tag-directory" aria-label="Popular tag filters">
   <div class="tag-popular-list" id="tag-popular-list" aria-label="Most used tag filters"></div>
   <div class="tag-filter-summary" id="tag-filter-summary" role="status" hidden>
     <span id="tag-filter-count"></span>
     <button class="text-button" id="clear-tag-filters" type="button">Clear filters</button>
   </div>
-</section>
+  </section>
+  <button class="btn btn-ghost btn-sm tag-directory-open" id="tag-directory-open" type="button">
+    <span>All tags</span>
+    <span class="tag-directory-total" id="tag-directory-total"></span>
+    <span class="tag-directory-active-count" id="tag-directory-active-count" aria-hidden="true" hidden></span>
+  </button>
+</div>
 <div class="selection-bar" id="selection-bar" hidden>
   <div class="selection-summary" role="status">
     <strong id="selection-count"></strong>
