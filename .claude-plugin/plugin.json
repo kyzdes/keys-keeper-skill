@@ -1,7 +1,7 @@
 {
   "name": "keys-keeper",
-  "version": "0.8.0",
-  "description": "Cross-platform secrets workflow for macOS, Windows, and Linux. The `keys` CLI routes values to explicit local sinks without returning plaintext in normal agent tool output. This reduces accidental transcript exposure; it is not an isolation boundary against arbitrary code running as the same OS user.",
+  "version": "0.9.0",
+  "description": "Cross-platform secrets workflow for macOS, Windows, and Linux. The `keys` CLI routes values to explicit local sinks without returning plaintext in normal agent tool output. It also organizes local folders and explicit project scopes so approved workers receive only assigned entries and contributors can submit new entries without editing existing ones. This reduces accidental transcript exposure; it is not an isolation boundary against arbitrary code running as the same OS user.",
   "author": {
     "name": "kyzdes"
   }

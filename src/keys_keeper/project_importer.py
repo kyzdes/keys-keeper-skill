@@ -223,7 +223,7 @@ class ProjectImporter:
             return receipt
         self._validate_current_policy(source_policy, current_policy)
         try:
-            protocol.open_create(
+            payload = protocol.open_create(
                 submission,
                 source_policy,
                 self._pinned_key,
@@ -274,13 +274,26 @@ class ProjectImporter:
                         raise ImportStateError("reserved import identity is already in use")
                     if tx.get_by_name(entry.name) is not None:
                         raise NameConflict("project import name collision")
+                    # A crash or another local mutation can change aliases,
+                    # canonical names or the graph after preparation. Resolve
+                    # again while the metadata commit lock is held; a staged
+                    # name must never redirect to an unrelated root credential.
+                    if payload["entry"]["refs"] and not isinstance(state.get("reference_targets"), list):
+                        # Old journals never recorded which identity an alias
+                        # meant. Names alone cannot safely reconstruct consent.
+                        raise NameConflict("project import reference identity is unavailable")
+                    resolved = _resolve_scope_refs(payload["entry"]["refs"], catalog, tx, scope_id,
+                                                   expected_targets=state.get("reference_targets"))
+                    if resolved != entry.refs:
+                        raise NameConflict("project import reference changed after preparation")
+                    detect_cycles(tx.list() + [entry])
                     tx.add(entry)
                     catalog.bindings.append(ScopeEntry.from_dict(state["binding"]))
                     catalog.dedup.append(dict(state["dedup"]))
                     catalog.publication_intents.append(dict(state["publication_intent"]))
                     tx.set_catalog_state(catalog.to_dict())
                     receipt = state["receipt"]
-        except NameConflict:
+        except (NameConflict, RefError):
             self._remove_owned_secrets(state)
             receipt = self._persist_terminal(
                 submission,
@@ -317,6 +330,7 @@ class ProjectImporter:
             if reserved_accounts & set(self.backend.list_ids()):
                 raise ImportStateError("reserved import backend account is already in use")
             entry.refs = _resolve_scope_refs(entry.refs, catalog, tx, source["scope_id"])
+            reference_targets = [tx.get_by_name(ref["name"]).id for ref in entry.refs]
             detect_cycles(tx.list() + [entry])
             revision = _next_import_revision(catalog)
             receipt = protocol.build_receipt(
@@ -358,6 +372,7 @@ class ProjectImporter:
             "submission": submission,
             "source_policy": source_policy,
             "entry": entry.to_dict(),
+            "reference_targets": reference_targets,
             "secret": payload["secret"],
             "passphrase": payload["passphrase"],
             "binding": binding.to_dict(),
@@ -544,9 +559,11 @@ def _build_entry(payload: dict, source: dict, raw_uuid: UUID) -> Entry:
     return Entry.from_untrusted_dict(record, allow_project_fields=True)
 
 
-def _resolve_scope_refs(refs, catalog: CatalogState, tx, scope_id: str) -> list[dict[str, str]]:
+def _resolve_scope_refs(refs, catalog: CatalogState, tx, scope_id: str, *, expected_targets=None) -> list[dict[str, str]]:
     resolved: list[dict[str, str]] = []
-    for ref in refs:
+    if expected_targets is not None and (not isinstance(expected_targets, list) or len(expected_targets) != len(refs)):
+        raise ImportStateError("project import reference journal is invalid")
+    for index, ref in enumerate(refs):
         matches = [
             binding for binding in catalog.bindings
             if binding.scope_id == scope_id and binding.local_name == ref["name"]
@@ -556,6 +573,10 @@ def _resolve_scope_refs(refs, catalog: CatalogState, tx, scope_id: str) -> list[
         target = tx.get_by_id(matches[0].entry_id)
         if target is None:
             raise ImportStateError("project import reference target is missing")
+        if target.distribution != "project_allowed":
+            raise NameConflict("project import reference target is no longer shared")
+        if expected_targets is not None and target.id != expected_targets[index]:
+            raise NameConflict("project import reference identity changed after preparation")
         resolved.append({"role": ref["role"], "name": target.name})
     return resolved
 

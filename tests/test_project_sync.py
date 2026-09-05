@@ -77,3 +77,38 @@ def test_durable_replica_revoke_blocks_queued_resubmission_before_http(env):
             raise AssertionError("revoked outbox reached HTTP")
     with pytest.raises(ProjectSyncError, match="project grant revoked"):
         ProjectReplica(State(), None, client=NoHTTP()).submit()
+
+
+@pytest.mark.parametrize("status", ["published", "conflict", "rejected", "quarantined", "local_pending", "uploaded", "accepted"])
+def test_terminal_outbox_history_does_not_reserve_a_free_entry_name(env, status):
+    from contextlib import nullcontext
+    from keys_keeper.project_sync import ProjectReplica
+    from test_project_protocol import creation
+    e = env
+    payload = creation()
+    data = {"policy": e["policy"], "scope_id": e["payload"]["scope_id"], "vault_id": e["payload"]["vault_id"],
+            "pin": p.encode_key(e["pin"]), "device_id": e["grant"]["device_id"], "signing_private": p.encode_key(e["signing"]),
+            "outbox": [{"request_id": "retained-history", "status": status, "payload": payload}]}
+    class State:
+        locked = staticmethod(nullcontext)
+        def load(self):
+            return deepcopy(data)
+        def save(self, current):
+            data.clear()
+            data.update(deepcopy(current))
+    class InstalledEmpty:
+        def metadata_store(self):
+            return self
+        def get_by_name(self, name):
+            return None
+    replica = ProjectReplica(State(), InstalledEmpty())
+    if status in {"local_pending", "uploaded", "accepted"}:
+        with pytest.raises(ProjectSyncError, match="pending entry name already exists"):
+            replica.create(payload)
+        assert len(data["outbox"]) == 1
+    else:
+        result = replica.create(payload)
+        assert result["request_id"] != "retained-history"
+        assert result["status"] == "local_pending"
+        assert len(data["outbox"]) == 2
+        assert data["outbox"][0]["status"] == status

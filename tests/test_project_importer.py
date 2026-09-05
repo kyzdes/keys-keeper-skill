@@ -307,7 +307,8 @@ def test_refs_resolve_only_through_same_scope_alias(import_env):
     assert conflict["payload"]["status"] == "conflict"
 
 
-def test_interrupted_backend_write_replays_from_encrypted_journal(import_env):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_interrupted_backend_write_replays_from_encrypted_journal(import_env, legacy):
     env = import_env
     backend = InterruptingBackend()
     importer = ProjectImporter(
@@ -319,6 +320,11 @@ def test_interrupted_backend_write_replays_from_encrypted_journal(import_env):
     with pytest.raises(StopAfterWrite):
         importer.accept(submission, env["policy"], current_policy=env["policy"])
     assert len(env["journal"].list_unfinished()) == 1
+    if legacy:
+        unfinished = env["journal"].list_unfinished()[0]
+        older_state = dict(unfinished.state)
+        older_state.pop("reference_targets")
+        env["journal"].stage(unfinished.operation_id, "prepared", state=older_state)
     receipts = importer.recover(current_policy=env["policy"])
     assert receipts[0]["payload"]["status"] == "accepted"
     assert len(env["store"].list()) == 1
@@ -456,3 +462,46 @@ ProjectImporter(
     assert importer.accept(
         submission, env["policy"], current_policy=env["policy"]
     ) == receipts[0]
+
+
+@pytest.mark.parametrize("change", ["rename_and_reuse", "unassign", "rebind", "legacy_rebind", "cycle"])
+def test_recovery_revalidates_reference_identity_and_scope_before_commit(import_env, change):
+    env = import_env
+    target = Entry.new(name="master-target", type=EntryType.SSH_KEY,
+                       fields={"public_key": "ssh-ed25519 AAAA synthetic"})
+    target.distribution = "project_allowed"
+    env["store"].add(target)
+    catalog = ProjectService(env["store"])
+    catalog.assign(env["scope"].id, target.id, local_name="scope-ssh")
+    backend = InterruptingBackend()
+    importer = ProjectImporter(env["store"], backend, env["journal"],
+        signing_private_key=env["master"], inbox_private_key=env["inbox"], pinned_key=env["pin"])
+    submission = submit(env, creation("remote-server", type_="server", refs=[{"role": "ssh_key", "name": "scope-ssh"}]))
+    with pytest.raises(StopAfterWrite):
+        importer.accept(submission, env["policy"], current_policy=env["policy"])
+    if change == "legacy_rebind":
+        unfinished = env["journal"].list_unfinished()[0]
+        legacy = dict(unfinished.state)
+        legacy.pop("reference_targets")
+        env["journal"].stage(unfinished.operation_id, "prepared", state=legacy)
+    if change == "unassign":
+        catalog.unassign(env["scope"].id, target.id)
+    elif change == "cycle":
+        target.refs = [{"role": "linked", "name": "remote-server"}]
+        env["store"].update(target)
+    else:
+        target.name = "renamed-target"
+        env["store"].update(target)
+        replacement = Entry.new(name="master-target", type=EntryType.SSH_KEY,
+                               fields={"public_key": "ssh-ed25519 BBBB synthetic"})
+        if change in {"rebind", "legacy_rebind"}:
+            replacement.distribution = "project_allowed"
+        env["store"].add(replacement)
+        if change in {"rebind", "legacy_rebind"}:
+            catalog.unassign(env["scope"].id, target.id)
+            catalog.assign(env["scope"].id, replacement.id, local_name="scope-ssh")
+    receipt = importer.recover(current_policy=env["policy"])[0]
+    assert receipt["payload"]["status"] == "conflict"
+    assert env["store"].get_by_name("remote-server") is None
+    assert backend.values == {}
+    assert env["journal"].list_unfinished() == []

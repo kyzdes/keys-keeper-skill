@@ -5,6 +5,8 @@ import os
 import stat
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
@@ -313,6 +315,75 @@ project_backup.restore_backup(
     restored_backend = recovered.open_master_backend("recovery-password")
     assert restored_backend.get(entry.id).unseal() == "SYNTHETIC-RESTORE-SECRET"
     assert restored_backend.get("kk:project-runtime-key").unseal() == "SYNTHETIC-RUNTIME-KEY"
+
+
+def test_concurrent_fresh_restores_cannot_interleave_one_recovery_root(
+    tmp_path, monkeypatch
+):
+    paths = Paths(tmp_path / "source")
+    store = MetadataStore(paths)
+    store.migrate_catalog_v3()
+    backend = MemoryBackend()
+    backend.set("kk:project-runtime-key", "SYNTHETIC-RUNTIME-KEY")
+    entry = Entry.new(name="serialized-restore", type=EntryType.API_KEY)
+    manager = MasterMutationManager(store, backend, _journal(paths))
+    VaultService(store, backend, master_mutations=manager).create_entry(
+        entry, secrets=SecretInput(value="SYNTHETIC-RESTORE-SECRET")
+    )
+    source = tmp_path / "serialized.kk3"
+    create_master_backup(
+        store,
+        backend,
+        journal=manager.journal,
+        destination=source,
+        password="backup-password",
+    )
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_write = backup_module._atomic_write
+    write_calls = 0
+    write_calls_lock = threading.Lock()
+
+    def paused_first_marker(path, data):
+        nonlocal write_calls
+        if path.name == "recovery-only":
+            with write_calls_lock:
+                write_calls += 1
+                first_marker = write_calls == 1
+            if first_marker:
+                entered.set()
+                assert release.wait(5)
+        return original_write(path, data)
+
+    monkeypatch.setattr(backup_module, "_atomic_write", paused_first_marker)
+    target = tmp_path / "single-recovery-root"
+
+    def run_restore():
+        return restore_backup(
+            source,
+            password="backup-password",
+            recovery_root=target,
+            recovery_password="recovery-password",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(run_restore)
+        assert entered.wait(5)
+        second = pool.submit(run_restore)
+        release.set()
+        recovered = first.result(timeout=10)
+        with pytest.raises(ProjectBackupError, match="new and empty"):
+            second.result(timeout=10)
+
+    assert recovered.metadata_store().get_by_id(entry.id) is not None
+    assert (
+        recovered.open_master_backend("recovery-password").get(entry.id).unseal()
+        == "SYNTHETIC-RESTORE-SECRET"
+    )
+    marker = json.loads((target / "recovery-only").read_text())
+    assert marker["backup_hash"] == recovered.manifest.content_hash
+    assert marker["status"] == "restored"
 
 
 def test_replica_backup_round_trip_preserves_generation_and_outbox(tmp_path):

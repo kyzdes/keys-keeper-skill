@@ -66,12 +66,19 @@
   const roleLabel = role => role === 'contributor' ? 'Read and create' : 'Read only';
   const distributionLabel = value => value === 'project_allowed' ? 'Available to selected projects' : 'Private to this device';
   const waitingSummary = profile => {
+    if (profile.delivery === 'unavailable') return 'Status unavailable · synchronization needs attention';
+    if (profile.status && profile.status !== 'active') return 'Setup incomplete · synchronization pending';
     const updates = Number(profile.publication_pending || 0);
     const newKeys = Number(profile.pending || 0);
+    const blocked = (profile.outbox || []).filter(item => ['conflict', 'rejected', 'quarantined'].includes(item.status)).length;
     const pieces = [];
+    if (blocked) pieces.push(`${blocked} submission${blocked === 1 ? '' : 's'} need attention`);
     if (updates) pieces.push(`${updates} update${updates === 1 ? '' : 's'} waiting`);
-    if (newKeys) pieces.push(`${newKeys} new key${newKeys === 1 ? '' : 's'} awaiting upload`);
-    return pieces.length ? pieces.join(' · ') : 'Up to date';
+    if (newKeys) pieces.push(`${newKeys} new key${newKeys === 1 ? '' : 's'} awaiting publication`);
+    if (pieces.length) return pieces.join(' · ');
+    if (profile.delivery === 'pending') return 'Synchronization pending';
+    if (!profile.checkpoint) return 'No verified snapshot yet';
+    return 'No pending local changes';
   };
   function render() {
     const enabled = state.data.enabled;
@@ -83,13 +90,13 @@
     renderFolders(); renderProjects(); renderScope();
   }
   function recipientRows(profile, mount) {
-    (profile.recipients || []).forEach((recipient, index) => {
+    (profile.recipients || []).forEach(recipient => {
       const revoke = el('button', {class:'btn btn-sm', type:'button', onclick: safe(async () => {
-        if (!confirm(`Remove access for this device? It will lose future access after a rekey, but material already held on that device cannot be erased.`)) return;
+        if (!confirm(`Remove access for device ${recipient.device_id} in ${profile.project} / ${profile.environment}? It will lose future access after a rekey, but material already held on that device cannot be erased.`)) return;
         const result = await api('/api/project-sync/revoke', post({scope_id: profile.scope_id, device_id: recipient.device_id}));
         message(`${result.warning} Rekey: ${result.result.rekey || 'pending'}.`); await refresh();
       })}, 'Remove access');
-      mount.append(el('div', {class:'catalog-row'}, el('div', {}, el('strong', {}, `Connected device ${index + 1}`), el('span', {class:'catalog-meta'}, roleLabel(recipient.role))), revoke));
+      mount.append(el('div', {class:'catalog-row'}, el('div', {}, el('strong', {}, 'Device'), el('code', {class:'catalog-meta'}, recipient.device_id), el('span', {class:'catalog-meta'}, roleLabel(recipient.role))), revoke));
     });
   }
   function renderDelivery() {
@@ -124,7 +131,7 @@
     const devices = Object.entries(union);
     if (devices.length) {
       const block = el('div', {class:'scope-preview'}, el('strong', {}, 'Effective device access'));
-      devices.forEach(([, grants], index) => block.append(el('div', {class:'catalog-meta'}, `Device ${index + 1}: ${grants.map(grant => `${grant.project} / ${grant.environment} (${roleLabel(grant.role)})`).join(', ')}.`)));
+      devices.forEach(([deviceId, grants]) => block.append(el('div', {class:'catalog-meta'}, el('code', {}, deviceId), `: ${grants.map(grant => `${grant.project} / ${grant.environment} (${roleLabel(grant.role)})`).join(', ')}.`)));
       mount.append(block);
     }
     mount.append(el('p', {class:'catalog-meta'}, 'Onboarding stays CLI-led: keys project-sync invite → join → approve → finish. The fingerprint shown here is public; do not paste invitation bundles into chat.'));
@@ -137,13 +144,14 @@
     }
     if (!state.selectedFolder || !state.data.catalog.folders.some(folder => folder.id === state.selectedFolder)) state.selectedFolder = state.data.catalog.folders[0]?.id || null;
     const chooseFolder = (promptText, currentId = null) => {
-      const choices = state.data.catalog.folders.filter(folder => folder.id !== currentId).map(folder => folder.name);
-      const answer = prompt(`${promptText}\nType a folder name, or Top level.\nAvailable: ${choices.join(', ')}`, 'Top level');
+      const folders = state.data.catalog.folders.filter(folder => folder.id !== currentId);
+      const choices = folders.map(folder => `${folder.name} [${folder.id}]`);
+      const answer = prompt(`${promptText}\nType a unique folder name, its ID, or Top level.\nAvailable: ${choices.join(', ')}`, 'Top level');
       if (answer === null) return undefined;
       if (answer.trim().toLowerCase() === 'top level') return null;
-      const match = state.data.catalog.folders.find(folder => folder.id !== currentId && folder.name === answer.trim());
-      if (!match) { message('Choose one of the listed folder names.'); return undefined; }
-      return match.id;
+      const matches = folders.filter(folder => folder.id === answer.trim() || folder.name === answer.trim());
+      if (matches.length !== 1) { message('Choose a unique folder name or one of the listed folder IDs.'); return undefined; }
+      return matches[0].id;
     };
     const add = (parent, depth) => (byParent.get(parent) || []).forEach(folder => {
       const select = el('button', {class:'scope-choice', type:'button', 'aria-pressed': String(folder.id === state.selectedFolder), onclick: () => { state.selectedFolder = folder.id; renderFolders(); }}, folder.name);

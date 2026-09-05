@@ -5,7 +5,13 @@ import os
 import stat
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from keys_keeper import crypto, project_protocol as wire
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
@@ -14,9 +20,15 @@ from keys_keeper.master_journal import MasterMutationManager
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.operation_journal import OperationJournal, _secure_read
 from keys_keeper.paths import Paths
-from keys_keeper.project_backup import create_master_backup, restore_backup
+from keys_keeper.project_backup import (
+    ProjectBackupError,
+    create_master_backup,
+    restore_backup,
+)
 from keys_keeper.project_recovery import (
     PROJECT_RUNTIME_KEY_ACCOUNT,
+    ProjectRecoveryError,
+    activate_takeover,
     prepare_takeover,
     recover_takeover,
 )
@@ -256,6 +268,164 @@ recovery.recover_takeover(
     assert result.status == "active"
     assert ReplayAccepted.records[accepted_scope] == accepted_policy
     assert not (profile.paths.root / "recovery-only").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink creation is not portable")
+def test_broken_recovery_marker_never_reports_takeover_active(tmp_path):
+    profile, _backup, _entry, _scope, _state, _key = _recovery(tmp_path)
+    marker = profile.paths.root / "recovery-only"
+    marker.unlink()
+    marker.symlink_to(profile.paths.root / "missing-recovery-marker")
+
+    with pytest.raises(ProjectRecoveryError, match="marker path is unsafe"):
+        recover_takeover(
+            profile,
+            recovery_password="recovery-password",
+            endpoint="https://new.example",
+            admin_token=Sealed("SYNTHETIC-ADMIN-TOKEN"),
+        )
+    with pytest.raises(ProjectRecoveryError, match="marker path is unsafe"):
+        activate_takeover(profile)
+
+
+def test_completed_takeover_replay_requires_the_same_authenticated_backup(
+    tmp_path, monkeypatch
+):
+    profile, _backup, _entry, _scope, _state, _key = _recovery(tmp_path)
+    monkeypatch.setattr("keys_keeper.project_recovery.ProjectClient", _ReplayRelay)
+    recover_takeover(
+        profile,
+        recovery_password="recovery-password",
+        endpoint="https://new.example",
+        admin_token=Sealed("SYNTHETIC-ADMIN-TOKEN"),
+    )
+    wrong_source = type(profile)(
+        paths=profile.paths,
+        kind=profile.kind,
+        manifest=replace(profile.manifest, content_hash="0" * 64),
+    )
+
+    with pytest.raises(ProjectRecoveryError, match="does not match recovery source"):
+        recover_takeover(
+            wrong_source,
+            recovery_password="unused-after-completion",
+            endpoint="https://new.example",
+            admin_token=Sealed("unused-after-completion"),
+        )
+
+
+def test_ready_takeover_cannot_activate_against_a_different_manifest(
+    tmp_path, monkeypatch
+):
+    profile, _backup, _entry, _scope, _state, _key = _recovery(tmp_path)
+    _ReplayRelay.records = {}
+    monkeypatch.setattr("keys_keeper.project_recovery.ProjectClient", _ReplayRelay)
+    import keys_keeper.project_recovery as recovery_module
+
+    original_activate = recovery_module.activate_takeover
+
+    class StopBeforeActivation(BaseException):
+        pass
+
+    monkeypatch.setattr(
+        recovery_module,
+        "activate_takeover",
+        lambda _profile: (_ for _ in ()).throw(StopBeforeActivation()),
+    )
+    with pytest.raises(StopBeforeActivation):
+        recover_takeover(
+            profile,
+            recovery_password="recovery-password",
+            endpoint="https://new.example",
+            admin_token=Sealed("SYNTHETIC-ADMIN-TOKEN"),
+        )
+    marker = profile.paths.root / "recovery-only"
+    journal = profile.paths.root / "recovery-takeover"
+    assert json.loads(marker.read_text())["status"] == "takeover_ready"
+    assert journal.exists()
+
+    wrong_source = type(profile)(
+        paths=profile.paths,
+        kind=profile.kind,
+        manifest=replace(profile.manifest, content_hash="0" * 64),
+    )
+    with pytest.raises(ProjectRecoveryError, match="does not match recovery source"):
+        original_activate(wrong_source)
+    assert marker.exists()
+    assert journal.exists()
+    with pytest.raises(ProjectRecoveryError, match="does not match recovery source"):
+        recover_takeover(
+            wrong_source,
+            recovery_password="recovery-password",
+            endpoint="https://new.example",
+            admin_token=Sealed("SYNTHETIC-ADMIN-TOKEN"),
+        )
+    assert marker.exists()
+    assert journal.exists()
+
+
+def test_restore_cannot_resume_after_takeover_journal_exists(tmp_path):
+    profile, backup, _entry, _scope, _state, _key = _recovery(tmp_path)
+    prepare_takeover(
+        profile,
+        recovery_password="recovery-password",
+        endpoint="https://new.example",
+    )
+
+    with pytest.raises(ProjectBackupError, match="takeover already started"):
+        restore_backup(
+            backup,
+            password="backup-password",
+            recovery_root=profile.paths.root,
+            recovery_password="recovery-password",
+            resume=True,
+        )
+    assert (profile.paths.root / "recovery-takeover").exists()
+    assert json.loads((profile.paths.root / "recovery-only").read_text())["status"] == "restored"
+
+
+def test_takeover_and_restore_share_one_recovery_root_lock(tmp_path, monkeypatch):
+    profile, backup, _entry, _scope, _state, _key = _recovery(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingRelay(_ReplayRelay):
+        records = {}
+
+        def create_scope(self, policy):
+            entered.set()
+            assert release.wait(5)
+            return super().create_scope(policy)
+
+    monkeypatch.setattr("keys_keeper.project_recovery.ProjectClient", BlockingRelay)
+
+    def takeover():
+        return recover_takeover(
+            profile,
+            recovery_password="recovery-password",
+            endpoint="https://new.example",
+            admin_token=Sealed("SYNTHETIC-ADMIN-TOKEN"),
+        )
+
+    def resume_restore():
+        return restore_backup(
+            backup,
+            password="backup-password",
+            recovery_root=profile.paths.root,
+            recovery_password="recovery-password",
+            resume=True,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        takeover_future = pool.submit(takeover)
+        assert entered.wait(5)
+        restore_future = pool.submit(resume_restore)
+        time.sleep(0.1)
+        assert not restore_future.done()
+        release.set()
+        assert takeover_future.result(timeout=10).status == "active"
+        with pytest.raises(ProjectBackupError, match="takeover already started"):
+            restore_future.result(timeout=10)
 
 
 def test_takeover_activates_after_exit_between_local_validation_and_marker(tmp_path):

@@ -6,16 +6,16 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.8.0 · macOS + Windows + Linux · single-user · MIT license
+**Status:** v0.9.0 · macOS + Windows + Linux · local-first · MIT license
 
-The development branch adds folders and project-scoped delivery: a master keeps
-the complete catalog, while each worker receives only explicitly assigned
-project environments and can submit new entries without editing existing ones.
-Setup is opt-in and starts with a verified recovery backup. See the
+v0.9.0 adds folders and project-scoped delivery: a master keeps the complete
+catalog, while each worker receives only explicitly assigned project
+environments and can submit new entries without editing existing ones. Setup is
+opt-in and starts with a verified recovery backup. See the
 [project sync guide](docs/PROJECT-SCOPED-SYNC.md),
+[Russian setup guide](docs/PROJECT-SCOPED-SETUP-RU.md),
 [relay operations](docs/PROJECT-RELAY-OPERATIONS.md), and
 [implementation evidence](docs/architecture/PROJECT-SCOPED-VAULTS-EVIDENCE.md).
-This feature is not part of the published v0.8.0 tag.
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -46,7 +46,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.8.0'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.9.0'
 keys doctor                                            # smoke check
 ```
 
@@ -71,8 +71,8 @@ You can mix targets — `keys init cursor` and `keys init codex` in the same pro
 For Codex, prefer `keys init codex-skill`. The personal skill path is stable
 across CLI and marketplace updates, while a running Codex task keeps the exact
 skill path it received at startup. A marketplace update may replace a path such
-as `.../plugins/cache/keys-keeper/keys-keeper/0.7.8/...` with `0.8.0`; the old
-task will then report that its catalog path is stale. Re-run
+as `.../plugins/cache/keys-keeper/keys-keeper/<version>/...`; the old task will
+then report that its catalog path is stale. Re-run
 `keys init codex-skill --force` after upgrading Keys Keeper, then start a new
 Codex task to reload the catalog.
 

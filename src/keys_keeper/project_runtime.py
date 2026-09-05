@@ -93,6 +93,28 @@ def write_bundle(path: Path, value: dict):
     _atomic_write_bytes(path, blob)
 
 
+def _assert_fresh_worker_root(paths: Paths) -> None:
+    """Require a first replica enrollment to claim an otherwise empty root.
+
+    The two allowed directories are created by the role and scope locks held
+    by ``join`` before this check.  Everything else represents a pre-existing
+    vault, runtime, or interrupted operation and must not be reclassified as a
+    worker root.
+    """
+    allowed_lock_dirs = {"project-runtime-role", "project-join"}
+    try:
+        children = list(paths.root.iterdir())
+    except OSError as ex:
+        raise RuntimeErrorSafe("cannot verify a clean Keys Keeper root") from ex
+    for child in children:
+        if (
+            child.name not in allowed_lock_dirs
+            or child.is_symlink()
+            or not child.is_dir()
+        ):
+            raise RuntimeErrorSafe("enroll replicas in a clean Keys Keeper root")
+
+
 class ProfileRegistry:
     def __init__(self, paths: Paths):
         self.paths = paths
@@ -341,6 +363,11 @@ class ProjectRuntime:
     @property
     def master_backend(self):
         self.assert_available()
+        # A replica registry fixes this root's role.  Check it before touching
+        # either a configured factory or an already injected/cached backend so
+        # no caller can bypass ``context()`` and fall back to master secrets.
+        if any(item["kind"] == "replica" for item in self.registry.list()):
+            raise RuntimeErrorSafe("master backend is unavailable in a worker root")
         if self._backend is None:
             settings_path = self.paths.root / "runtime-backend.json"
             if settings_path.exists() or settings_path.is_symlink():
@@ -655,15 +682,22 @@ class ProjectRuntime:
         with profile_lock(Paths(self.paths.root / "project-runtime-role")), profile_lock(
             Paths(self.paths.root / "project-join" / scope_id)
         ):
-            # First worker enrollment must not silently reclassify a full legacy vault.
             registry = self.registry.read()
-            if self.master_store.list() or any(p["kind"] == "master_scope" for p in registry["profiles"]):
+            # data.json is a master metadata identity even when it contains no
+            # live entries (for example, after deleting the last key).
+            if (
+                self.paths.data_json.exists()
+                or self.paths.data_json.is_symlink()
+                or any(p["kind"] == "master_scope" for p in registry["profiles"])
+            ):
                 raise RuntimeErrorSafe("enroll replicas in a clean Keys Keeper root")
             try:
                 reservation = _json_read(reservation_path, 4096)
             except FileNotFoundError:
                 reservation = None
             if reservation is None:
+                if not registry["profiles"]:
+                    _assert_fresh_worker_root(self.paths)
                 if any(p["scope_id"] == scope_id for p in registry["profiles"]):
                     raise RuntimeErrorSafe("scope already has a local profile")
                 profile_id = str(uuid4())

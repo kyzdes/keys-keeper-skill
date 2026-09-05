@@ -15,8 +15,48 @@ mutation/replica state; encrypted backups, recovery-only restore and fresh
 authority takeover; background watch; bounded relay and live SQLite backup.
 
 Runbooks: [client](../PROJECT-SCOPED-SYNC.md),
-[relay](../PROJECT-RELAY-OPERATIONS.md).
+[relay](../PROJECT-RELAY-OPERATIONS.md),
+[Russian setup](../PROJECT-SCOPED-SETUP-RU.md).
 Review: [wire decision and cross-author evidence](PROJECT-PROTOCOL-INDEPENDENT-REVIEW.md).
+
+## Release 0.9.0 code review
+
+Astra reviewed the protocol/importer, Sol reviewed runtime/recovery, and each
+cross-reviewed the other's corrections. Terra verified release contracts,
+marketplace descriptions and the setup guide. The integration review also
+checked rendered delivery states and device identification. This is an internal
+multi-agent review, not an external security certification.
+
+The review reproduced and corrected these defects before release:
+
+- A staged import could resolve a changed alias to a different canonical entry
+  after a crash. Commit now checks pinned IDs, current scope/distribution, names
+  and cycles under the metadata transaction. Ref-bearing older journals without
+  pinned IDs fail closed and clean their matching staged values.
+- An empty but previously used master root could enroll as a worker, and direct
+  runtime backend access could bypass the normal profile selector. Enrollment
+  now requires a fresh root, and worker registries prohibit all master backend
+  paths, including cached or injected backends.
+- Concurrent restores, or restore racing takeover, could mix state. A shared
+  reentrant process/thread lock covers all recovery-root mutation phases.
+  Restore resume refuses an already prepared takeover. Activation and completed
+  replay verify the exact manifest/marker/activation identity before mutation.
+- Broken recovery marker, activation and journal symlinks could yield misleading
+  completion; these now fail closed.
+- Terminal outbox history could reserve a name forever. Only active requests and
+  installed entries reserve names; terminal history is preserved.
+- The UI could report stale or unavailable delivery as current and obscure which
+  device was being revoked. It now shows pending/error/conflict states and the
+  full device ID, including in the scope-specific revoke confirmation. Folder
+  moves reject ambiguous names and accept the displayed stable folder ID.
+
+Regressions include encrypted legacy-journal replay, four changed-reference
+cases, fresh-root/cached-backend denial, a pause before the first recovery-marker
+write, wrong-backup activation, and concurrent takeover/restore. The actual JS
+rendering regression executes all delivery states and cancels a revoke while
+checking its exact device/scope confirmation. Release publication requires the
+complete matrix at the final PR revision to pass; historical results below are
+retained as revision-specific evidence.
 
 ## Validation record
 

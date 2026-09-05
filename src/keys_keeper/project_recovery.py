@@ -19,13 +19,19 @@ from keys_keeper import crypto, project_protocol as wire
 from keys_keeper.backend import KeychainError, Sealed
 from keys_keeper.backend_file import EncryptedFileBackend
 from keys_keeper.operation_journal import (
+    JournalError,
     JournalNotFound,
     OperationJournal,
     _fsync_parent,
     _secure_read,
 )
 from keys_keeper.paths import Paths
-from keys_keeper.project_backup import ProjectBackupError, RecoveryProfile, _atomic_write
+from keys_keeper.project_backup import (
+    ProjectBackupError,
+    RecoveryProfile,
+    _atomic_write,
+    recovery_root_lock,
+)
 from keys_keeper.project_client import ProjectClient
 from keys_keeper.project_models import CatalogState
 from keys_keeper.project_sync import ProjectState, new_master_state
@@ -66,6 +72,21 @@ def prepare_takeover(
     endpoint: str,
 ) -> TakeoverPlan:
     """Persist one immutable takeover plan before any relay request."""
+    try:
+        with recovery_root_lock(profile.paths.root):
+            return _prepare_takeover_locked(
+                profile, recovery_password=recovery_password, endpoint=endpoint
+            )
+    except JournalError as ex:
+        raise ProjectRecoveryError("cannot lock recovery takeover") from ex
+
+
+def _prepare_takeover_locked(
+    profile: RecoveryProfile,
+    *,
+    recovery_password: str | bytes | Sealed,
+    endpoint: str,
+) -> TakeoverPlan:
     marker = _recovery_marker(profile.paths)
     if profile.kind != "master" or marker["kind"] != "master":
         raise ProjectRecoveryError("takeover requires a restored master profile")
@@ -105,14 +126,36 @@ def recover_takeover(
     """
     if not isinstance(admin_token, Sealed):
         raise TypeError("admin_token must be sealed")
+    try:
+        with recovery_root_lock(profile.paths.root):
+            return _recover_takeover_locked(
+                profile,
+                recovery_password=recovery_password,
+                endpoint=endpoint,
+                admin_token=admin_token,
+            )
+    except JournalError as ex:
+        raise ProjectRecoveryError("cannot lock recovery takeover") from ex
+
+
+def _recover_takeover_locked(
+    profile: RecoveryProfile,
+    *,
+    recovery_password: str | bytes | Sealed,
+    endpoint: str,
+    admin_token: Sealed,
+) -> TakeoverResult:
     activation_path = profile.paths.root / "recovery-activation.json"
-    if not (profile.paths.root / "recovery-only").exists():
-        return _completed_result(profile.paths, activation_path)
+    if not _recovery_marker_present(profile.paths):
+        return _completed_result(profile, activation_path)
+    if activation_path.is_symlink():
+        raise ProjectRecoveryError("takeover activation path is unsafe")
     if activation_path.exists():
         # The activation record is written only after a full local validation.
         # A process may die before advancing the recovery-only marker.
         marker = _recovery_marker(profile.paths)
         activation = _read_activation(activation_path)
+        _require_activation_binding(profile, activation, marker=marker)
         _verify_installed_takeover(profile.paths, activation)
         if marker["status"] != "takeover_ready":
             marker["status"] = "takeover_ready"
@@ -152,9 +195,16 @@ def recover_takeover(
         state = _validate_plan_state(record.state)
         if set(state["remote_created"]) != set(state["new_states"]):
             raise ProjectRecoveryError("not every fresh scope exists on the relay")
+        marker = _recovery_marker(profile.paths)
+        if (
+            profile.kind != "master"
+            or marker["kind"] != "master"
+            or marker["backup_hash"] != state["source_backup_hash"]
+            or marker["backup_hash"] != profile.manifest.content_hash
+        ):
+            raise ProjectRecoveryError("takeover does not match recovery source")
         _install_local_takeover(profile.paths, state)
         journal.stage(_TAKEOVER_ID, "takeover_ready", state=state)
-        marker = _recovery_marker(profile.paths)
         marker["status"] = "takeover_ready"
         _atomic_write(profile.paths.root / "recovery-only", _canonical(marker))
     return activate_takeover(profile)
@@ -162,14 +212,23 @@ def recover_takeover(
 
 def activate_takeover(profile: RecoveryProfile) -> TakeoverResult:
     """Verify the concrete fresh authority, then remove the runtime block."""
+    try:
+        with recovery_root_lock(profile.paths.root):
+            return _activate_takeover_locked(profile)
+    except JournalError as ex:
+        raise ProjectRecoveryError("cannot lock recovery takeover") from ex
+
+
+def _activate_takeover_locked(profile: RecoveryProfile) -> TakeoverResult:
     marker_path = profile.paths.root / "recovery-only"
     activation_path = profile.paths.root / "recovery-activation.json"
-    if not marker_path.exists():
-        return _completed_result(profile.paths, activation_path)
+    if not _recovery_marker_present(profile.paths):
+        return _completed_result(profile, activation_path)
     marker = _recovery_marker(profile.paths)
     if marker["status"] != "takeover_ready":
         raise ProjectRecoveryError("takeover is not ready for activation")
     activation = _read_activation(activation_path)
+    _require_activation_binding(profile, activation, marker=marker)
     _verify_installed_takeover(profile.paths, activation)
     _remove_takeover_journal(profile.paths)
     try:
@@ -506,6 +565,13 @@ def _recovery_marker(paths: Paths) -> dict:
     return marker
 
 
+def _recovery_marker_present(paths: Paths) -> bool:
+    marker = paths.root / "recovery-only"
+    if marker.is_symlink():
+        raise ProjectRecoveryError("recovery-only marker path is unsafe")
+    return marker.exists()
+
+
 def _read_activation(path: Path) -> dict:
     try:
         value = json.loads(_secure_read(path))
@@ -582,10 +648,30 @@ def _state_credentials(state: dict) -> set[str]:
     return result
 
 
-def _completed_result(paths: Paths, activation_path: Path) -> TakeoverResult:
+def _completed_result(
+    profile: RecoveryProfile, activation_path: Path
+) -> TakeoverResult:
     activation = _read_activation(activation_path)
-    _verify_installed_takeover(paths, activation)
+    _require_activation_binding(profile, activation)
+    _verify_installed_takeover(profile.paths, activation)
     return _result(activation)
+
+
+def _require_activation_binding(
+    profile: RecoveryProfile, activation: dict, *, marker: dict | None = None
+) -> None:
+    if (
+        profile.kind != "master"
+        or activation["source_backup_hash"] != profile.manifest.content_hash
+        or (
+            marker is not None
+            and (
+                marker["kind"] != "master"
+                or marker["backup_hash"] != activation["source_backup_hash"]
+            )
+        )
+    ):
+        raise ProjectRecoveryError("takeover does not match recovery source")
 
 
 def _result(activation: dict) -> TakeoverResult:
@@ -598,11 +684,11 @@ def _result(activation: dict) -> TakeoverResult:
 
 def _remove_takeover_journal(paths: Paths) -> None:
     directory = paths.root / "recovery-takeover"
+    if directory.is_symlink():
+        raise ProjectRecoveryError("takeover journal path is unsafe")
     if not directory.exists():
         return
     try:
-        if directory.is_symlink():
-            raise ProjectRecoveryError("takeover journal path is unsafe")
         shutil.rmtree(directory)
         _fsync_parent(paths.root)
     except OSError as ex:

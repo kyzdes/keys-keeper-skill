@@ -9,6 +9,8 @@ import os
 import re
 import stat
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +20,12 @@ from keys_keeper import crypto
 from keys_keeper.backend import KeychainBackend, Sealed
 from keys_keeper.backend_file import EncryptedFileBackend
 from keys_keeper.models import Entry, EntryType, ValidationError, validate_tombstone
-from keys_keeper.operation_journal import OperationJournal, _fsync_parent
+from keys_keeper.operation_journal import (
+    JournalError,
+    OperationJournal,
+    _fsync_parent,
+    profile_lock,
+)
 from keys_keeper.paths import Paths, ensure_private_dir
 from keys_keeper.project_models import CatalogState, CatalogValidationError
 from keys_keeper.project_replica import ReplicaStore, validate_checkpoint, validate_replica_payload
@@ -30,10 +37,54 @@ _MAX_BACKUP_BYTES = 128 * 1024 * 1024
 _MAX_STATE_BYTES = 16 * 1024 * 1024
 _JOURNAL_FILE = re.compile(r"(?:[0-9a-f-]{36}\.enc|pending-index\.json)\Z")
 Password = str | bytes | Sealed
+_RECOVERY_LOCKS_GUARD = threading.Lock()
+_RECOVERY_LOCKS: dict[str, "_RecoveryRootLock"] = {}
 
 
 class ProjectBackupError(RuntimeError):
     pass
+
+
+class _RecoveryRootLock:
+    """One reentrant in-process owner around the cross-process root lock."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.thread_lock = threading.RLock()
+        self.depth = 0
+
+    @contextmanager
+    def locked(self):
+        with self.thread_lock:
+            if self.depth:
+                self.depth += 1
+                try:
+                    yield
+                finally:
+                    self.depth -= 1
+                return
+            lock_root = self.root / "recovery-restore-lock"
+            if lock_root.is_symlink() or (
+                lock_root.exists() and not lock_root.is_dir()
+            ):
+                raise JournalError("recovery restore lock path is unsafe")
+            with profile_lock(Paths(lock_root)):
+                self.depth = 1
+                try:
+                    yield
+                finally:
+                    self.depth = 0
+
+
+@contextmanager
+def recovery_root_lock(root: Path):
+    """Serialize restore and takeover mutations for one recovery root."""
+    root = Path(root).absolute()
+    key = str(root)
+    with _RECOVERY_LOCKS_GUARD:
+        lock = _RECOVERY_LOCKS.setdefault(key, _RecoveryRootLock(root))
+    with lock.locked():
+        yield
 
 
 @dataclass(frozen=True)
@@ -200,42 +251,59 @@ def restore_backup(
     payload = bundle["payload"]
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise ProjectBackupError("recovery root must be a real directory")
-    populated = root.exists() and any(root.iterdir())
-    if populated:
-        if not resume:
-            raise ProjectBackupError("recovery root must be new and empty")
-        _require_matching_recovery_marker(root, manifest)
-    elif resume:
-        raise ProjectBackupError("resume requires a matching partial recovery root")
     ensure_private_dir(root)
-    paths = Paths(root)
-    # Publish the fail-closed marker before restoring any mutable state.  If a
-    # backend write or process dies later, merely pointing runtime at this root
-    # still cannot turn a partial restore into an active profile.
-    marker = {
-        "schema_version": 1,
-        "mode": "recovery_only",
-        "kind": manifest.kind,
-        "backup_hash": manifest.content_hash,
-        "status": "restore_in_progress",
-        "activation": "requires_trusted_history_verification",
-    }
-    _atomic_write(paths.root / "recovery-only", _canonical_bytes(marker))
-    if manifest.kind == "master":
-        _restore_master(paths, payload, recovery_password)
-    elif manifest.kind == "replica":
-        _restore_replica(paths, payload, recovery_password)
-    else:  # validated by _read_bundle; defensive for type narrowing
-        raise ProjectBackupError("unsupported project backup kind")
-    state = _validate_project_state(payload["project_state"])
-    _atomic_write(
-        paths.root / "recovery-project-state.enc",
-        crypto.encrypt_blob(
-            _canonical_bytes(state), password=_password(recovery_password)
-        ),
-    )
-    marker["status"] = "restored"
-    _atomic_write(paths.root / "recovery-only", _canonical_bytes(marker))
+    try:
+        with recovery_root_lock(root):
+            paths = Paths(root)
+            populated = any(
+                child.name != "recovery-restore-lock" for child in root.iterdir()
+            )
+            if populated:
+                if not resume:
+                    raise ProjectBackupError("recovery root must be new and empty")
+                for takeover_path in (
+                    root / "recovery-takeover",
+                    root / "recovery-activation.json",
+                ):
+                    if takeover_path.exists() or takeover_path.is_symlink():
+                        raise ProjectBackupError(
+                            "recovery takeover already started; restore cannot resume"
+                        )
+                _require_matching_recovery_marker(root, manifest)
+            elif resume:
+                raise ProjectBackupError(
+                    "resume requires a matching partial recovery root"
+                )
+            # Publish the fail-closed marker before restoring any mutable
+            # state.  Merely pointing runtime at a partial root cannot activate
+            # it, and the restore lock prevents two authenticated bundles from
+            # interleaving their files under one marker.
+            marker = {
+                "schema_version": 1,
+                "mode": "recovery_only",
+                "kind": manifest.kind,
+                "backup_hash": manifest.content_hash,
+                "status": "restore_in_progress",
+                "activation": "requires_trusted_history_verification",
+            }
+            _atomic_write(paths.root / "recovery-only", _canonical_bytes(marker))
+            if manifest.kind == "master":
+                _restore_master(paths, payload, recovery_password)
+            elif manifest.kind == "replica":
+                _restore_replica(paths, payload, recovery_password)
+            else:  # validated by _read_bundle; defensive for type narrowing
+                raise ProjectBackupError("unsupported project backup kind")
+            state = _validate_project_state(payload["project_state"])
+            _atomic_write(
+                paths.root / "recovery-project-state.enc",
+                crypto.encrypt_blob(
+                    _canonical_bytes(state), password=_password(recovery_password)
+                ),
+            )
+            marker["status"] = "restored"
+            _atomic_write(paths.root / "recovery-only", _canonical_bytes(marker))
+    except JournalError as ex:
+        raise ProjectBackupError("cannot lock recovery restore") from ex
     return RecoveryProfile(paths=paths, kind=manifest.kind, manifest=manifest)
 
 

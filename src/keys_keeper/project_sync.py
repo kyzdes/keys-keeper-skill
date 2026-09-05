@@ -548,6 +548,8 @@ class ProjectReplica:
             except NoReplicaGeneration:
                 raise ProjectSyncError("install the enrolled project snapshot before creating entries") from None
             for item in data.get("outbox", []):
+                if item["status"] in {"published", "conflict", "rejected", "quarantined"}:
+                    continue  # Durable outcomes are history, not active name reservations.
                 if item["payload"]["entry"]["name"] == payload["entry"]["name"]:
                     raise ProjectSyncError("pending entry name already exists")
             request_id = str(uuid4())

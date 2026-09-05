@@ -178,6 +178,57 @@ def test_interrupted_join_reuses_reserved_profile_and_request(tmp_path, configur
     assert worker.registry.resolve(joined["profile_id"])["status"] == "pending"
 
 
+def test_first_join_rejects_tombstoned_master_root_without_mutating_it(
+    tmp_path, configured
+):
+    master, _backend, scope, info = configured
+    master.backup("master", tmp_path / "recovery.enc", "synthetic-recovery-password")
+    invitation = master.invite(scope.id)
+
+    paths = Paths(tmp_path / "worker")
+    store = MetadataStore(paths)
+    old = Entry.new(name="deleted-before-enrollment", type=EntryType.API_KEY)
+    store.add(old)
+    store.delete_by_name(old.name)
+    before = paths.data_json.read_bytes()
+    worker = ProjectRuntime(
+        paths,
+        backend_factory=lambda: pytest.fail("master backend constructed"),
+    )
+
+    with pytest.raises(RuntimeErrorSafe, match="clean Keys Keeper root"):
+        worker.join(invitation, fingerprint=info["fingerprint"])
+
+    assert paths.data_json.read_bytes() == before
+    assert not (paths.root / "profile-registry.json").exists()
+    assert not paths.pending_dir.exists()
+    assert not paths.profiles_dir.exists()
+
+    artifact_paths = Paths(tmp_path / "worker-with-config")
+    artifact_paths.root.mkdir()
+    artifact_paths.config_toml.write_text("[sync]\nenabled = false\n")
+    artifact_worker = ProjectRuntime(
+        artifact_paths,
+        backend_factory=lambda: pytest.fail("master backend constructed"),
+    )
+    with pytest.raises(RuntimeErrorSafe, match="clean Keys Keeper root"):
+        artifact_worker.join(invitation, fingerprint=info["fingerprint"])
+    assert artifact_paths.config_toml.read_text() == "[sync]\nenabled = false\n"
+    assert not (artifact_paths.root / "profile-registry.json").exists()
+
+
+def test_worker_master_backend_rejected_before_cached_backend_is_returned(
+    tmp_path, configured
+):
+    worker, _joined, _answer = _connect(tmp_path, configured)
+    cached_backend = object()
+    worker._backend = cached_backend
+
+    with pytest.raises(RuntimeErrorSafe, match="worker root"):
+        _ = worker.master_backend
+    assert worker._backend is cached_backend
+
+
 def test_interrupted_initialize_reuses_orphaned_authority(tmp_path, monkeypatch):
     paths = Paths(tmp_path / "master")
     backend = FakeBackend()
