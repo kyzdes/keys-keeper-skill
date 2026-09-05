@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -295,6 +296,7 @@ def test_public_bundle_contains_no_device_private_keys_or_bearer(tmp_path, confi
     text = path.read_text()
     for field in ("token", "signing_private", "agreement_private"):
         assert state[field] not in text
-    assert path.stat().st_mode & 0o077 == 0
+    if os.name == "posix":
+        assert path.stat().st_mode & 0o077 == 0
     with pytest.raises(RuntimeErrorSafe):
         write_bundle(path, answer)

@@ -208,8 +208,9 @@ class StopRelay:
         pass
     def create_scope(self, policy):
         path = Path(os.environ["RELAY_RECORD"])
-        path.write_text(json.dumps(policy, sort_keys=True), encoding="utf-8")
-        with path.open("rb") as handle:
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(policy, handle, sort_keys=True)
+            handle.flush()
             os.fsync(handle.fileno())
         os._exit(77)
 
