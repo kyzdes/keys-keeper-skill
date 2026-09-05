@@ -1,0 +1,26 @@
+<dialog class="modal delete-dialog" id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
+  <div class="modal-header">
+    <h2 class="modal-title" id="delete-title">Delete entry?</h2>
+    <button class="icon-btn" id="delete-close" type="button" aria-label="Close delete confirmation">
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+    </button>
+  </div>
+  <div class="modal-body">
+    <p class="modal-copy" id="delete-description">These entries and their stored secrets will be permanently deleted from Keys Keeper. This cannot be undone.</p>
+    <ul class="delete-entry-list" id="delete-entry-list" aria-label="Entries to delete"></ul>
+    <div class="delete-dependencies" id="delete-dependencies" hidden>
+      <p>These entries contain links to the keys being deleted:</p>
+      <ul id="delete-dependents"></ul>
+      <label class="checkbox-row">
+        <input id="delete-cascade" type="checkbox">
+        <span>Remove these links too. Unselected entries will be kept.</span>
+      </label>
+    </div>
+    <p class="delete-status" id="delete-status" role="status" hidden></p>
+    <p class="delete-error" id="delete-error" role="alert" hidden></p>
+  </div>
+  <div class="modal-footer">
+    <button class="btn" id="delete-cancel" type="button" autofocus>Cancel</button>
+    <button class="btn btn-danger" id="delete-confirm" type="button">Delete entry</button>
+  </div>
+</dialog>

@@ -11,8 +11,22 @@
   <span class="label">Tags</span>
   {# tags rendered dynamically by JS once entries load #}
 </div>
+<div class="selection-bar" id="selection-bar" hidden>
+  <div class="selection-summary" role="status">
+    <strong id="selection-count"></strong>
+    <span id="selection-hidden"></span>
+  </div>
+  <div class="selection-actions">
+    <button class="btn btn-ghost btn-sm" id="clear-selection" type="button">Clear selection</button>
+    <button class="btn btn-danger btn-sm" id="delete-selected" type="button">Delete selected</button>
+  </div>
+</div>
 <div class="app-content" id="dashboard-content">
   <div class="unified-table-head" data-grouping="unified">
+    <label class="entry-select" title="Select all visible entries">
+      <input id="select-visible" type="checkbox" aria-label="Select all visible entries" disabled>
+      <span class="mobile-selection-label">Select visible</span>
+    </label>
     <span></span>
     <span>Type</span>
     <span>Entry</span>
