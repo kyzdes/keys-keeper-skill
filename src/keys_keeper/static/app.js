@@ -435,15 +435,21 @@
     const popularMount = document.getElementById('tag-popular-list');
     if (!popularMount) return;
     const tags = orderedTags('popular');
-    const popular = tags.slice(0, 6);
+    const popular = tags.slice(0, 4);
     document.getElementById('tag-directory-total').textContent = tags.length ? `(${tags.length})` : '';
-    document.getElementById('tag-directory-caption').textContent = tags.length ? 'Most used in this vault' : 'No tags yet';
     popularMount.replaceChildren(...popular.map(tag => tagOption(tag, 'tag-popular-item')));
     if (!popular.length) popularMount.append(el('p', { class: 'tag-directory-empty' }, 'Tags appear here when entries are labeled.'));
 
     const selectedCount = state.activeTags.size;
     document.getElementById('tag-filter-summary').hidden = selectedCount === 0;
     document.getElementById('tag-filter-count').textContent = `${selectedCount} tag${selectedCount === 1 ? '' : 's'} selected`;
+    const activeCount = document.getElementById('tag-directory-active-count');
+    activeCount.hidden = selectedCount === 0;
+    activeCount.textContent = selectedCount ? `${selectedCount}` : '';
+    document.getElementById('tag-directory-open').setAttribute(
+      'aria-label',
+      selectedCount ? `All tags. ${selectedCount} selected` : 'All tags',
+    );
 
     if (!tagDialog?.open) return;
     const query = state.tagQuery.trim().toLocaleLowerCase();
