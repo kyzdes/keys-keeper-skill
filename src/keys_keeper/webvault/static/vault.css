@@ -130,11 +130,11 @@
   font-weight: 750;
   letter-spacing: 0.02em;
 }
-.kkv-icon[data-type="api_key"] { background: var(--type-api); }
-.kkv-icon[data-type="ssh_key"] { background: var(--type-ssh); }
-.kkv-icon[data-type="server"] { background: var(--type-server); }
-.kkv-icon[data-type="domain"] { background: var(--type-domain); }
-.kkv-icon[data-type="note"] { background: var(--type-note); }
+.kkv-icon[data-type="api_key"] { background: var(--type-api-icon-bg); color: var(--type-api-icon-ink); }
+.kkv-icon[data-type="ssh_key"] { background: var(--type-ssh-icon-bg); color: var(--type-ssh-icon-ink); }
+.kkv-icon[data-type="server"] { background: var(--type-server-icon-bg); color: var(--type-server-icon-ink); }
+.kkv-icon[data-type="domain"] { background: var(--type-domain-icon-bg); color: var(--type-domain-icon-ink); }
+.kkv-icon[data-type="note"] { background: var(--type-note-icon-bg); color: var(--type-note-icon-ink); }
 .kkv-name { color: var(--text); font-size: 13.5px; font-weight: 600; }
 .kkv-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
 .kkv-tag {
