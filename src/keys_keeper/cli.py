@@ -1,6 +1,7 @@
 """keys CLI — argparse routing + subcommand dispatch."""
 from __future__ import annotations
 import argparse
+import errno
 import getpass
 import hashlib
 import os
@@ -695,8 +696,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     paths.ensure()
     server = AdminServer(paths=paths, port=args.port, idle_timeout_sec=15 * 60,
                          profile_selector=_profile_selector(args))
-    url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
-    print(f"keys-keeper admin starting on {url}")
+    try:
+        # Bind before creating, saving, or opening a capability URL.  A second
+        # `keys serve` used to mint a dead token, overwrite the live URL
+        # handoff, and then fail at this point with EADDRINUSE.
+        server.start()
+    except OSError as ex:
+        if ex.errno == errno.EADDRINUSE:
+            sys.stderr.write(
+                f"keys-keeper admin is already using 127.0.0.1:{args.port}. "
+                "Close that local server or choose another port, for example: "
+                "keys serve --port 0\n"
+            )
+        else:
+            sys.stderr.write(f"could not start keys-keeper admin: {ex}\n")
+        return 1
+
+    url = f"http://127.0.0.1:{server.bound_port}/?t={server.token}"
+    print(f"keys-keeper admin started on {url}")
     _maybe_suggest_app_install()
     _write_serve_url(paths, url)
     if not args.no_open:
