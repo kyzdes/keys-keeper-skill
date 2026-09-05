@@ -8,6 +8,11 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ## [Unreleased]
 
+### Added
+
+- Added per-row deletion and multi-select deletion to the local admin dashboard, including selection across search/tag filters and a visible-entry select-all control.
+- Replaced browser deletion prompts with a themed, keyboard-accessible confirmation showing entry names, explicit linked-entry consent, progress, and retry of remaining entries after a partial failure.
+
 ---
 
 ## [0.7.8] — 2026-09-03

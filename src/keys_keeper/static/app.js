@@ -51,6 +51,7 @@
     entries: [],
     activeTags: new Set(),
     search: '',
+    selected: new Set(),
   };
 
   function relTime(iso) {
@@ -88,6 +89,7 @@
   const ICON_PATHS = {
     copy: ['M7 6.5h7.5v9H7z', 'M5.5 13.5H4V4h8v1.5'],
     open: ['M8 5h7v7', 'M15 5 7 13', 'M13 15H5V7'],
+    trash: ['M4 5.5h12', 'M8 5.5V3.5h4v2', 'M5.5 5.5l.75 11h7.5l.75-11', 'M8.5 8.5v5', 'M11.5 8.5v5'],
   };
 
   function svgIcon(name) {
@@ -103,10 +105,8 @@
     return svg;
   }
 
-  function render() {
-    const mount = document.getElementById('entries-mount');
-    mount.innerHTML = '';
-    const filtered = state.entries.filter(e => {
+  function visibleEntries() {
+    return state.entries.filter(e => {
       if (state.search && !(`${e.name} ${(e.tags || []).join(' ')} ${e.note || ''}`.toLowerCase().includes(state.search.toLowerCase()))) {
         return false;
       }
@@ -115,11 +115,36 @@
       }
       return true;
     });
+  }
+
+  function updateSelection() {
+    const visible = visibleEntries();
+    const checked = visible.filter(e => state.selected.has(e.id)).length;
+    const selectAll = document.getElementById('select-visible');
+    selectAll.checked = visible.length > 0 && checked === visible.length;
+    selectAll.indeterminate = checked > 0 && checked < visible.length;
+    selectAll.disabled = visible.length === 0;
+    document.getElementById('selection-bar').hidden = state.selected.size === 0;
+    document.getElementById('selection-count').textContent = `${state.selected.size} selected`;
+    const hidden = state.selected.size - checked;
+    document.getElementById('selection-hidden').textContent = hidden ? `${hidden} hidden by filters` : '';
+    document.querySelectorAll('.entry-row').forEach(row => {
+      const selected = state.selected.has(row.dataset.entryId);
+      row.classList.toggle('is-selected', selected);
+      row.querySelector('input[type="checkbox"]').checked = selected;
+    });
+  }
+
+  function render() {
+    const mount = document.getElementById('entries-mount');
+    mount.innerHTML = '';
+    const filtered = visibleEntries();
     if (filtered.length === 0) {
       mount.append(el('div', { class: 'empty loading-state' }, state.entries.length ? 'No entries match these filters.' : 'Your vault is empty. Add an entry or import a protected list.'));
-      return;
+    } else {
+      filtered.forEach(e => mount.append(rowEl(e)));
     }
-    filtered.forEach(e => mount.append(rowEl(e)));
+    updateSelection();
   }
 
   function rowEl(e) {
@@ -127,10 +152,20 @@
     const row = el('div', {
       class: 'entry-row unified',
       tabindex: '0',
-      role: 'link',
-      'aria-label': `Open ${e.name}`,
+      role: 'group',
+      'aria-label': e.name,
+      'data-entry-id': e.id,
     });
     row.append(
+      (() => {
+        const checkbox = el('input', { type: 'checkbox', 'aria-label': `Select ${e.name}` });
+        checkbox.onchange = () => {
+          if (checkbox.checked) state.selected.add(e.id);
+          else state.selected.delete(e.id);
+          updateSelection();
+        };
+        return el('label', { class: 'entry-select', onclick: ev => ev.stopPropagation() }, checkbox);
+      })(),
       el('span', {
         class: 'type-icon',
         style: `background:${meta.color}`,
@@ -139,7 +174,7 @@
       (() => {
         const c = el('div', { class: 'name-block' });
         const r1 = el('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' });
-        r1.append(el('span', { class: 'name' }, e.name));
+        r1.append(el('a', { class: 'name', href: `/entry/${encodeURIComponent(e.id)}`, onclick: ev => ev.stopPropagation() }, e.name));
         const taglist = el('div', { class: 'tag-mini-list' });
         (e.tags || []).slice(0, 4).forEach(t => taglist.append(el('span', { class: 'tag-mini' }, t)));
         r1.append(taglist);
@@ -164,12 +199,20 @@
           'aria-label': `Open ${e.name}`,
           onclick: (ev) => ev.stopPropagation(),
         }, svgIcon('open'));
-        a.append(copyBtn, editBtn);
+        const deleteBtn = el('button', {
+          class: 'icon-btn delete-entry-btn',
+          title: 'Delete entry',
+          type: 'button',
+          'aria-label': `Delete ${e.name}`,
+          onclick: ev => { ev.stopPropagation(); requestDelete([e]); },
+        }, svgIcon('trash'));
+        a.append(deleteBtn, copyBtn, editBtn);
         return a;
       })(),
     );
     row.onclick = () => { location.href = `/entry/${encodeURIComponent(e.id)}`; };
     row.onkeydown = (ev) => {
+      if (ev.target !== row) return;
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
         location.href = `/entry/${encodeURIComponent(e.id)}`;
@@ -193,6 +236,155 @@
     document.body.append(t);
     setTimeout(() => t.remove(), 3500);
   }
+
+  // Single and bulk deletion share the same review and existing authenticated API.
+  const deleteDialog = document.getElementById('delete-dialog');
+  const deleteConfirm = document.getElementById('delete-confirm');
+  const deleteCascade = document.getElementById('delete-cascade');
+  const deletion = { pending: [], busy: false, completed: 0, trigger: null };
+
+  function deletionDependents() {
+    return [...new Set(deletion.pending.flatMap(e => e.used_by || []))];
+  }
+
+  function deletionMessage(id, message) {
+    const target = document.getElementById(id);
+    target.textContent = message;
+    target.hidden = !message;
+  }
+
+  function renderDeletion() {
+    const count = deletion.pending.length;
+    document.getElementById('delete-title').textContent = count === 1 ? 'Delete entry?' : `Delete ${count} entries?`;
+    document.getElementById('delete-entry-list').replaceChildren(...deletion.pending.map(e =>
+      el('li', {}, el('strong', {}, e.name), el('span', {}, e.type.replaceAll('_', ' '))),
+    ));
+    const dependents = deletionDependents();
+    const names = new Set(deletion.pending.map(e => e.name));
+    document.getElementById('delete-dependencies').hidden = dependents.length === 0;
+    document.getElementById('delete-dependents').replaceChildren(...dependents.map(name =>
+      el('li', {}, name, names.has(name) ? ' (also selected for deletion)' : ''),
+    ));
+    deleteConfirm.textContent = count === 1 ? 'Delete entry' : `Delete ${count} entries`;
+    deleteConfirm.disabled = deletion.busy || (dependents.length > 0 && !deleteCascade.checked);
+  }
+
+  function setDeletionBusy(busy) {
+    deletion.busy = busy;
+    deleteDialog.setAttribute('aria-busy', String(busy));
+    ['delete-close', 'delete-cancel', 'delete-cascade'].forEach(id => {
+      document.getElementById(id).disabled = busy;
+    });
+    deleteConfirm.disabled = busy || (deletionDependents().length > 0 && !deleteCascade.checked);
+  }
+
+  function requestDelete(entries) {
+    if (!entries.length || deleteDialog.open) return;
+    deletion.pending = entries.map(e => ({ ...e }));
+    deletion.completed = 0;
+    deletion.trigger = document.activeElement;
+    deleteCascade.checked = false;
+    deletionMessage('delete-status', '');
+    deletionMessage('delete-error', '');
+    setDeletionBusy(false);
+    renderDeletion();
+    deleteDialog.showModal();
+    document.getElementById('delete-cancel').focus();
+  }
+
+  function closeDeletion() {
+    if (!deletion.busy) deleteDialog.close();
+  }
+
+  document.getElementById('delete-close').onclick = closeDeletion;
+  document.getElementById('delete-cancel').onclick = closeDeletion;
+  deleteCascade.onchange = renderDeletion;
+  deleteDialog.addEventListener('cancel', ev => {
+    if (deletion.busy) ev.preventDefault();
+  });
+  deleteDialog.addEventListener('close', () => {
+    if (deletion.trigger?.isConnected && !deletion.trigger.closest('[hidden]')) deletion.trigger.focus();
+    else document.getElementById('search')?.focus();
+  });
+  deleteDialog.addEventListener('click', ev => {
+    const box = deleteDialog.getBoundingClientRect();
+    if (ev.target === deleteDialog && (ev.clientX < box.left || ev.clientX > box.right || ev.clientY < box.top || ev.clientY > box.bottom)) closeDeletion();
+  });
+
+  deleteConfirm.onclick = async () => {
+    if (deleteConfirm.disabled || deletion.busy) return;
+    const approvedDependents = new Set(deleteCascade.checked ? deletionDependents() : []);
+    setDeletionBusy(true);
+    deletionMessage('delete-error', '');
+    const total = deletion.completed + deletion.pending.length;
+    while (deletion.pending.length) {
+      const entry = deletion.pending[0];
+      const url = `/api/entries/${encodeURIComponent(entry.id)}`;
+      deletionMessage('delete-status', `Deleting ${deletion.completed + 1} of ${total}…`);
+      try {
+        // Always let the server re-check links before using the user's cascade consent.
+        let response = await fetch(url, { method: 'DELETE' });
+        if (response.status === 409) {
+          const body = await response.json();
+          const dependents = body.dependents || [];
+          if (!deleteCascade.checked || !dependents.length || dependents.some(name => !approvedDependents.has(name))) {
+            entry.used_by = dependents;
+            deleteCascade.checked = false;
+            throw new Error('Links have changed. Review the linked entries and confirm again.');
+          }
+          response = await fetch(`${url}?cascade=1`, { method: 'DELETE' });
+        }
+        // A concurrent deletion or a retry after a lost response is already complete.
+        if (!response.ok && response.status !== 404) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || `Request failed (${response.status}).`);
+        }
+        deletion.pending.shift();
+        deletion.completed += 1;
+        state.selected.delete(entry.id);
+        state.entries = state.entries.filter(e => e.id !== entry.id);
+        state.entries.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
+        deletion.pending.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
+      } catch (err) {
+        deletionMessage('delete-error', `Could not finish deleting ${entry.name}. ${err.message} You can retry the remaining entries or cancel.`);
+        break;
+      }
+    }
+    setDeletionBusy(false);
+    if (document.getElementById('entries-mount')) {
+      renderTagRail();
+      render();
+    }
+    if (deletion.pending.length) {
+      renderDeletion();
+      deletionMessage('delete-status', `${deletion.completed} removed · ${deletion.pending.length} remaining`);
+      document.getElementById('delete-cancel').focus();
+      return;
+    }
+    closeDeletion();
+    if (document.getElementById('detail-mount')) {
+      location.href = '/';
+      return;
+    }
+    toast(deletion.completed === 1 ? 'Entry removed from Keys Keeper' : `${deletion.completed} entries removed from Keys Keeper`);
+    load().catch(() => toast('Entries removed. Refresh the page to load the latest vault state.', 'error'));
+  };
+
+  document.getElementById('select-visible')?.addEventListener('change', ev => {
+    visibleEntries().forEach(e => {
+      if (ev.target.checked) state.selected.add(e.id);
+      else state.selected.delete(e.id);
+    });
+    updateSelection();
+  });
+  document.getElementById('clear-selection')?.addEventListener('click', () => {
+    state.selected.clear();
+    updateSelection();
+    document.getElementById('select-visible').focus();
+  });
+  document.getElementById('delete-selected')?.addEventListener('click', () => {
+    requestDelete(state.entries.filter(e => state.selected.has(e.id)));
+  });
 
   // Fade the right edge only while there is more to scroll to, so the last chip
   // is never left dimmed once you reach the end, and a rail that fits shows no fade.
@@ -222,6 +414,7 @@
 
     const allTags = new Set();
     state.entries.forEach(e => (e.tags || []).forEach(t => allTags.add(t)));
+    state.activeTags.forEach(tag => { if (!allTags.has(tag)) state.activeTags.delete(tag); });
     rail.querySelectorAll('.tag-chip').forEach(n => n.remove());
 
     // Active chips first -> they sit flush against the pinned FILTER label and
@@ -262,6 +455,8 @@
   async function load() {
     const data = await api('/api/entries');
     state.entries = data.entries;
+    const ids = new Set(state.entries.map(e => e.id));
+    state.selected.forEach(id => { if (!ids.has(id)) state.selected.delete(id); });
     renderTagRail();
     render();
     loadEnvPanel().catch(() => { /* panel is best-effort; never blocks dashboard */ });
@@ -320,6 +515,7 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (deleteDialog.open) return;
     if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       e.preventDefault();
       document.getElementById('search')?.focus();
@@ -349,6 +545,7 @@
   };
 
   async function paletteOpen() {
+    if (deleteDialog.open) return;
     palette.open = true;
     palette.query = '';
     palette.selectedIdx = 0;
@@ -472,30 +669,7 @@
         audit.append(row);
       });
       document.getElementById('copy-btn').onclick = () => copy(e.id, e.name);
-      document.getElementById('delete-btn').onclick = async () => {
-        if (!confirm(`Delete ${e.name}?`)) return;
-        const doDelete = async (cascade) => {
-          const url = `/api/entries/${encodeURIComponent(e.id)}` + (cascade ? '?cascade=1' : '');
-          return fetch(url, { method: 'DELETE' });
-        };
-        try {
-          let r = await doDelete(false);
-          if (r.status === 409) {
-            const body = await r.json().catch(() => ({}));
-            const deps = (body.dependents || []).join(', ') || 'other entries';
-            if (!confirm(`${e.name} is referenced by: ${deps}\n\nDelete anyway and strip refs from dependents?`)) return;
-            r = await doDelete(true);
-          }
-          if (!r.ok) {
-            const body = await r.json().catch(() => ({}));
-            toast(`Delete failed — ${body.error || r.status}`, 'error');
-            return;
-          }
-          location.href = '/';
-        } catch (ex) {
-          toast(`Delete failed — ${ex.message || ex}`, 'error');
-        }
-      };
+      document.getElementById('delete-btn').onclick = () => requestDelete([e]);
       document.getElementById('replace-secret-btn').onclick = () => {
         document.getElementById('replace-modal').hidden = false;
         document.getElementById('rm-input').value = '';
