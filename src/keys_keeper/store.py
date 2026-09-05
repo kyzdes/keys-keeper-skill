@@ -6,17 +6,20 @@ import json
 import os
 import shutil
 import tempfile
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 from keys_keeper._locking import lock_exclusive, unlock
-from keys_keeper.models import Entry, now_iso
+from keys_keeper.models import Entry, ValidationError, now_iso, validate_tombstone
+from keys_keeper.project_models import CatalogState, CatalogValidationError, Folder, new_catalog_id
 from keys_keeper.paths import Paths, ensure_private_dir
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
 # S3 sync instead of being resurrected by an older peer snapshot. See sync.py.
 SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 3
 
 
 class StoreError(RuntimeError):
@@ -31,13 +34,55 @@ class NotFound(StoreError):
     pass
 
 
+def _normalize_v3_entries(records: list[dict]) -> None:
+    """Give legacy-style Entry writers safe, explicit v3 catalog defaults."""
+    for record in records:
+        record.setdefault("folder_id", None)
+        record.setdefault("distribution", "local_only")
+        record.setdefault("provenance", {"source": "local"})
+        record.setdefault("content_revision", str(uuid.uuid4()))
+
+
+def _validate_v3_data(data: dict) -> None:
+    allowed = {"schema_version", "entries", "tombstones", "catalog"}
+    if set(data) != allowed:
+        raise StoreError("schema-v3 metadata contains unknown or missing top-level fields")
+    if data.get("schema_version") != CATALOG_SCHEMA_VERSION:
+        raise StoreError("schema-v3 metadata has an invalid schema_version")
+    records = data.get("entries")
+    if not isinstance(records, list):
+        raise StoreError("schema-v3 entries must be a list")
+    try:
+        entries = [
+            Entry.from_untrusted_dict(record, allow_project_fields=True)
+            for record in records
+        ]
+        tombstones = [validate_tombstone(record) for record in data.get("tombstones", [])]
+        if len({entry.id for entry in entries}) != len(entries):
+            raise ValidationError("schema-v3 metadata contains duplicate entry ids")
+        catalog = CatalogState.from_dict(data.get("catalog"), entry_ids={entry.id for entry in entries})
+    except (ValidationError, CatalogValidationError) as ex:
+        raise StoreError(f"invalid schema-v3 catalog metadata: {ex}") from ex
+    if len({item["id"] for item in tombstones}) != len(tombstones):
+        raise StoreError("invalid schema-v3 catalog metadata: duplicate tombstone id")
+    folder_ids = {folder.id for folder in catalog.folders}
+    for entry in entries:
+        if entry.folder_id is not None and entry.folder_id not in folder_ids:
+            raise StoreError("invalid schema-v3 catalog metadata: entry folder_id refers to a missing folder")
+
+
 def _metadata_revision(data: dict) -> str:
+    revision_data = {
+        "schema_version": data.get("schema_version", SCHEMA_VERSION),
+        "entries": data.get("entries", []),
+        "tombstones": data.get("tombstones", []),
+    }
+    # Keep schema-v1/v2 revision bytes exactly as they were. Catalog metadata is
+    # part of the revision once an explicit v3 migration has happened.
+    if revision_data["schema_version"] >= CATALOG_SCHEMA_VERSION:
+        revision_data["catalog"] = data.get("catalog", {})
     canonical = json.dumps(
-        {
-            "schema_version": data.get("schema_version", SCHEMA_VERSION),
-            "entries": data.get("entries", []),
-            "tombstones": data.get("tombstones", []),
-        },
+        revision_data,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -62,6 +107,7 @@ class MetadataTransaction:
 
     def __init__(self, data: dict):
         self._data = data
+        self._schema_version = data.get("schema_version", SCHEMA_VERSION)
         self._records_by_slot: dict[int, dict] = {}
         self._slot_by_name: dict[str, int] = {}
         self._slot_by_id: dict[str, int] = {}
@@ -162,6 +208,19 @@ class MetadataTransaction:
         data["entries"] = self._materialize_entries()
         return _metadata_revision(data)
 
+    def catalog_state(self) -> dict:
+        """Detached catalog data suitable for a coordinated metadata mutation."""
+        if self._schema_version < CATALOG_SCHEMA_VERSION:
+            raise StoreError("project catalog requires explicit schema-v3 migration")
+        return json.loads(json.dumps(self._data["catalog"], ensure_ascii=False))
+
+    def set_catalog_state(self, state: dict) -> None:
+        """Validate and set catalog metadata within this same transaction."""
+        if self._schema_version < CATALOG_SCHEMA_VERSION:
+            raise StoreError("project catalog requires explicit schema-v3 migration")
+        CatalogState.from_dict(state, entry_ids=set(self._slot_by_id))
+        self._data["catalog"] = json.loads(json.dumps(state, ensure_ascii=False))
+
     def _append_record(self, record: dict) -> None:
         slot = self._next_slot
         self._next_slot += 1
@@ -188,6 +247,9 @@ class MetadataTransaction:
 
     def _commit(self) -> None:
         self._data["entries"] = self._materialize_entries()
+        if self._schema_version >= CATALOG_SCHEMA_VERSION:
+            _normalize_v3_entries(self._data["entries"])
+            _validate_v3_data(self._data)
 
 
 class MetadataStore:
@@ -270,6 +332,44 @@ class MetadataStore:
         """Soft-delete records: [{'id', 'name', 'deleted_at'}]. Read-only copy."""
         return list(self._read().get("tombstones", []))
 
+    def catalog_state(self) -> dict:
+        """Return a detached, validated v3 catalog without changing disk state."""
+        data = self._read()
+        if data.get("schema_version", SCHEMA_VERSION) < CATALOG_SCHEMA_VERSION:
+            raise StoreError("project catalog requires explicit schema-v3 migration")
+        return json.loads(json.dumps(data["catalog"], ensure_ascii=False))
+
+    def migrate_catalog_v3(self, *, expected_revision: str | None = None) -> dict:
+        """Explicitly and atomically migrate legacy metadata to catalog schema v3.
+
+        Reading a v1/v2 vault never calls this method.  The pre-catalog file is
+        copied once while the metadata lock is held, before its first v3 write.
+        """
+        with self._locked_write() as data:
+            current = data.get("schema_version", SCHEMA_VERSION)
+            if expected_revision is not None:
+                if not isinstance(expected_revision, str) or len(expected_revision) != 64:
+                    raise StoreError("catalog migration expected_revision is invalid")
+                if _metadata_revision(data) != expected_revision:
+                    raise StoreError("catalog migration source changed after verified backup")
+            if current == CATALOG_SCHEMA_VERSION:
+                return json.loads(json.dumps(data["catalog"], ensure_ascii=False))
+            if current != SCHEMA_VERSION:
+                raise StoreError("catalog migration requires a supported legacy schema")
+            backup = self.paths.root / f"data.v{SCHEMA_VERSION}.json.bak"
+            if self.paths.data_json.exists() and not backup.exists():
+                shutil.copy2(self.paths.data_json, backup)
+            unsorted = Folder(id=new_catalog_id(), name="Unsorted", parent_id=None, position=0)
+            for record in data["entries"]:
+                record["folder_id"] = unsorted.id
+                record["distribution"] = "local_only"
+                record["provenance"] = {"source": "legacy_migration"}
+                record["content_revision"] = str(uuid.uuid4())
+            data["catalog"] = CatalogState(folders=[unsorted]).to_dict()
+            data["schema_version"] = CATALOG_SCHEMA_VERSION
+            _validate_v3_data(data)
+            return json.loads(json.dumps(data["catalog"], ensure_ascii=False))
+
     def snapshot(self) -> MetadataSnapshot:
         """Read entries, tombstones, and their revision under one lock."""
         ensure_private_dir(self.paths.root)
@@ -326,14 +426,16 @@ class MetadataStore:
             return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
         data = json.loads(raw)
         sv = data.get("schema_version", 0)
-        if sv > SCHEMA_VERSION:
+        if sv > CATALOG_SCHEMA_VERSION:
             raise StoreError(
                 f"data.json schema_version={sv} is newer than this CLI supports "
-                f"({SCHEMA_VERSION}); upgrade keys-keeper"
+                f"({CATALOG_SCHEMA_VERSION}); upgrade keys-keeper"
             )
         if sv < SCHEMA_VERSION:
             data = self._migrate(data, sv)
         data.setdefault("tombstones", [])
+        if data.get("schema_version") == CATALOG_SCHEMA_VERSION:
+            _validate_v3_data(data)
         return data
 
     def _migrate(self, data: dict, from_version: int) -> dict:
@@ -363,6 +465,9 @@ class MetadataStore:
             lock_exclusive(lock_fd)
             data = self._read()
             yield data
+            if data.get("schema_version", SCHEMA_VERSION) >= CATALOG_SCHEMA_VERSION:
+                _normalize_v3_entries(data["entries"])
+                _validate_v3_data(data)
             self._atomic_write(data)
         finally:
             unlock(lock_fd)

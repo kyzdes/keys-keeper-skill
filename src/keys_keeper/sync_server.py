@@ -90,7 +90,7 @@ def _json_object(data: bytes, *, label: str) -> dict[str, Any]:
                 ValueError("non-finite JSON number")
             ),
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise SyncServerError(400, "invalid_json", f"{label} must be valid JSON") from exc
     if not isinstance(value, dict):
         raise SyncServerError(400, "invalid_json", f"{label} must be a JSON object")
@@ -186,6 +186,7 @@ class SyncServerApp:
         bootstrap_admin_token: str | None = None,
         *,
         clock: Callable[[], int | float] = _now_seconds,
+        project_limits=None,
     ):
         token = bootstrap_admin_token
         if token is None:
@@ -196,6 +197,8 @@ class SyncServerApp:
         self._bootstrap_token_hash = _sha256(token.encode("utf-8"))
         self._clock = clock
         self._initialize_database()
+        from keys_keeper.project_server import ProjectRelay
+        self.project_relay = ProjectRelay(self, limits=project_limits)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30.0, isolation_level=None)
@@ -1018,7 +1021,7 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 {"error": {"code": error.code, "message": error.message}},
             )
 
-        def _read_json(self) -> dict[str, Any]:
+        def _read_json(self, *, maximum: int | None = None) -> dict[str, Any]:
             if self.headers.get("Transfer-Encoding") is not None:
                 raise SyncServerError(400, "invalid_request", "transfer encoding is unsupported")
             content_types = self.headers.get_all("Content-Type", failobj=[])
@@ -1039,7 +1042,7 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 raise SyncServerError(400, "invalid_request", "invalid Content-Length") from exc
             if length < 0:
                 raise SyncServerError(400, "invalid_request", "invalid Content-Length")
-            if length > MAX_REQUEST_BODY:
+            if length > (MAX_REQUEST_BODY if maximum is None else min(MAX_REQUEST_BODY, maximum)):
                 raise SyncServerError(413, "payload_too_large", "request body is too large")
             data = self.rfile.read(length)
             if len(data) != length:
@@ -1062,6 +1065,15 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 path = split.path
                 if path == "/healthz" and not split.query:
                     self._send_json(200, app.health())
+                    return
+                if path.startswith("/v2/"):
+                    if split.query:
+                        raise SyncServerError(400, "invalid_request", "query is not allowed")
+                    with app.project_relay.request_slot():
+                        self.connection.settimeout(app.project_relay.limits.socket_timeout)
+                        app.project_relay.preflight("GET", path, self.headers)
+                        status, result = app.project_relay.handle("GET", path, self.headers)
+                        self._send_json(status, result)
                     return
                 match = re.fullmatch(r"/v1/vaults/([^/]+)/head", path)
                 if match:
@@ -1121,6 +1133,8 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 self._send_error(SyncServerError(400, "invalid_request", "invalid query"))
             except SyncServerError as exc:
                 self._send_error(exc)
+            except TimeoutError:
+                self._send_error(SyncServerError(408, "request_timeout", "request timed out"))
             except Exception:
                 self._send_error(SyncServerError(500, "internal_error", "internal server error"))
 
@@ -1130,6 +1144,14 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 if split.query:
                     raise SyncServerError(400, "invalid_request", "query is not allowed")
                 path = split.path
+                if path.startswith("/v2/"):
+                    with app.project_relay.request_slot():
+                        self.connection.settimeout(app.project_relay.limits.socket_timeout)
+                        app.project_relay.preflight("POST", path, self.headers)
+                        payload = self._read_json(maximum=app.project_relay.request_limit(path))
+                        status, result = app.project_relay.handle("POST", path, self.headers, payload)
+                        self._send_json(status, result)
+                    return
                 payload = self._read_json()
                 if path == "/v1/vaults":
                     result = app.create_vault(payload, self.headers.get("Authorization"))
@@ -1171,6 +1193,8 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 raise SyncServerError(404, "not_found", "endpoint not found")
             except SyncServerError as exc:
                 self._send_error(exc)
+            except TimeoutError:
+                self._send_error(SyncServerError(408, "request_timeout", "request timed out"))
             except Exception:
                 self._send_error(SyncServerError(500, "internal_error", "internal server error"))
 
@@ -1201,7 +1225,38 @@ def create_http_server(
         is_loopback = host.lower() == "localhost"
     if not is_loopback and not allow_non_loopback:
         raise ValueError("non-loopback bind requires allow_non_loopback=True")
-    return ThreadingHTTPServer((host, port), make_handler(app))
+    # Bound accepted connections before a request thread or JSON allocation is
+    # created, including peers that never finish sending their HTTP headers.
+    class BoundedSyncHTTPServer(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def __init__(self, address, handler):
+            import threading
+            self._connections = threading.BoundedSemaphore(app.project_relay.limits.concurrent_connections)
+            super().__init__(address, handler)
+
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(app.project_relay.limits.socket_timeout)
+            return connection, address
+
+        def process_request(self, request, address):
+            if not self._connections.acquire(blocking=False):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, address)
+            except BaseException:
+                self._connections.release()
+                raise
+
+        def process_request_thread(self, request, address):
+            try:
+                super().process_request_thread(request, address)
+            finally:
+                self._connections.release()
+
+    return BoundedSyncHTTPServer((host, port), make_handler(app))
 
 
 __all__ = [

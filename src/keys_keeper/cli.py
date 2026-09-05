@@ -23,7 +23,49 @@ from keys_keeper.models import (
 from keys_keeper.paths import Paths
 from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
 from keys_keeper.service import HasDependents, SecretInput, VaultService
-from keys_keeper.store import MetadataStore, NameConflict
+from keys_keeper.store import MetadataStore, NameConflict, StoreError
+
+
+def _profile_selector(args: argparse.Namespace) -> str | None:
+    """Normalize the global profile selector without guessing a scope."""
+    selector = getattr(args, "profile_selector", None)
+    environment = getattr(args, "profile_environment", None)
+    if environment is None:
+        return selector
+    if not selector:
+        raise ValueError("--env requires --profile or --project")
+    if "/" in selector:
+        raise ValueError("choose either project/environment or a profile UUID, not both")
+    return f"{selector}/{environment}"
+
+
+def _context(args: argparse.Namespace, *, access=None):
+    """Build exactly one selected vault context for a command invocation.
+
+    The import is lazy while project runtime is optional during catalog-only
+    upgrades.  The nullary factory keeps legacy CLI tests able to substitute
+    ``build_backend`` without mutating module globals.
+    """
+    from keys_keeper.composition import AccessContext
+    from keys_keeper.project_runtime import ProjectRuntime
+
+    selected_access = AccessContext.INTERACTIVE if access is None else access
+    runtime = ProjectRuntime(
+        Paths(), access=selected_access,
+        # Keep the legacy default seam, but never drop an explicit no-UI policy.
+        backend_factory=(lambda: build_backend()) if access is None else (
+            lambda: build_backend(access=selected_access)
+        ),
+    )
+    return runtime.context(_profile_selector(args))
+
+
+def _context_or_error(args: argparse.Namespace, *, access=None):
+    try:
+        return _context(args, access=access)
+    except (ValueError, RuntimeError) as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return None
 
 
 # ----- input source resolution -----
@@ -58,11 +100,15 @@ def _read_input(args: argparse.Namespace) -> str:
 # ----- subcommand handlers -----
 
 def cmd_add(args: argparse.Namespace) -> int:
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    # The profile registry remains at the root. The context above validates a
+    # selector, while the server resolves that fixed selector on every request.
     paths = Paths()
     paths.ensure()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
-    backend = build_backend()
+    store = ctx.store
+    audit = ctx.audit
     type_ = EntryType(args.type)
 
     # merge --field flags into fields dict
@@ -93,7 +139,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     # determine if this entry type stores a secret
     needs_secret = type_ in (EntryType.API_KEY, EntryType.SSH_KEY) or (
         type_ == EntryType.NOTE and fields.get("secret_body", False)
-    )
+    ) or (type_ == EntryType.SERVER and fields.get("auth") == "password")
 
     value = ""
     if needs_secret:
@@ -110,9 +156,9 @@ def cmd_add(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {e}\n")
         return 2
 
-    service = VaultService(store, backend)
+    service = ctx.service
     try:
-        service.create_entry(
+        entry = service.create_entry(
             entry,
             secrets=SecretInput(value=value) if needs_secret else None,
             replace=args.replace,
@@ -130,7 +176,10 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    store = MetadataStore(Paths())
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
     entries = store.list()
     if args.type:
         entries = [e for e in entries if e.type.value == args.type]
@@ -154,7 +203,10 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_info(args: argparse.Namespace) -> int:
-    store = MetadataStore(Paths())
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
@@ -196,14 +248,16 @@ def cmd_reveal(args: argparse.Namespace) -> int:
             "extract plaintext.)\n"
         )
         return 2
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = build_backend()
+    backend = ctx.backend
     try:
         sealed = backend.get(e.id)
     except Exception as ex:
@@ -231,14 +285,16 @@ def _shell_quote(s: str) -> str:
 
 
 def cmd_copy(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = build_backend()
+    backend = ctx.backend
     try:
         sealed = backend.get(e.id)
     except Exception as ex:
@@ -265,9 +321,11 @@ def cmd_copy(args: argparse.Namespace) -> int:
 
 # inject
 def cmd_inject(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
@@ -279,7 +337,7 @@ def cmd_inject(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {ex}\n")
         return 1
 
-    backend = build_backend()
+    backend = ctx.backend
     # File exposure sink (not printed, but readable by processes with access).
     value = backend.get(e.id).unseal()
     existing = target_state.text
@@ -323,10 +381,12 @@ _RESOLVE_RE = re.compile(r"__KEYS:([a-z0-9][a-z0-9._-]*[a-z0-9])(?::([a-z_]+))?_
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
-    backend = build_backend()
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
+    backend = ctx.backend
     target = Path(args.file)
     try:
         target_state = read_secure_text(target, missing_ok=False)
@@ -384,15 +444,16 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 # rm
 def cmd_rm(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = build_backend()
-    service = VaultService(store, backend)
+    service = ctx.service
     try:
         service.delete_entry(e.id, cascade=args.cascade)
     except HasDependents as ex:
@@ -412,9 +473,11 @@ def cmd_rm(args: argparse.Namespace) -> int:
 
 # edit
 def cmd_edit(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
@@ -455,7 +518,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
         e.name = args.new_name
     e.updated_at = now_iso()
     try:
-        VaultService(store, build_backend()).update_entry(e)
+        ctx.service.update_entry(e)
     except NameConflict as ex:
         sys.stderr.write(f"error: {ex}\n")
         return 1
@@ -470,7 +533,10 @@ def cmd_edit(args: argparse.Namespace) -> int:
 
 # doctor
 def cmd_doctor(args: argparse.Namespace) -> int:
-    paths = Paths()
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    paths = ctx.paths
     paths.ensure()
     print(f"keys-keeper {__version__}")
     print(f"config dir: {paths.root}")
@@ -480,7 +546,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # keychain access probe
     backend = None
     try:
-        backend = build_backend()
+        backend = ctx.backend
         print(f"backend:      {type(backend).__name__}")
         # Match by class name (not isinstance) so cli.py doesn't import the
         # Linux-only backend module on macOS/Windows — keeps platform specifics
@@ -505,7 +571,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # data.json validity + entry count
     try:
-        store = MetadataStore(paths)
+        store = ctx.store
         entries = store.list()
         print(f"data.json:    ✓ {len(entries)} entries")
     except Exception as ex:
@@ -536,7 +602,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # keychain orphans (account exists but no metadata) and missing (metadata but no keychain)
     try:
-        kc_ids = set((backend or build_backend()).list_ids())
+        kc_ids = set((backend or ctx.backend).list_ids())
     except Exception:
         kc_ids = None
     if kc_ids is not None:
@@ -557,9 +623,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_quickstart(args: argparse.Namespace) -> int:
     """Friendly getting-started: orient a brand-new user without ever touching
     a secret value. Safe to run any time — read-only, no plaintext."""
-    paths = Paths()
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    paths = ctx.paths
     try:
-        n = len(MetadataStore(paths).list())
+        n = len(ctx.store.list())
     except Exception:
         n = 0
 
@@ -598,10 +667,12 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
 
 def cmd_ssh(args: argparse.Namespace) -> int:
     from keys_keeper.ssh_runner import run_ssh
-    paths = Paths()
-    store = MetadataStore(paths)
-    audit = AuditLog(paths)
-    backend = build_backend()
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    store = ctx.store
+    audit = ctx.audit
+    backend = ctx.backend
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
@@ -617,9 +688,13 @@ def cmd_ssh(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from keys_keeper.server import AdminServer
-    paths = Paths()
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    paths = ctx.paths
     paths.ensure()
-    server = AdminServer(paths=paths, port=args.port, idle_timeout_sec=15 * 60)
+    server = AdminServer(paths=paths, port=args.port, idle_timeout_sec=15 * 60,
+                         profile_selector=_profile_selector(args))
     url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
     print(f"keys-keeper admin starting on {url}")
     _maybe_suggest_app_install()
@@ -669,11 +744,47 @@ def _maybe_suggest_app_install() -> None:
         pass
 
 
+def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
+    """Refuse legacy writers before a prompt or a credential-backend access.
+
+    Schema v3 has catalog bindings which the old encrypted backup format cannot
+    represent.  Reading ``catalog_state`` is intentionally side-effect free;
+    it does not migrate legacy metadata.
+    """
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return None
+    if ctx.kind != "master":
+        sys.stderr.write(f"error: legacy {operation} is only available to the master profile\n")
+        return None
+    paths = ctx.paths
+    store = ctx.store
+    try:
+        store.catalog_state()
+    except StoreError as ex:
+        if "explicit schema-v3 migration" in str(ex):
+            return paths, store
+        sys.stderr.write(f"error: cannot verify legacy {operation} compatibility: {ex}\n")
+        return None
+    sys.stderr.write(
+        f"error: legacy {operation} is disabled for catalog schema v3 because it "
+        "cannot preserve project scopes. Use project-scoped recovery, or restore "
+        "the verified pre-migration backup with a compatible legacy client.\n"
+    )
+    return None
+
+
 def cmd_export(args: argparse.Namespace) -> int:
-    paths = Paths()
-    store = MetadataStore(paths)
-    backend = build_backend()
-    audit = AuditLog(paths)
+    preflight = _legacy_full_vault_preflight(args, "export")
+    if preflight is None:
+        return 1
+    paths, store = preflight
+
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    backend = ctx.backend
+    audit = ctx.audit
     pw = getpass.getpass("Export password: ")
     pw2 = getpass.getpass("Confirm: ")
     if pw != pw2:
@@ -707,9 +818,12 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_import(args: argparse.Namespace) -> int:
+    preflight = _legacy_full_vault_preflight(args, "import")
+    if preflight is None:
+        return 1
+    paths, store = preflight
     from keys_keeper.crypto import decrypt_blob, BadPassword
     import json as _json
-    paths = Paths()
     paths.ensure()
     pw = getpass.getpass("Import password: ")
     blob = Path(args.file).read_bytes()
@@ -724,10 +838,12 @@ def cmd_import(args: argparse.Namespace) -> int:
     except (_json.JSONDecodeError, UnicodeDecodeError, ValidationError) as ex:
         sys.stderr.write(f"error: invalid import payload: {ex}\n")
         return 1
-    store = MetadataStore(paths)
-    backend = build_backend()
-    service = VaultService(store, backend)
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    backend = ctx.backend
+    service = ctx.service
+    audit = ctx.audit
     existing = {e.name for e in store.list()}
     imported = 0
     for rec, e in zip(payload["entries"], validated_entries):
@@ -763,8 +879,10 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
-    paths = Paths()
-    audit = AuditLog(paths)
+    ctx = _context_or_error(args)
+    if ctx is None:
+        return 1
+    audit = ctx.audit
     from datetime import datetime, timezone, timedelta
     since = None
     if args.since:
@@ -858,6 +976,10 @@ def cmd_app_uninstall(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="keys", description="personal secrets manager")
     p.add_argument("--version", action="version", version=f"keys-keeper {__version__}")
+    p.add_argument("--profile", "--project", dest="profile_selector", metavar="PROFILE_OR_PROJECT",
+                   help="select a replica profile UUID or project slug (with --env)")
+    p.add_argument("--env", dest="profile_environment", metavar="ENVIRONMENT",
+                   help="environment used with --project before the command")
     sub = p.add_subparsers(dest="command", required=True)
 
     # add
@@ -1000,6 +1122,12 @@ def build_parser() -> argparse.ArgumentParser:
     from keys_keeper.cli_sync import register_sync
     register_sync(sub)
 
+    from keys_keeper.cli_catalog import register_catalog
+    register_catalog(sub)
+
+    from keys_keeper.cli_project_sync import register as register_project_sync
+    register_project_sync(sub)
+
     # webvault — zero-knowledge web vault server
     from keys_keeper.webvault.cli import register_webvault
     register_webvault(sub)
@@ -1024,6 +1152,16 @@ def main(argv: list[str] | None = None) -> int:
             pass
     parser = build_parser()
     args = parser.parse_args(argv)
+    # These legacy/canonical catalog writers always target the authoritative
+    # root. They must never quietly operate on the root while a worker profile
+    # was selected.
+    if args.command in {"folders", "projects", "sync", "webvault"}:
+        context = _context_or_error(args)
+        if context is None:
+            return 1
+        if context.kind != "master":
+            sys.stderr.write("error: this command is available only to the master profile\n")
+            return 1
     return args.func(args)
 
 

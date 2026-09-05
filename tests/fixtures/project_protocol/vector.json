@@ -1,0 +1,75 @@
+{
+  "pin": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+  "policy": {
+    "profile": "KK3-projects-v1",
+    "kind": "policy",
+    "payload": {
+      "checkpoint_hash": null,
+      "checkpoint_sequence": 0,
+      "epoch": 1,
+      "grants": [
+        {
+          "agreement_public_key": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+          "device_id": "00000000-0000-4000-8000-000000000005",
+          "generation": 1,
+          "grant_id": "00000000-0000-4000-8000-000000000004",
+          "role": "contributor",
+          "signing_public_key": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+          "token_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "inbox_public_key": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVk",
+      "master_device_id": "00000000-0000-4000-8000-000000000003",
+      "master_public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "master_token_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "parent_policy_hash": null,
+      "scope_id": "00000000-0000-4000-8000-000000000001",
+      "vault_id": "00000000-0000-4000-8000-000000000002",
+      "version": 1
+    },
+    "signature": "Vgq7Q8Y_Lp-aCHiZ13Pk8Reo0KQuwpxirDUlnSWvEVHjeHimjhmZgHeaM2vyHuOz_DcaDfmr1EOOPM2oLw9mCA"
+  },
+  "snapshot": {
+    "profile": "KK3-projects-v1",
+    "kind": "snapshot",
+    "payload": {
+      "scope_id": "00000000-0000-4000-8000-000000000001",
+      "vault_id": "00000000-0000-4000-8000-000000000002",
+      "epoch": 1,
+      "policy_version": 1,
+      "policy_hash": "67402f90f24b752a2a3e2948175aa0e8e2687f9cc3fa85ea6bd846ea3eea25ac",
+      "sequence": 1,
+      "parent_hash": null,
+      "sealed": {
+        "nonce": "CQkJCQkJCQkJCQkJ",
+        "ciphertext": "XKfh-sqCqATTQPFju5cq9zdlXyGCgg9c20GggJGy"
+      }
+    },
+    "signature": "57wo2_OT3bCtjNtn1aROw7GG9sZ2-NrYKhecK-hE1QwvhIXn17YRTrSDITyRvqlrjuL9_AGUl0zDFBRcdu5zDg"
+  },
+  "snapshot_hash": "6c5a0fb078ca863bff3e6d82f4e94cb28348e570817ee11843dcc2ef41043189",
+  "wrap": {
+    "profile": "KK3-projects-v1",
+    "kind": "scope-key-wrap",
+    "payload": {
+      "scope_id": "00000000-0000-4000-8000-000000000001",
+      "vault_id": "00000000-0000-4000-8000-000000000002",
+      "epoch": 1,
+      "policy_version": 1,
+      "policy_hash": "67402f90f24b752a2a3e2948175aa0e8e2687f9cc3fa85ea6bd846ea3eea25ac",
+      "device_id": "00000000-0000-4000-8000-000000000005",
+      "grant_id": "00000000-0000-4000-8000-000000000004",
+      "generation": 1,
+      "recipient_public_key": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+      "grant_hash": "2efa11b06f34bbb45743d34aaa62fa23ac107bff963c5a8210e9f4af0da0186c",
+      "sealed": {
+        "ephemeral_public_key": "V9tLNZ8jrl4Ubk4lEgVnBHIlBjSMFQwUdT0Mkz0E1CE",
+        "salt": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+        "nonce": "CQkJCQkJCQkJCQkJ",
+        "ciphertext": "6XEON5oO9lx9PKFGDxMczDy_o2XxG0kwtYus6aXdQOb6F3jJdPbvobfldXc0CtEU"
+      }
+    },
+    "signature": "EJjtf8xAUNPUZr5f7OaMlxzBQdFz6tOMMvGwxgUybg4GZyh7SdVazb-XRNadFyVDgLF9ex1idcgwsx4pppW9DA"
+  },
+  "device_id": "00000000-0000-4000-8000-000000000005"
+}

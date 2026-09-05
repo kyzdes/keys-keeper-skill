@@ -8,6 +8,15 @@ Stores API keys, SSH keys, server credentials, and domain info in the OS-native 
 
 **Status:** v0.8.0 · macOS + Windows + Linux · single-user · MIT license
 
+The development branch adds folders and project-scoped delivery: a master keeps
+the complete catalog, while each worker receives only explicitly assigned
+project environments and can submit new entries without editing existing ones.
+Setup is opt-in and starts with a verified recovery backup. See the
+[project sync guide](docs/PROJECT-SCOPED-SYNC.md),
+[relay operations](docs/PROJECT-RELAY-OPERATIONS.md), and
+[implementation evidence](docs/architecture/PROJECT-SCOPED-VAULTS-EVIDENCE.md).
+This feature is not part of the published v0.8.0 tag.
+
 <!--
   TODO(launch): record 30-45s demo gif showing
     1. Claude leaks key into transcript via Edit

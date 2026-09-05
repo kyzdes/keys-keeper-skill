@@ -1,6 +1,24 @@
 // keys-keeper admin client
 (() => {
   const THEME_KEY = 'keys-keeper-theme';
+  const profileKind = document.body.dataset.profileKind || 'master';
+  const canMutate = profileKind === 'master';
+
+  function withProfile(path) {
+    const selected = new URLSearchParams(window.location.search);
+    const query = new URLSearchParams();
+    for (const key of ['profile', 'project', 'env']) {
+      if (selected.has(key)) query.set(key, selected.get(key));
+    }
+    if (!query.size) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}${query}`;
+  }
+
+  document.querySelectorAll('a[href^="/"]').forEach(link => {
+    const href = link.getAttribute('href');
+    if (href && !href.startsWith('/static/')) link.setAttribute('href', withProfile(href));
+  });
 
   function setTheme(theme, persist = false) {
     const next = theme === 'light' ? 'light' : 'dark';
@@ -27,14 +45,15 @@
   });
 
   async function api(path, opts = {}) {
-    const r = await fetch(path, opts);
+    const requestPath = withProfile(path);
+    const r = await fetch(requestPath, opts);
     if (!r.ok) {
       let detail = '';
       try {
         const body = await r.json();
         if (body && body.error) detail = ` — ${body.error}`;
       } catch {}
-      throw new Error(`${path}: ${r.status}${detail}`);
+      throw new Error(`${requestPath}: ${r.status}${detail}`);
     }
     return r.json();
   }
@@ -174,7 +193,7 @@
       (() => {
         const c = el('div', { class: 'name-block' });
         const r1 = el('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' });
-        r1.append(el('a', { class: 'name', href: `/entry/${encodeURIComponent(e.id)}`, onclick: ev => ev.stopPropagation() }, e.name));
+        r1.append(el('a', { class: 'name', href: withProfile(`/entry/${encodeURIComponent(e.id)}`), onclick: ev => ev.stopPropagation() }, e.name));
         const taglist = el('div', { class: 'tag-mini-list' });
         (e.tags || []).slice(0, 4).forEach(t => taglist.append(el('span', { class: 'tag-mini' }, t)));
         r1.append(taglist);
@@ -194,7 +213,7 @@
         }, svgIcon('copy'));
         const editBtn = el('a', {
           class: 'icon-btn',
-          href: `/entry/${encodeURIComponent(e.id)}`,
+          href: withProfile(`/entry/${encodeURIComponent(e.id)}`),
           title: 'Open entry',
           'aria-label': `Open ${e.name}`,
           onclick: (ev) => ev.stopPropagation(),
@@ -206,7 +225,8 @@
           'aria-label': `Delete ${e.name}`,
           onclick: ev => { ev.stopPropagation(); requestDelete([e]); },
         }, svgIcon('trash'));
-        a.append(deleteBtn, copyBtn, editBtn);
+        if (canMutate) a.append(deleteBtn);
+        a.append(copyBtn, editBtn);
         return a;
       })(),
     );
@@ -323,7 +343,7 @@
       deletionMessage('delete-status', `Deleting ${deletion.completed + 1} of ${total}…`);
       try {
         // Always let the server re-check links before using the user's cascade consent.
-        let response = await fetch(url, { method: 'DELETE' });
+        let response = await fetch(withProfile(url), { method: 'DELETE' });
         if (response.status === 409) {
           const body = await response.json();
           const dependents = body.dependents || [];
@@ -332,7 +352,7 @@
             deleteCascade.checked = false;
             throw new Error('Links have changed. Review the linked entries and confirm again.');
           }
-          response = await fetch(`${url}?cascade=1`, { method: 'DELETE' });
+          response = await fetch(withProfile(`${url}?cascade=1`), { method: 'DELETE' });
         }
         // A concurrent deletion or a retry after a lost response is already complete.
         if (!response.ok && response.status !== 404) {
@@ -639,7 +659,7 @@
         const r = el('div', { class: 'field-section' });
         r.append(el('div', { class: 'field-section-title' }, 'Linked entries'));
         (e.refs || []).forEach(ref => {
-          const item = el('a', { class: 'refs-item', href: `/entry/${encodeURIComponent(ref.name)}` });
+          const item = el('a', { class: 'refs-item', href: withProfile(`/entry/${encodeURIComponent(ref.name)}`) });
           item.append(
             el('span', { class: 'role' }, ref.role),
             el('div', { class: 'target' }, el('span', { class: 'name' }, ref.name)),
@@ -650,7 +670,7 @@
         if ((e.used_by || []).length) {
           r.append(el('div', { class: 'field-section-title', style: 'margin-top:14px' }, 'Used by'));
           e.used_by.forEach(name => {
-            const item = el('a', { class: 'refs-item', href: `/entry/${encodeURIComponent(name)}` });
+            const item = el('a', { class: 'refs-item', href: withProfile(`/entry/${encodeURIComponent(name)}`) });
             item.append(el('span', { class: 'role' }, 'used by'), el('div', { class: 'target' }, el('span', { class: 'name' }, name)), el('span', { class: 'arrow' }, '→'));
             r.append(item);
           });
@@ -1020,7 +1040,7 @@
             style: 'padding:1px 7px;border-radius:3px;font-size:10px',
           }, e.op || '')),
           el('td', { class: 'name' },
-            el('a', { href: `/entry/${encodeURIComponent(e.name || '')}` }, e.name || '')),
+            el('a', { href: withProfile(`/entry/${encodeURIComponent(e.name || '')}`) }, e.name || '')),
           el('td', { class: 'caller' }, e.caller_path || ''),
           el('td', { class: 'file' }, e.file_target || '—'),
           el('td', { class: e.success ? 'ok' : 'fail' }, e.success ? '✓' : '✗'),

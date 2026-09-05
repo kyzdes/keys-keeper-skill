@@ -5,6 +5,7 @@ The master passphrase comes from KEYS_KEEPER_MASTER_KEY.
 """
 from __future__ import annotations
 
+import os
 import stat
 import sys
 
@@ -176,3 +177,42 @@ def test_corrupt_non_dict_blob_raises(monkeypatch, tmp_path):
     b = EncryptedFileBackend(service="keys-keeper-test")
     with pytest.raises(KeychainError):
         b.list_ids()
+
+
+def test_explicit_password_file_is_owner_only_and_not_symlinked(tmp_path):
+    paths = Paths(tmp_path / "profile")
+    paths.ensure()
+    password = tmp_path / "password"
+    password.write_text(MASTER, encoding="utf-8")
+    password.chmod(0o644)
+    backend = EncryptedFileBackend(paths=paths, password_file=password, allow_env_password=False)
+    if os.name == "posix":
+        with pytest.raises(KeychainError, match="permissions"):
+            backend.set("kk:test", "value")
+
+    password.chmod(0o600)
+    symlink = tmp_path / "password-link"
+    symlink.symlink_to(password)
+    linked = EncryptedFileBackend(paths=paths, password_file=symlink, allow_env_password=False)
+    with pytest.raises(KeychainError, match="symlink"):
+        linked.set("kk:test", "value")
+
+
+def test_password_fd_is_cached_for_repeated_operations(tmp_path):
+    paths = Paths(tmp_path / "profile")
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, (MASTER + "\n").encode("utf-8"))
+        os.close(write_fd)
+        write_fd = -1
+        backend = EncryptedFileBackend(
+            paths=paths, password_fd=read_fd, allow_env_password=False
+        )
+        backend.set("kk:first", "one")
+        backend.set("kk:second", "two")
+        assert backend.get("kk:first").unseal() == "one"
+        assert backend.get("kk:second").unseal() == "two"
+    finally:
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)

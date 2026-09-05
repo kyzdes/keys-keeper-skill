@@ -219,6 +219,19 @@ FLOW_SYNC = """\
 - `keys sync vps revoke DEVICE_ID` is root-device-only. It blocks future server access but does not erase snapshots or VaultKey material already held by that device. Run it only on explicit request and report that cryptographic key rotation is not implemented yet."""
 
 
+FLOW_PROJECT_SYNC = """\
+### User wants selected project scopes synchronized to workers
+
+- Project-scoped sync uses a configured profile and is separate from legacy full-vault `keys sync`. Start on the master with `keys project-sync migrate --out BACKUP --password-file FILE`; it verifies a recovery bundle before schema-3 catalog migration. Legacy export/import/full-vault sync deliberately refuse schema 3 because they cannot preserve bindings or project delivery state.
+- Select a particular configured profile with `keys --profile PROFILE_UUID …`, or `keys --project PROJECT --env ENVIRONMENT …`; do not rely on a worker's default profile when the target scope matters. `keys project-sync status --scope SCOPE` and `preview --scope SCOPE` return public metadata and selected-entry planning only.
+- Folders and tags never grant access. New entries are `local_only`; only `keys projects distribution ENTRY --distribution project_allowed` followed by `keys projects add ENTRY --scope-id SCOPE` authorizes that canonical entry for the selected scope. Confirm the exact scope and entry ID with the user before changing membership.
+- Initialize delivery only when the user asks and the administrator token is already stored as a master entry: `keys project-sync init --scope SCOPE --endpoint HTTPS_URL --admin-token-entry ENTRY_NAME`. The token value never belongs in a command, chat, or output. Scope payloads move only through `keys project-sync sync --scope SCOPE`; do not claim that an assigned entry has reached a device before profile status confirms synchronization.
+- Enrollment is a human-directed ceremony: master runs `invite`, worker verifies the independently communicated public fingerprint then runs `join`, master verifies the worker request fingerprint and runs `approve`, then worker runs `finish`. Invitation and response bundles are short-lived sensitive files: never open, print, paste, or relay them through agent-visible tools.
+- A selected replica profile may use `keys list` / `keys info NAME` for its local metadata and create an entry through its own sink (for example `keys add NAME --stdin`), then submit with `keys project-sync sync`. It cannot edit or delete existing entries, replace a secret, mutate the master catalog, revoke devices, or invoke legacy full-vault writers. Do not work around those restrictions by changing the profile selection or paths.
+- Make a verified recovery bundle with `keys project-sync backup --out BACKUP --password-file FILE`. After an interrupted restore, repeat the same `project-sync restore --file BACKUP --root NEW_EMPTY_ROOT --password-file FILE --resume`; use `recover-takeover` only with explicit authorization, the same restored root, and a protected administrator-token file. Never inspect or paste a recovery, invitation, response, or token file into agent-visible tools.
+- `keys project-sync revoke --scope SCOPE --device DEVICE` is master-only and requires explicit authorization after checking IDs. It blocks future access and schedules a rekey/publish; it cannot erase data or material already held by that device. Check status until pending rekey work clears."""
+
+
 FLOW_WEBVAULT = """\
 ### User wants the vault in a browser (self-hosted)
 
@@ -343,7 +356,8 @@ same OS user. Clipboard and agent-readable files are exposure surfaces.
   [temporary sinks](references/temporary-sinks.md).
 - Repeated macOS authorization dialogs or bypass: read
   [Keychain bypass](references/keychain-bypass.md).
-- Cloud sync or browser vault: read [sync](references/sync.md).
+- Cloud sync, project delivery profiles, worker onboarding, recovery, or browser
+  vault: read [sync](references/sync.md).
 - Installation, plugin version, health, or missing data: read
   [diagnostics](references/diagnostics.md).
 - First setup, admin UI, or desktop launcher: read
@@ -401,7 +415,7 @@ SKILL_REFERENCE_FILES: dict[str, str] = {
         ["# macOS Keychain bypass", "", FLOW_KEYCHAIN_BYPASS]
     ).rstrip() + "\n",
     "sync.md": "\n".join(
-        ["# Sync and WebVault", "", FLOW_SYNC, "", FLOW_WEBVAULT]
+        ["# Sync, project delivery, and WebVault", "", FLOW_SYNC, "", FLOW_PROJECT_SYNC, "", FLOW_WEBVAULT]
     ).rstrip() + "\n",
     "diagnostics.md": "\n".join(
         ["# Diagnostics", "", FLOW_DIAGNOSTICS, "", ACTION_EFFECTS, "", STRUCTURAL_DEFENSE]
@@ -479,7 +493,7 @@ def common_body(
         FLOW_DIAGNOSTICS,
     ]
     if include_admin:
-        parts.extend(["", FLOW_ADMIN, "", FLOW_APP_INSTALL, "", FLOW_SYNC, "", FLOW_WEBVAULT])
+        parts.extend(["", FLOW_ADMIN, "", FLOW_APP_INSTALL, "", FLOW_SYNC, "", FLOW_PROJECT_SYNC, "", FLOW_WEBVAULT])
     parts.extend(["", FLOW_AUDIT, "", SEARCH, "", ARGUMENT_HYGIENE, "", STRUCTURAL_DEFENSE, "", UNTRUSTED_DATA])
     if include_when_in_doubt:
         parts.extend(["", WHEN_IN_DOUBT])

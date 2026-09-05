@@ -160,3 +160,21 @@ def test_import_rejects_duplicate_id_without_overwriting_existing_secret(
 
     assert store.get_by_name("collision-entry") is None
     assert build_backend().get(original.id).unseal() == "sentinel-original"
+
+
+def test_legacy_import_export_refuse_catalog_schema_before_prompt_or_backend(
+    kk_home, tmp_path, monkeypatch, capsys
+):
+    """A v3 vault cannot be silently flattened by the legacy backup commands."""
+    MetadataStore(Paths()).migrate_catalog_v3()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("legacy handler touched a prompt or backend")
+
+    monkeypatch.setattr(cli, "build_backend", forbidden)
+    monkeypatch.setattr("getpass.getpass", forbidden)
+    backup = tmp_path / "legacy.kk"
+    assert cli.main(["export", str(backup)]) == 1
+    assert not backup.exists()
+    assert cli.main(["import", str(backup)]) == 1
+    assert "schema v3" in capsys.readouterr().err.lower()

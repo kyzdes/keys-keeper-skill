@@ -32,11 +32,15 @@ from keys_keeper.models import (
     validate_snapshot_payload,
 )
 from keys_keeper.service import ConcurrentMutation, VaultService
-from keys_keeper.store import SCHEMA_VERSION, MetadataStore
+from keys_keeper.store import SCHEMA_VERSION, MetadataStore, StoreError
 from keys_keeper.sync_remote import NotFound, PreconditionFailed, TransportError
 
 _MAGIC = b"KK1\x00"
 HEAD_KEY = "HEAD"
+
+
+class LegacyCatalogSyncError(RuntimeError):
+    """Legacy KK1/KK2 full-vault sync must never serialize catalog schema v3."""
 
 
 def vkey(n: int) -> str:
@@ -81,6 +85,19 @@ def build_snapshot_payload(store: MetadataStore, backend: KeychainBackend) -> di
 
     Reserved kk:sync-* accounts are never entries, so they're never included.
     """
+    # Check the local schema before listing entries or opening any secret
+    # account. Schema v3 must use the separate project protocol; serializing it
+    # as a legacy full-vault snapshot would both discard catalog metadata and
+    # disclose the entire master vault.
+    try:
+        store.catalog_state()
+    except StoreError as ex:
+        if "explicit schema-v3 migration" not in str(ex):
+            raise
+    else:
+        raise LegacyCatalogSyncError(
+            "legacy full-vault sync is disabled for catalog schema v3; use the project sync protocol"
+        )
     entries = []
     for e in store.list():
         rec = e.to_dict()

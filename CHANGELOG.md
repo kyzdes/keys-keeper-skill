@@ -6,6 +6,30 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ## [Unreleased]
 
+### Added
+
+- Folders, projects, environments and explicit shared-entry assignments in the
+  CLI and Admin UI, with metadata-only previews and device access summaries.
+- Independent encrypted project profiles, read/create-only workers, authenticated
+  enrollment, immutable submission queues, idempotent master import and scoped
+  publication through a bounded `/v2/` relay API.
+- Durable local revocation, epoch rekey, encrypted mutation recovery, verified
+  migration backups, recovery-only restore and fresh-authority takeover.
+- `keys project-sync watch` for background delivery and `keys-keeper-syncd backup`
+  for consistent relay backups. Generated agent instructions describe these flows.
+
+### Security
+
+- Project selection reaches CLI/API/sinks without a master-backend fallback.
+  Legacy full-vault writers refuse the migrated catalog. Read/create permission
+  is enforced independently by the worker service, master importer and relay.
+- Custom KK3 wire composition has cross-author internal review and independent
+  byte tests; no external audit or production rollout is claimed.
+
+### Fixed
+
+- `python -m keys_keeper` propagates command failures to the process exit code.
+
 ---
 
 ## [0.8.0] — 2026-09-04

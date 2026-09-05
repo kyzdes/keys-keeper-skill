@@ -3,6 +3,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 
 def _default_root() -> Path:
@@ -19,9 +20,12 @@ def _default_root() -> Path:
     return Path(xdg) / "keys-keeper"
 
 
-@dataclass
+@dataclass(frozen=True)
 class Paths:
     root: Path = field(default_factory=_default_root)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", Path(self.root))
 
     @property
     def data_json(self) -> Path:
@@ -63,6 +67,50 @@ class Paths:
         # for `keys sync status` + the auto-hook debounce. Never holds secrets.
         return self.root / "sync-state.json"
 
+    @property
+    def profiles_dir(self) -> Path:
+        """Replica profiles, addressed only by canonical UUID."""
+        return self.root / "profiles"
+
+    @property
+    def locks_dir(self) -> Path:
+        return self.root / "locks"
+
+    @property
+    def pending_dir(self) -> Path:
+        return self.root / "pending"
+
+    @property
+    def service_keys_dir(self) -> Path:
+        return self.root / "service-keys"
+
+    @property
+    def backend_password_file(self) -> Path:
+        """Profile-local unlock source for the encrypted file backend."""
+        return self.service_keys_dir / "file-backend-password"
+
+    @property
+    def operations_dir(self) -> Path:
+        return self.root / "operations"
+
+    @property
+    def generations_dir(self) -> Path:
+        return self.root / "generations"
+
+    @property
+    def active_generation(self) -> Path:
+        return self.root / "active-generation"
+
+    def for_profile(self, profile_id: UUID | str) -> "Paths":
+        """Return isolated paths for one replica UUID.
+
+        Strings must use the canonical lowercase, hyphenated UUID spelling.
+        Refusing aliases here keeps untrusted slugs and traversal components out
+        of filesystem selection.
+        """
+        parsed = _canonical_uuid(profile_id, field_name="profile_id")
+        return Paths(root=self.profiles_dir / str(parsed))
+
     def audit_archive(self, year_month: str) -> Path:
         return self.root / f"audit.{year_month}.jsonl.gz"
 
@@ -83,3 +131,17 @@ def ensure_private_dir(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         os.chmod(directory, 0o700)
+
+
+def _canonical_uuid(value: UUID | str, *, field_name: str) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a canonical UUID")
+    try:
+        parsed = UUID(value)
+    except (ValueError, AttributeError) as ex:
+        raise ValueError(f"{field_name} must be a canonical UUID") from ex
+    if value != str(parsed):
+        raise ValueError(f"{field_name} must be a canonical UUID")
+    return parsed
