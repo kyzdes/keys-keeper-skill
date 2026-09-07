@@ -206,8 +206,9 @@ class _ReadView:
 
     def _read(self, *, include_values=True):
         if self.item["kind"] == "master_scope":
-            payload = (build_project_payload(self.runtime.master_store, self.runtime.master_backend, self.item["scope_id"])
-                       if include_values else preview_scope(self.runtime.master_store, self.item["scope_id"]))
+            options = self.runtime.projection_options(self.item)
+            payload = (build_project_payload(self.runtime.master_store, self.runtime.master_backend, self.item["scope_id"], **options)
+                       if include_values else preview_scope(self.runtime.master_store, self.item["scope_id"], **options))
             raw_entries = payload["entries"]
             pending = []
         else:
@@ -363,6 +364,9 @@ class ProjectRuntime:
     @property
     def master_backend(self):
         self.assert_available()
+        from keys_keeper.personal_sync import worker_paths
+        if worker_paths(self.paths) is not None:
+            raise RuntimeErrorSafe("master backend is unavailable on a personal replica")
         # A replica registry fixes this root's role.  Check it before touching
         # either a configured factory or an already injected/cached backend so
         # no caller can bypass ``context()`` and fall back to master secrets.
@@ -383,6 +387,16 @@ class ProjectRuntime:
 
     def context(self, selector=None):
         self.assert_available()
+        from keys_keeper.personal_sync import worker_paths
+        child = worker_paths(self.paths)
+        if child is not None:
+            runtime = ProjectRuntime(child, access=self.access)
+            item = runtime.registry.resolve(selector)
+            if not item or item["kind"] != "replica":
+                raise RuntimeErrorSafe("master profile is unavailable on a personal replica")
+            # Pending personal enrollment can render Settings after a restart.
+            # ReadView has no generation yet; all writes still require active.
+            return RuntimeContext(runtime, item)
         item = self.registry.resolve(selector)
         if item is None and any(p["kind"] == "replica" for p in self.registry.list()):
             raise RuntimeErrorSafe("master profile is unavailable in a worker root")
@@ -535,12 +549,19 @@ class ProjectRuntime:
         item = self.registry.resolve(selector)
         if not item or item["kind"] != "master_scope":
             raise RuntimeErrorSafe("master scope required")
-        result = preview_scope(self.master_store, item["scope_id"])
+        result = preview_scope(self.master_store, item["scope_id"], **self.projection_options(item))
         state = self.state(item).load()
         policy = wire.verify_policy(state["policy"], wire.decode_key(state["pin"]))
         result.update(policy_hash=wire.canonical_hash(state["policy"]),
                       recipients=[{"device_id": g["device_id"], "role": g["role"]} for g in policy["grants"]])
         return result
+
+    def projection_options(self, item):
+        from keys_keeper.personal_sync import read_settings
+        settings = read_settings(self.paths)
+        if settings and settings["role"] == "master" and settings["scope_id"] == item["scope_id"]:
+            return {"personal": self.state(item).load().get("personal_vault") is True}
+        return {}
 
     def backup(self, selector, destination: Path, password):
         self.assert_available()
@@ -568,7 +589,8 @@ class ProjectRuntime:
                 raise RuntimeErrorSafe("finish pending project publications before backup")
             manifest = create_master_backup(self.master_store, self.master_backend, journal=manager.journal,
                 destination=destination, password=password,
-                project_state={"registry": self.registry.read(), "states": captured}, service_accounts=(_MASTER_KEY,))
+                project_state={"registry": self.registry.read(), "states": captured},
+                service_accounts=tuple(k for k in (_MASTER_KEY, "kk:personal-recovery-key") if k in self.master_backend.list_ids()))
             if inspect_backup(destination, password=password) != manifest:
                 raise RuntimeErrorSafe("recovery bundle verification failed")
             proof = {"schema_version": 1, "content_hash": manifest.content_hash,

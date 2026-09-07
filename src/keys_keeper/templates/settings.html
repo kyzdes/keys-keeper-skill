@@ -5,6 +5,13 @@
   <h1 class="page-title">Settings</h1>
   <p class="page-subtitle">Server status, security, and maintenance</p>
   <div class="settings-grid">
+    <section class="settings-card full personal-sync" id="card-personal-sync" aria-labelledby="personal-title">
+      <div class="personal-heading"><div><h2 id="personal-title">My computers</h2><p>All your keys, available on your own computers.</p></div><span class="personal-badge">VPS sync</span></div>
+      <div id="personal-body" aria-busy="true">Loading your computers…</div>
+      <p id="personal-message" role="status" aria-live="polite"></p>
+      <div id="personal-pairing"></div>
+      <div id="personal-requests"></div>
+    </section>
     <div class="settings-card" id="card-status">
       <div class="card-title">Server status</div>
       <div id="status-body">Loading…</div>
@@ -13,10 +20,11 @@
       <div class="card-title">Security</div>
       <div id="security-body">Loading…</div>
     </div>
-    <div class="settings-card full" id="card-sync">
-      <div class="card-title">Cloud sync (S3)</div>
+    <details class="settings-card full" id="card-sync">
+      <summary class="card-title">Legacy · S3 sync</summary>
+      <p class="sync-note">For older vaults. Use My computers above for VPS sync. S3 does not support the current project catalog.</p>
       <div id="sync-body">Loading…</div>
-    </div>
+    </details>
 
     <div class="settings-card full" id="card-maintenance">
       <div class="card-title">Maintenance</div>
@@ -32,3 +40,4 @@
   </div>
 </div>
 {% endblock %}
+{% block extra_js %}<script src="/static/personal-sync.js"></script>{% endblock %}

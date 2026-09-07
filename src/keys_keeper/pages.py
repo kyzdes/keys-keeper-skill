@@ -19,7 +19,7 @@ def _context_template(context) -> dict:
         "profile_kind": kind,
         "profile_id": getattr(context, "profile_id", "master"),
         "scope_id": getattr(context, "scope_id", None),
-        "can_create": kind in {"master", "replica"},
+        "can_create": kind in {"master", "replica"} and (getattr(context, "item", None) or {}).get("status", "active") == "active",
         "can_mutate": kind == "master",
     }
 

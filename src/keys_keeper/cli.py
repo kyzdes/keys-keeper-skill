@@ -1161,6 +1161,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     from keys_keeper.cli_project_sync import register as register_project_sync
     register_project_sync(sub)
+    from keys_keeper.cli_devices import register as register_devices
+    register_devices(sub)
 
     # webvault — zero-knowledge web vault server
     from keys_keeper.webvault.cli import register_webvault
