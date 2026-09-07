@@ -896,6 +896,14 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
+    if getattr(args, "summary", False):
+        if _profile_selector(args):
+            sys.stderr.write("daily summary covers all local profiles; omit --profile/--project\n")
+            return 1
+        import json
+        from keys_keeper.desktop_stats import today_summary
+        print(json.dumps(today_summary(Paths()), ensure_ascii=False))
+        return 0
     ctx = _context_or_error(args)
     if ctx is None:
         return 1
@@ -922,7 +930,8 @@ def cmd_app_install(args: argparse.Namespace) -> int:
         from keys_keeper import macos_app
         target = macos_app.system_dir() if args.system else macos_app.default_user_dir()
         try:
-            result = macos_app.install_app(target, force=args.force)
+            installer = macos_app.install_menubar_app if getattr(args, "menubar", False) else macos_app.install_app
+            result = installer(target, force=args.force)
         except FileExistsError as ex:
             sys.stderr.write(
                 f"already installed at {ex.args[0]}. Re-run with --force to overwrite.\n"
@@ -933,10 +942,16 @@ def cmd_app_install(args: argparse.Namespace) -> int:
                 f"permission denied writing to {target} — try without --system, or run with sudo.\n  ({ex})\n"
             )
             return 1
+        except RuntimeError as ex:
+            sys.stderr.write(f"{ex}\n")
+            return 1
         verb = "installed" if result.created else "reinstalled"
         print(f"{verb} {result.bundle_path}")
         print('hit Cmd+Space → "Keys Keeper" to launch')
         return 0
+    if getattr(args, "menubar", False):
+        sys.stderr.write("--menubar is available on macOS only.\n")
+        return 1
     if sys.platform == "win32":
         from keys_keeper import windows_app
         if args.system:
@@ -1106,6 +1121,7 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument("--since", help="e.g. 24h, 7d")
     au.add_argument("--limit", type=int, default=100)
     au.add_argument("--tail", action="store_true")
+    au.add_argument("--summary", action="store_true", help="value-free JSON summary of today's recorded access across local profiles")
     au.set_defaults(func=cmd_audit)
 
     # init — emit an agent rule file for a given target
@@ -1130,6 +1146,7 @@ def build_parser() -> argparse.ArgumentParser:
     app_install = app_sub.add_parser("install", help="install a Spotlight/Start-Menu shortcut for `keys serve`")
     app_install.add_argument("--force", action="store_true", help="overwrite if already installed")
     app_install.add_argument("--system", action="store_true", help="install to /Applications (macOS only, may need sudo)")
+    app_install.add_argument("--menubar", action="store_true", help="build native macOS menu bar app with daily activity (requires Xcode tools)")
     app_install.set_defaults(func=cmd_app_install)
     app_uninstall = app_sub.add_parser("uninstall", help="remove the shortcut")
     app_uninstall.add_argument("--system", action="store_true", help="remove from /Applications (macOS only)")

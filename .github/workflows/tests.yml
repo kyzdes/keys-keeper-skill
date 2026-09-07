@@ -58,6 +58,10 @@ jobs:
       - name: Compile all modules
         run: python -m compileall -q src
 
+      - name: Build native menu bar app (macOS)
+        if: runner.os == 'macOS'
+        run: python -c "from pathlib import Path; from keys_keeper.macos_app import install_menubar_app; install_menubar_app(Path('dist/native'))"
+
       # Linux: run under a fresh D-Bus session with an unlocked login keyring so
       # `secret-tool` can store/lookup. We GATE on the keyring actually working
       # (store+lookup round-trip) so the live secret-tool tests can't silently
