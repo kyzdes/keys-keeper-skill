@@ -45,6 +45,8 @@ Issues = "https://github.com/kyzdes/keys-keeper-skill/issues"
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    # Windows has no system IANA database for the local-day/DST test cases.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.scripts]

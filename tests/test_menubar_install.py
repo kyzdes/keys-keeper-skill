@@ -12,7 +12,7 @@ def fake_macos_build(monkeypatch):
     monkeypatch.setattr(macos_app, "is_macos", lambda: True)
     monkeypatch.setattr(macos_app, "_spotlight_reindex", lambda _path: None)
     real_exists = Path.exists
-    monkeypatch.setattr(Path, "exists", lambda self: True if str(self) == "/usr/bin/xcrun" else real_exists(self))
+    monkeypatch.setattr(Path, "exists", lambda self: True if self.as_posix() == "/usr/bin/xcrun" else real_exists(self))
     calls = []
     def run(command, **kwargs):
         calls.append(command)
