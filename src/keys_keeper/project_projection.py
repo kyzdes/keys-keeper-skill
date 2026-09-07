@@ -78,10 +78,12 @@ def _prepare(tx, scope_id: str, *, personal: bool = False):
         records.append((entry, record))
         source.append({"id": entry.id, "content_revision": entry.content_revision,
                        "record": record, "binding": binding.to_dict()})
-    # Detect ref cycles strictly inside the exported scope, with no global lookup.
+    # Scoped delivery requires an acyclic graph. A personal copy preserves the
+    # owner's informational links, which may legitimately point both ways.
     from keys_keeper.refs import detect_cycles, RefCycleError
     try:
-        detect_cycles([Entry.from_dict(record) for _, record in records])
+        if not personal:
+            detect_cycles([Entry.from_dict(record) for _, record in records])
     except RefCycleError:
         raise ProjectionError("project reference cycle") from None
     return records, protocol.canonical_hash(source)
@@ -124,5 +126,5 @@ def _build_project_payload(store, backend, scope_id: str, *, expected_revision: 
             except KeychainError:
                 raise ProjectionError("project secret access failed") from None
             payload_records.append({**record, "secret": secret, "passphrase": passphrase})
-        return {"schema_version": 1, "scope_id": scope_id,
+        return {"schema_version": 2 if personal else 1, "scope_id": scope_id,
                 "source_revision": revision, "entries": payload_records}

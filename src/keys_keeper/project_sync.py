@@ -457,7 +457,8 @@ class ProjectMaster:
                 raise ProjectSyncError("master recovery is required before importing")
             journal = OperationJournal(paths=Paths(self.state.paths.root / "imports"), password_provider=lambda: _decode(data, "inbox_private"))
             importer = ProjectImporter(self.store, self.backend, journal, signing_private_key=_decode(data, "signing_private"),
-                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"))
+                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"),
+                                       personal=data.get("personal_vault") is True)
             with self.state.locked():
                 current = self.state.load()
                 _merge_trust(current, trust)

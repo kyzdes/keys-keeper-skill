@@ -113,6 +113,33 @@ def test_worker_adds_once_but_cannot_overwrite_or_select_master(tmp_path, person
         worker.sync()
 
 
+def test_personal_copy_preserves_existing_cycles_and_accepts_linked_creates(tmp_path, personal):
+    manager, master, backend, *_ = personal
+    for name, target in (("private-key", "project-key"), ("project-key", "private-key")):
+        entry = master.master_store.get_by_name(name)
+        entry.refs = [{"role": "related", "name": target}]
+        master.context().service.update_entry(entry)
+    manager.sync()
+    worker, _, _ = _worker(tmp_path, personal)
+    context = worker.runtime().context()
+    assert context.store.get_by_name("private-key").refs == [{"role": "related", "name": "project-key"}]
+    assert context.store.get_by_name("project-key").refs == [{"role": "related", "name": "private-key"}]
+    entry = Entry.new(name="linked-from-windows", type=EntryType.API_KEY,
+                      refs=[{"role": "related", "name": "private-key"}])
+    context.service.create_entry(entry, secrets=SecretInput(value="synthetic-linked"))
+    worker.sync(); manager.sync(); worker.sync()
+    assert master.master_store.get_by_name(entry.name).refs == entry.refs
+    assert context.store.get_by_name(entry.name).refs == entry.refs
+    # Recovery validation must preserve the signed payload version too.
+    from keys_keeper.project_backup import create_replica_backup, inspect_backup
+    item = worker.runtime().registry.resolve()
+    replica = worker.runtime().replica_store(item)
+    assert replica.load()[0]["schema_version"] == 2
+    destination = tmp_path / "personal-replica.kk3"
+    manifest = create_replica_backup(replica, destination=destination, password="synthetic-backup")
+    assert inspect_backup(destination, password="synthetic-backup") == manifest
+
+
 def test_wrong_fingerprint_never_grants_and_interrupted_join_resumes(tmp_path, personal, monkeypatch):
     manager, *_ = personal
     invitation = manager.invite()

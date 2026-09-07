@@ -145,6 +145,26 @@ def test_snapshot_allowlist_refs_and_identity_are_strict(replica):
         replica.install(payload(scope_id), checkpoint(uid(), vault_id))
 
 
+def test_personal_payload_preserves_cycles_without_opening_reference_boundary(replica):
+    from keys_keeper.project_replica import validate_replica_payload
+    scope_id, vault_id = uid(), uid()
+    graph = payload(scope_id, entries=[
+        entry("first", refs=[{"role": "related", "name": "second"}]),
+        entry("second", refs=[{"role": "related", "name": "first"}]),
+    ])
+    with pytest.raises(ReplicaError, match="graph"):
+        validate_replica_payload(graph)
+    graph["schema_version"] = 2
+    replica.install(graph, checkpoint(scope_id, vault_id))
+    assert replica.load()[0] == graph
+    graph["entries"][0]["refs"][0]["name"] = "outside"
+    with pytest.raises(ReplicaError, match="leaves"):
+        validate_replica_payload(graph)
+    graph["schema_version"] = 3
+    with pytest.raises(ReplicaError, match="schema"):
+        validate_replica_payload(graph)
+
+
 def test_generation_transition_rejects_replay_fork_and_wrong_parent(replica):
     scope_id, vault_id = uid(), uid()
     replica.install(payload(scope_id), checkpoint(scope_id, vault_id))

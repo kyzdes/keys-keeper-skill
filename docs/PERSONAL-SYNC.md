@@ -75,6 +75,10 @@ a fixed message. It does not erase keys or log decrypted payloads.
   unlock files. Every catalog entry is included, even entries containing
   infrastructure administrator credentials: choose this mode only for your own
   fully trusted computers.
+- Personal snapshots use payload schema 2 and preserve informational reference
+  cycles already present in the main catalog. References still cannot leave the
+  installed copy, and new submissions are checked against current canonical
+  entry identities. Ordinary scoped payloads remain schema 1 and acyclic.
 - Entry distribution and ordinary project bindings are never widened. A new
   main-computer entry remains local-only for project delivery while personal
   replicas receive it through their separate authority.
