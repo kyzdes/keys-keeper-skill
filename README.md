@@ -147,6 +147,11 @@ nor copies the stored value. There is deliberately no bulk preparation mode.
 
 ## Quick start
 
+On macOS, `keys app install --menubar` builds a native menu bar companion with
+today's agent-access count and a show/hide window for the existing admin.
+See [the macOS companion guide](docs/MACOS-MENUBAR.md) for installation and
+the precise meaning of its activity statistics.
+
 ```bash
 # macOS
 pbcopy <<<"sk-or-v1-..."

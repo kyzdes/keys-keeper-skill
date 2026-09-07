@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-07T21:07:56.497971+00:00",
+  "title": "Design System: Keys Keeper native macOS companion",
+  "extensions": {
+    "colorMeta": {
+      "copper-light": {
+        "role": "primary",
+        "displayName": "Copper for light appearance"
+      },
+      "copper-dark": {
+        "role": "primary",
+        "displayName": "Copper for dark appearance"
+      }
+    },
+    "typographyMeta": {
+      "metric": {
+        "displayName": "Metric",
+        "purpose": "SwiftUI system rounded, semibold, monospaced digits for the attributed-agent count."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Native system semibold product identity."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Native system medium label for the primary metric."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Native statistic rows; values use medium weight and monospaced digits."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Scope, local-day interval, footer actions, and status feedback."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Counting explanation and the primary action keyboard hint."
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "Activity panel — browser approximation",
+      "kind": "card",
+      "refersTo": "activity-panel",
+      "description": "Illustrates native panel width, inset, and rounding. Browser Canvas is an opaque stand-in for AppKit popover material; native transparency and shadow are not reproduced. CSS pixels illustrate native points at a 1:1 preview scale. The native SF Symbol is omitted.",
+      "html": "<section class=\"ds-panel\" aria-label=\"Illustrative native panel\"><strong class=\"ds-panel-title\">Keys Keeper</strong><p class=\"ds-panel-scope\">На этом Mac</p><p class=\"ds-panel-note\">Illustrative container; AppKit resolves the native material.</p></section>",
+      "css": ".ds-panel { width: 316px; max-width: calc(100% - 40px); padding: 20px; border-radius: 12px; background: Canvas; color: CanvasText; font-family: -apple-system, system-ui, sans-serif; color-scheme: light dark; } .ds-panel-title { font-size: 16px; font-weight: 600; } .ds-panel-scope { margin: 2px 0 0; color: GrayText; font-size: 12px; } .ds-panel-note { margin: 12px 0 0; color: GrayText; font-size: 11px; }"
+    },
+    {
+      "name": "Activity metric — browser approximation",
+      "kind": "custom",
+      "refersTo": "activity-metric",
+      "description": "Static sample of the baseline-aligned attributed count. The number is an illustrative value. The browser system font cannot guarantee SwiftUI rounded metrics; native .rounded and .monospacedDigit() remain authoritative.",
+      "html": "<div class=\"ds-metric\"><div class=\"ds-metric-line\"><span class=\"ds-metric-label\">Обращения агентов</span><span class=\"ds-metric-value\">23</span></div><div class=\"ds-metric-period\">Сегодня, с 00:00</div></div>",
+      "css": ".ds-metric { width: 316px; max-width: 100%; font-family: -apple-system, system-ui, sans-serif; color: CanvasText; color-scheme: light dark; } .ds-metric-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; } .ds-metric-label { font-size: 14px; font-weight: 500; } .ds-metric-value { font-family: ui-rounded, -apple-system, system-ui, sans-serif; font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; } .ds-metric-period { margin-top: 2px; color: GrayText; font-size: 12px; }"
+    },
+    {
+      "name": "Statistic row — browser approximation",
+      "kind": "custom",
+      "refersTo": "statistic-row",
+      "description": "Illustrates the repeated row inset and trailing monospaced count using a static sample. Browser GrayText approximates SwiftUI secondary foreground; the optional native terminal SF Symbol is omitted.",
+      "html": "<div class=\"ds-statistic\"><span class=\"ds-statistic-label\">Источник не определён</span><span class=\"ds-statistic-value\">27</span></div>",
+      "css": ".ds-statistic { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 316px; max-width: 100%; padding: 5px 0; color: CanvasText; font: 13px -apple-system, system-ui, sans-serif; color-scheme: light dark; } .ds-statistic-label { color: GrayText; } .ds-statistic-value { font-weight: 500; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Vault toggle — browser approximation",
+      "kind": "button",
+      "refersTo": "vault-toggle",
+      "description": "Browser-native button stand-in for SwiftUI borderedProminent with a copper tint request. The browser bezel, hover/focus/pressed states, and text are illustrative; they are not AppKit tokens. The native icon is omitted. This specimen does not open a vault. Native behavior changes Open to Hide, preserves the valid existing page, and disables the action while opening.",
+      "html": "<button class=\"ds-vault-toggle\" type=\"button\"><span class=\"ds-vault-content\"><span>Открыть Keys Keeper</span><span class=\"ds-vault-shortcut\">⌘O</span></span></button>",
+      "css": ".ds-vault-toggle { appearance: auto; width: 316px; max-width: 100%; font-family: -apple-system, system-ui, sans-serif; accent-color: rgb(67% 27% 16%); color-scheme: light dark; } .ds-vault-content { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; } .ds-vault-shortcut { font-size: 11px; opacity: .8; } .ds-vault-toggle:hover { cursor: pointer; } .ds-vault-toggle:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; } .ds-vault-toggle:active { opacity: .85; } .ds-vault-toggle:disabled { opacity: .5; cursor: default; } @media (prefers-color-scheme: dark) { .ds-vault-toggle { accent-color: rgb(85% 46% 31%); } }"
+    },
+    {
+      "name": "Refresh — browser approximation",
+      "kind": "button",
+      "refersTo": "refresh-button",
+      "description": "Borderless browser illustration with the native content-frame size and accessible name. The inline vector is a schematic substitute for SF Symbol arrow.clockwise, not exported SF Symbol artwork. Hover/focus/pressed styles are preview affordances only; the specimen does not request statistics.",
+      "html": "<button class=\"ds-refresh\" type=\"button\" aria-label=\"Обновить статистику\" title=\"Обновить статистику\"><svg class=\"ds-refresh-vector\" viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" aria-hidden=\"true\"><path d=\"M18.5 9A7 7 0 1 0 19 14M18.5 9V4M18.5 9H13.5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-refresh { display: inline-flex; justify-content: center; align-items: center; width: 26px; height: 26px; padding: 0; border: 0; background: transparent; color: GrayText; color-scheme: light dark; } .ds-refresh:hover { color: CanvasText; cursor: pointer; } .ds-refresh:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; } .ds-refresh:active { opacity: .7; }"
+    },
+    {
+      "name": "Footer links — browser approximation",
+      "kind": "nav",
+      "refersTo": "footer-navigation",
+      "description": "Illustrates the paired native link buttons. Browser LinkText and underlining approximate system link behavior; these preview controls have no application actions. Native actions open the audit page and quit, respectively.",
+      "html": "<nav class=\"ds-footer\" aria-label=\"Illustrative utility actions\"><button class=\"ds-footer-link\" type=\"button\">Журнал обращений</button><button class=\"ds-footer-link\" type=\"button\">Выйти</button></nav>",
+      "css": ".ds-footer { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 316px; max-width: 100%; color-scheme: light dark; } .ds-footer-link { padding: 0; border: 0; background: none; color: LinkText; font: 12px -apple-system, system-ui, sans-serif; } .ds-footer-link:hover { text-decoration: underline; cursor: pointer; } .ds-footer-link:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; } .ds-footer-link:active { opacity: .75; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Keys Keeper native macOS utility",
+    "overview": "This is a native extension of the incumbent Keys Keeper identity. Copper and the key symbol supply product recognition; AppKit material, system text, and native controls supply the surrounding visual language. The direction is descriptive of the built utility, with no new brand metaphor.\n\nThe panel uses compact, readable groups to show attributed activity and provide access to the existing vault window. It separates totals, unknown sources, and failures without decorative cards or marketing content. Those choices describe this native surface and do not prescribe a redesign of the web admin.",
+    "keyCharacteristics": [
+      "Copper identity within native macOS materials and controls.",
+      "A prominent count with aligned, quieter supporting statistics.",
+      "One primary window action and lightweight utility actions.",
+      "Explicit loading, unavailable, empty, and incomplete states."
+    ],
+    "rules": [
+      {
+        "name": "The Native Resolution Rule",
+        "body": "Preserve semantic foregrounds, material, and native button styles; a color sampled from one screenshot is not a reusable palette token.",
+        "section": "colors"
+      },
+      {
+        "name": "The Stable Digits Rule",
+        "body": "Keep metric and row values monospaced so a refresh changes the number without changing its digit rhythm.",
+        "section": "typography"
+      },
+      {
+        "name": "The Platform Depth Rule",
+        "body": "Let AppKit resolve material and elevation for the current appearance; do not turn the screenshot's gray backing or shadow into a fixed surface recipe.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the copper accent and native key-symbol identity.",
+      "Do use macOS semantic text, material, controls, and focus behavior for this companion.",
+      "Do keep values aligned with monospaced digits and retain distinct labels for attributed, unknown, total, and failed activity.",
+      "Do retain visible feedback for loading, unavailable, empty, and incomplete statistics.",
+      "Do preserve the current page and unfinished input when hiding and showing the existing valid vault window."
+    ],
+    "donts": [
+      "Don't replace native materials, shadow, or control states with screenshot-derived fixed CSS values.",
+      "Don't treat the sidecar's HTML/CSS illustrations as a web design system or evidence of native interaction testing.",
+      "Don't imply that an unavailable count is zero or that an unknown caller has an identified agent.",
+      "Don't add marketing ornament, a new brand metaphor, or competing primary actions to this compact activity panel.",
+      "Don't generalize this panel's fixed geometry into a rule for the web admin or other product surfaces."
+    ]
+  }
+}

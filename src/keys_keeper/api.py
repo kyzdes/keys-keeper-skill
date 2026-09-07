@@ -617,7 +617,9 @@ def _audit(handler, paths: Paths, query: str) -> None:
     name = qs.get("name", [None])[0]
     limit = int(qs.get("limit", ["100"])[0])
     audit = _context(handler, paths).audit
-    events = list(audit.search(op=op, name=name, limit=limit))
+    # The journal opened from the menu must show current activity, even once
+    # the file contains more than the UI's 2,000-event limit.
+    events = list(audit.search(op=op, name=name, limit=limit, newest_first=True))
     handler._send_json(200, {"events": events})
 
 

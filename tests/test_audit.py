@@ -92,6 +92,14 @@ def test_filter_by_name(audit):
     assert len(a_only) == 1
 
 
+def test_newest_first_applies_limit_after_ordering(audit):
+    audit.record(op="copy", name="old", id_="kk:1")
+    audit.record(op="inject", name="new", id_="kk:2")
+    assert [e["name"] for e in audit.search(limit=1)] == ["old"]
+    assert [e["name"] for e in audit.search(limit=1, newest_first=True)] == ["new"]
+    assert [e["name"] for e in audit.search(op="copy", limit=1, newest_first=True)] == ["old"]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits only")
 def test_audit_jsonl_is_mode_0600(audit, kk_home):
     """The audit log must not be world/group readable: it records which

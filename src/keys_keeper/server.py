@@ -49,7 +49,15 @@ class AdminServer:
 
     # ---- public ----
 
-    def serve_forever(self) -> None:
+    def start(self) -> None:
+        """Bind the loopback listener before exposing this server's URL.
+
+        Keeping binding separate from ``serve_forever`` lets the CLI fail
+        cleanly when a port is occupied.  In particular, it must not emit a
+        fresh capability URL for a server that never successfully started.
+        """
+        if self._server is not None:
+            return
         handler_cls = make_handler(self)
         self._server = ThreadingHTTPServer(
             ("127.0.0.1", self.requested_port), handler_cls
@@ -57,6 +65,10 @@ class AdminServer:
         self._server._kk_started = time.monotonic()
         self.bound_port = self._server.server_port
         threading.Thread(target=self._idle_watchdog, daemon=True).start()
+
+    def serve_forever(self) -> None:
+        self.start()
+        assert self._server is not None
         self._server.serve_forever()
 
     def stop(self) -> None:
