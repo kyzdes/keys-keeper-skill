@@ -362,7 +362,8 @@ class ProjectMaster:
         catalog = ProjectService(self.store)
         # Capture first: anything newer remains desired after this delivery.
         captured = catalog.capture_publications(data["scope_id"])
-        preview = preview_scope(self.store, data["scope_id"])
+        personal = data.get("personal_vault") is True
+        preview = preview_scope(self.store, data["scope_id"], personal=personal)
         with self.state.locked():
             current = self.state.load()
             if current["policy"] != data["policy"] or current.get("checkpoint") != anchor:
@@ -376,7 +377,7 @@ class ProjectMaster:
                 return {"status": "unchanged", "sequence": remote["sequence"]}
         # Revalidate the metadata-only preview under the actual local
         # metadata/secret mutation boundary; never hold it across HTTP.
-        payload = build_project_payload(self.store, self.backend, data["scope_id"], expected_revision=preview["source_revision"])
+        payload = build_project_payload(self.store, self.backend, data["scope_id"], expected_revision=preview["source_revision"], personal=personal)
         with self.state.locked():
             current = self.state.load()
             if current["policy"] != data["policy"] or current.get("checkpoint") != anchor:
@@ -456,7 +457,8 @@ class ProjectMaster:
                 raise ProjectSyncError("master recovery is required before importing")
             journal = OperationJournal(paths=Paths(self.state.paths.root / "imports"), password_provider=lambda: _decode(data, "inbox_private"))
             importer = ProjectImporter(self.store, self.backend, journal, signing_private_key=_decode(data, "signing_private"),
-                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"))
+                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"),
+                                       personal=data.get("personal_vault") is True)
             with self.state.locked():
                 current = self.state.load()
                 _merge_trust(current, trust)

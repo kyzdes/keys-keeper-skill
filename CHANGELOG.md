@@ -4,6 +4,18 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace updates are explicit by default; mutable-HEAD SessionStart updates remain an opt-in compatibility mode.
 
+## [Unreleased]
+
+- Personal VPS sync in Settings → My computers: all current and future keys,
+  read/create replicas, encrypted connection-code enrollment and main-computer
+  approval with matching verification codes.
+- Per-user background sync through launchd, Windows Task Scheduler and systemd;
+  manual sync, pending state, connected computer names and device revocation.
+- Bounded, expiring encrypted pairing mailboxes on the existing KK3 relay.
+  Existing scoped grants and local-only distribution settings are preserved.
+- S3 and KK2 are legacy. Their commands remain compatible; Settings loads the
+  S3 panel only when explicitly expanded.
+
 ## [0.9.0] — 2026-09-05
 
 ### Added

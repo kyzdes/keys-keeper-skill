@@ -58,6 +58,14 @@ jobs:
       - name: Compile all modules
         run: python -m compileall -q src
 
+      - name: Windows installer smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:KEYS_KEEPER_HOME = Join-Path $env:RUNNER_TEMP 'keys-installer-empty-vault'
+          ./scripts/install-windows.ps1 -Source $PWD.Path -InstallRoot (Join-Path $env:RUNNER_TEMP 'Keys Keeper Install') -NoLaunch -NoPathUpdate
+          Remove-Item Env:KEYS_KEEPER_HOME
+
       - name: Build native menu bar app (macOS)
         if: runner.os == 'macOS'
         run: python -c "from pathlib import Path; from keys_keeper.macos_app import install_menubar_app; install_menubar_app(Path('dist/native'))"

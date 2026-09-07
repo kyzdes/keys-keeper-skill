@@ -200,7 +200,28 @@ Clipboard and file destinations are exposure sinks: a shell-capable agent can re
 
 Designed terminal-adjacent: JetBrains Mono, dark by default, dense, low-chrome. No framework, no build step — Jinja2 + vanilla JS.
 
-## Cloud sync
+## Sync your own computers (VPS)
+
+Open **Settings → My computers**. On the main computer, enable synchronization
+of all keys using your VPS and a saved administrator credential. Current and
+future keys are included automatically. Existing project scopes keep their
+explicit membership and permissions.
+
+Choose **Add computer**, paste the connection code in Settings on the other
+computer, then compare the verification codes and approve on the main computer.
+No invitation files or SSH access on the new computer are needed. Each connected
+computer can read keys offline and submit new entries; the main computer owns
+edits, deletions and device approval. It must be running to accept new entries.
+
+The installer enables a per-user background job on macOS, Windows and Linux.
+Use **Sync now**, the automatic-sync switch and **Disconnect** in the same panel.
+Operational commands are `keys devices status`, `keys devices sync` and
+`keys devices autostart on`. See [setup, recovery and protocol details](docs/PERSONAL-SYNC.md).
+
+## Legacy S3 sync
+
+S3 is retained for older vaults and is collapsed under **Settings → Legacy · S3
+sync**. It does not support schema-3 catalogs. New personal setups use VPS sync.
 
 `keys sync setup / push / pull / status / mode / rollback` — back up and sync your vault across machines. Connect any S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi); the whole vault is encrypted into a single AES-256-GCM blob (the same format as `keys export`) before it ever leaves the machine.
 
@@ -210,7 +231,7 @@ Designed terminal-adjacent: JetBrains Mono, dark by default, dense, low-chrome. 
 
 Zero new dependencies — AWS Signature V4 is hand-rolled over the stdlib (no boto3). First-time setup (which stores the S3 access key id, secret key, and passphrase in the OS keychain) stays in the CLI; the web `/settings` Sync panel exposes status, the mode toggle, and Pull / "Sync now".
 
-### Private VPS sync (KK2)
+### Legacy private VPS sync (KK2)
 
 `keys sync vps init / push / pull / status / invite / join / approve / finish / devices / revoke` provides a separate S3-free transport through `keys-keeper-syncd`. The VPS stores an SQLite CAS log containing only opaque AES-256-GCM snapshots, signed hash-chain commits, public device keys, and hashed bearer/invite tokens. A random VaultKey and device private keys remain in each device's OS credential store.
 

@@ -1259,6 +1259,10 @@
       };
     }
 
-    syncRefresh();
+    const legacySync = document.getElementById('card-sync');
+    let legacyLoaded = false;
+    legacySync?.addEventListener('toggle', () => {
+      if (legacySync.open && !legacyLoaded) { legacyLoaded = true; syncRefresh(); }
+    });
   }
 })();

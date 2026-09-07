@@ -285,7 +285,7 @@ def validate_replica_payload(value: object) -> dict:
         raise ReplicaError("invalid replica payload encoding") from None
     if encoded_size > 16 * 1024 * 1024:
         raise ReplicaError("replica payload exceeds size limit")
-    if value["schema_version"] != 1 or isinstance(value["schema_version"], bool):
+    if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2):
         raise ReplicaError("unsupported replica payload schema")
     _uuid4(value["scope_id"], "replica scope")
     _hash(value["source_revision"], "replica source revision")
@@ -323,11 +323,14 @@ def validate_replica_payload(value: object) -> dict:
     if any(ref["name"] not in names for entry in entries for ref in entry.refs):
         raise ReplicaError("replica reference leaves the installed scope")
     try:
-        detect_cycles(entries)
+        # Version 2 is the signed personal snapshot: preserve informational
+        # cycles while retaining the same closed reference/identity boundary.
+        if value["schema_version"] == 1:
+            detect_cycles(entries)
     except RefError:
         raise ReplicaError("replica reference graph is invalid") from None
     return {
-        "schema_version": 1,
+        "schema_version": value["schema_version"],
         "scope_id": value["scope_id"],
         "source_revision": value["source_revision"],
         "entries": normalized,

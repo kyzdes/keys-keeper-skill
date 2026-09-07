@@ -142,6 +142,8 @@ class ProjectRelay:
                 );
                 CREATE INDEX IF NOT EXISTS kk3_pending ON kk3_submissions(scope_id, receipt, created);
             """)
+        from keys_keeper.pairing_server import PairingRelay
+        self.pairings = PairingRelay(self)
 
     @contextmanager
     def request_slot(self):
@@ -165,6 +167,11 @@ class ProjectRelay:
         """Cheap authentication before accepting an allocating HTTP body."""
         try:
             self._unique_auth(headers)
+            if method == "GET" and path == "/v2/capabilities":
+                return
+            if self.pairings.matches(path):
+                self.pairings.preflight(method, path, headers)
+                return
             if method == "POST" and path == "/v2/scopes":
                 self.app._authenticate_admin(headers.get("Authorization"))
                 return
@@ -259,6 +266,10 @@ class ProjectRelay:
             _error(422, "invalid_project_record")
 
     def _handle(self, method, path, headers, payload):
+        if method == "GET" and path == "/v2/capabilities":
+            return 200, {"personal_pairing": 1}
+        if self.pairings.matches(path):
+            return self.pairings.handle(method, path, headers, payload)
         if method == "POST" and path == "/v2/scopes":
             return self.create_scope(headers, payload)
         match = re.fullmatch(r"/v2/scopes/([0-9a-f-]+)/([a-z]+)(?:/([0-9a-f-]+))?(?:/(receipt))?", path)

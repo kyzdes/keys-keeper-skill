@@ -53,13 +53,17 @@ class ProjectImporter:
         signing_private_key: bytes,
         inbox_private_key: bytes,
         pinned_key: bytes,
+        personal: bool = False,
     ):
+        if type(personal) is not bool:
+            raise TypeError("personal authority must be explicit")
         self.store = store
         self.backend = backend
         self.journal = journal
         self._signing_private_key = bytes(signing_private_key)
         self._inbox_private_key = bytes(inbox_private_key)
         self._pinned_key = bytes(pinned_key)
+        self._personal = personal
 
     def accept(
         self,
@@ -283,10 +287,11 @@ class ProjectImporter:
                         # meant. Names alone cannot safely reconstruct consent.
                         raise NameConflict("project import reference identity is unavailable")
                     resolved = _resolve_scope_refs(payload["entry"]["refs"], catalog, tx, scope_id,
-                                                   expected_targets=state.get("reference_targets"))
+                                                   expected_targets=state.get("reference_targets"), personal=self._personal)
                     if resolved != entry.refs:
                         raise NameConflict("project import reference changed after preparation")
-                    detect_cycles(tx.list() + [entry])
+                    if not self._personal:
+                        detect_cycles(tx.list() + [entry])
                     tx.add(entry)
                     catalog.bindings.append(ScopeEntry.from_dict(state["binding"]))
                     catalog.dedup.append(dict(state["dedup"]))
@@ -329,9 +334,10 @@ class ProjectImporter:
             reserved_accounts = {entry.id, entry.id + ":passphrase"}
             if reserved_accounts & set(self.backend.list_ids()):
                 raise ImportStateError("reserved import backend account is already in use")
-            entry.refs = _resolve_scope_refs(entry.refs, catalog, tx, source["scope_id"])
+            entry.refs = _resolve_scope_refs(entry.refs, catalog, tx, source["scope_id"], personal=self._personal)
             reference_targets = [tx.get_by_name(ref["name"]).id for ref in entry.refs]
-            detect_cycles(tx.list() + [entry])
+            if not self._personal:
+                detect_cycles(tx.list() + [entry])
             revision = _next_import_revision(catalog)
             receipt = protocol.build_receipt(
                 submission,
@@ -559,21 +565,28 @@ def _build_entry(payload: dict, source: dict, raw_uuid: UUID) -> Entry:
     return Entry.from_untrusted_dict(record, allow_project_fields=True)
 
 
-def _resolve_scope_refs(refs, catalog: CatalogState, tx, scope_id: str, *, expected_targets=None) -> list[dict[str, str]]:
+def _resolve_scope_refs(refs, catalog: CatalogState, tx, scope_id: str, *, expected_targets=None, personal=False) -> list[dict[str, str]]:
     resolved: list[dict[str, str]] = []
     if expected_targets is not None and (not isinstance(expected_targets, list) or len(expected_targets) != len(refs)):
         raise ImportStateError("project import reference journal is invalid")
     for index, ref in enumerate(refs):
-        matches = [
-            binding for binding in catalog.bindings
-            if binding.scope_id == scope_id and binding.local_name == ref["name"]
-        ]
-        if len(matches) != 1:
-            raise NameConflict("project import reference is missing or ambiguous")
-        target = tx.get_by_id(matches[0].entry_id)
+        if personal:
+            # Only the encrypted main-computer authority enables this path.
+            # Personal replicas receive canonical names for the entire catalog.
+            target = tx.get_by_name(ref["name"])
+        else:
+            matches = [
+                binding for binding in catalog.bindings
+                if binding.scope_id == scope_id and binding.local_name == ref["name"]
+            ]
+            if len(matches) != 1:
+                raise NameConflict("project import reference is missing or ambiguous")
+            target = tx.get_by_id(matches[0].entry_id)
         if target is None:
+            if personal:
+                raise NameConflict("project import reference target is missing")
             raise ImportStateError("project import reference target is missing")
-        if target.distribution != "project_allowed":
+        if not personal and target.distribution != "project_allowed":
             raise NameConflict("project import reference target is no longer shared")
         if expected_targets is not None and target.id != expected_targets[index]:
             raise NameConflict("project import reference identity changed after preparation")
