@@ -6,7 +6,7 @@
   const message = document.getElementById('personal-message');
   const pairing = document.getElementById('personal-pairing');
   const requests = document.getElementById('personal-requests');
-  let state = null, busy = false, codeTimer = null;
+  let state = null, busy = false, codeTimer = null, polls = 0;
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -114,7 +114,7 @@
       await refresh(); startupMessage(result);
     }, auto);
     actions.append(field('Automatic sync every minute', auto));
-    actions.append(button('Retry background sync', async () => {
+    if (value.auto && value.background?.autostart !== true) actions.append(button('Retry background sync', async () => {
       const result = await api('auto', {enabled: true}); await refresh(); startupMessage(result);
     }));
     const list = el('div', 'personal-device-list');
@@ -164,7 +164,10 @@
       if (state.state === 'pending') {
         const result = await api('poll', {});
         if (result.status === 'active') window.location.reload();
-      } else if (state.role === 'master') await pending();
+      } else {
+        if (state.role === 'master') await pending();
+        if (++polls % 6 === 0) await refresh();
+      }
     } catch (error) { message.textContent = error.message; }
     finally { busy = false; }
   }, 5000);

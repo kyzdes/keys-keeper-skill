@@ -1912,7 +1912,8 @@ button:disabled, input:disabled, textarea:disabled, select:disabled {
 .personal-choice h3,.personal-connect h3 { margin:0 0 10px; font-size:16px; }
 .personal-field { display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--text-2); margin-bottom:14px; }
 .personal-field .text-input { width:100%; box-sizing:border-box; }
-.personal-field:has(input[type=checkbox]) { flex-direction:row-reverse; align-items:center; margin:0; }
+.personal-field:has(input[type=checkbox]) { flex-direction:row-reverse; align-items:center; margin:0; white-space:nowrap; }
+.personal-field input[type=checkbox] { width:16px; height:16px; padding:0; flex:none; accent-color:var(--accent); }
 .personal-code-input { width:100%; box-sizing:border-box; font-family:var(--font-mono,monospace); font-size:12px; line-height:1.5; resize:vertical; margin-bottom:14px; }
 .personal-summary { display:flex; flex-direction:column; gap:7px; }
 .personal-muted { color:var(--text-2); font-size:13px; }
