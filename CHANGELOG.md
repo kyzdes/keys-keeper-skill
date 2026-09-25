@@ -2,7 +2,25 @@
 
 All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](https://keepachangelog.com/) + [Semver](https://semver.org/).
 
-Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. Marketplace updates are explicit by default; mutable-HEAD SessionStart updates remain an opt-in compatibility mode.
+Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
+
+## [0.9.1] — 2026-09-25
+
+### Fixed
+
+- Fallback updates target only Keys Keeper, honor its opt-in and opt-out flags,
+  and defer to native Claude marketplace auto-update when it is enabled.
+- Updates run asynchronously with bounded commands, per-configuration caches,
+  a shared OS lock, success-only cooldowns, and a short failure retry delay.
+- Codex hook execution cannot trigger updates in a separate Claude installation.
+- Quoted plugin paths work when the installation directory contains spaces.
+
+### Validation
+
+- Behavioral updater tests cover concurrency, interrupted workers, command
+  timeouts, policy controls, and Windows, macOS, and Ubuntu runners.
+- Hook tests use isolated fake commands and configuration; they do not access
+  the operator's vault or sync service.
 
 ## [0.9.0] — 2026-09-05
 

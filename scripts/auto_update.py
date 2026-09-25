@@ -24,7 +24,9 @@ def number(env, key, default, maximum):
 
 def recent(path, interval):
     try:
-        return 0 <= time.time() - path.stat().st_mtime < interval
+        # NTFS can timestamp a new file slightly ahead of Python's clock.
+        # Tolerate that skew without letting far-future stamps block updates.
+        return interval > 0 and -1 <= time.time() - path.stat().st_mtime < interval
     except OSError:
         return False
 

@@ -180,6 +180,28 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse((self.cache / "catalog.failed").exists())
         self.assertEqual(len(self.calls), 3)
 
+    def test_filesystem_clock_skew_does_not_bypass_failure_backoff(self):
+        self.codes = [0, 1]
+        module.update(self.plugin, self.env)
+        failed = self.cache / "clarity.failed"
+        with patch.object(module.time, "time", return_value=failed.stat().st_mtime - 0.25):
+            module.update(self.plugin, self.env)
+        self.assertEqual(len(self.calls), 2)
+        self.assertFalse((self.cache / "clarity.success").exists())
+
+    def test_zero_interval_and_far_future_stamp_do_not_block_updates(self):
+        module.update(self.plugin, self.env)
+        success = self.cache / "clarity.success"
+        future = time.time() + 3600
+        os.utime(success, (future, future))
+        module.update(self.plugin, self.env)
+        self.assertEqual(len(self.calls), 3)
+        future = time.time() + 0.5
+        os.utime(success, (future, future))
+        with patch.object(module.time, "time", return_value=future - 0.5):
+            module.update(self.plugin, dict(self.env, KKZ_AUTO_UPDATE_INTERVAL_SEC="0"))
+        self.assertEqual(len(self.calls), 5)
+
     def test_failed_plugin_does_not_suppress_other_plugin(self):
         self.codes = [0, 1]
         module.update(self.plugin, self.env)
