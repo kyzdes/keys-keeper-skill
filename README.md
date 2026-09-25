@@ -6,7 +6,10 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.9.0 · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.9.1 · macOS + Windows + Linux · local-first · MIT license
+
+v0.9.1 scopes fallback plugin updates to Keys Keeper, bounds their runtime, and
+serializes concurrent updates. Native host auto-update remains a separate setting.
 
 v0.9.0 adds folders and project-scoped delivery: a master keeps the complete
 catalog, while each worker receives only explicitly assigned project
@@ -46,7 +49,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.9.0'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.9.1'
 keys doctor                                            # smoke check
 ```
 
@@ -59,7 +62,7 @@ directory; the personal Codex skill can be installed from anywhere:
 
 | Agent | Command | What it does |
 |---|---|---|
-| **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; mutable-HEAD updates are disabled by default |
+| **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; fallback updater disabled by default; native marketplace update policy is independent |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
 | **Codex app / CLI** | `keys init codex-skill` | Installs a personal skill at `$CODEX_HOME/skills/keys-keeper` (or `~/.codex/skills/keys-keeper`), outside Codex's versioned plugin cache; project-only fallback: `keys init codex` |
@@ -96,11 +99,11 @@ plugin release, then start a new session:
 
 Run `keys init claude --check` from your CI to fail builds on prose drift.
 
-Security default: the Claude SessionStart hook does not fetch or install plugin
-updates. Update to a reviewed release explicitly. The legacy mutable-HEAD flow
-can be restored with `KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE=1`, but it trusts the
-GitHub account and marketplace at update time and is not recommended for a
-secrets tool.
+The Keys Keeper SessionStart updater is disabled by default. It updates only
+Keys Keeper when `KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE=1`, and respects
+`KEYS_KEEPER_NO_AUTOUPDATE`. Claude's native marketplace auto-update is an
+independent user setting; disable it as well when you require reviewed manual
+updates. Mutable updates trust the GitHub account and source at update time.
 
 ### 3. Optional shell config
 
@@ -293,3 +296,21 @@ The implementation plan is at [`docs/superpowers/plans/2026-05-04-keys-keeper-pl
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+## Plugin update policy
+
+When Claude's native auto-update is enabled for `claude-skills`, the host owns
+updates and this plugin's fallback updater does no work. Native auto-update is
+an independent user setting; hook environment flags do not disable it.
+
+With native auto-update off, the fallback hook updates **only this plugin**,
+in the background, at most once per four hours after a successful update.
+Updates share an OS lock, have bounded command timeouts, and retry failed work
+without starting a four-hour success cooldown. Set `KKZ_NO_AUTOUPDATE=1` to
+disable the fallback; `KKZ_AUTO_UPDATE_INTERVAL_SEC` sets its cooldown.
+Keys Keeper's fallback additionally requires `KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE=1`
+and respects `KEYS_KEEPER_NO_AUTOUPDATE`. It never updates another plugin.
+To prohibit every automatic update, disable native auto-update as well.
+Logs contain operation names and exit codes only, under
+`~/.cache/kyzdes-claude-skills/v2/<config-id>/`, isolated by Claude configuration.
+Python 3.9 or newer is required for the fallback.
