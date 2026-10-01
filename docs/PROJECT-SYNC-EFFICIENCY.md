@@ -52,6 +52,9 @@ Unchanged audit files are not reopened or parsed. Appended records update the
 counters; replacement, rewrite, rotation, new profiles, read errors, and local
 day/timezone changes invalidate the relevant cache. Automatic native refreshes
 stop when the activity panel is hidden; explicit refresh stays immediate.
+The cache retains at most 128 file entries plus one aggregate fingerprint and
+counter set. The aggregate prevents repeated reads when discovered logs exceed
+the per-file capacity; errors and concurrent changes invalidate it.
 
 ## Automatic worker bounds
 

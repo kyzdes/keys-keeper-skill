@@ -304,3 +304,107 @@ def test_live_cache_is_bounded_and_contains_only_projected_metadata(tmp_path):
     assert len(cache._files) == 2
     assert private not in repr(cache.__dict__)
     assert cache.summary(now=now)["total"] == 3
+
+
+def _overflow_cache(tmp_path, monkeypatch):
+    from keys_keeper import desktop_stats
+    logs = [tmp_path / f"synthetic-{index}.jsonl" for index in range(129)]
+    for path in logs:
+        write_events(path, [event("2026-09-07T10:00:00Z")])
+    monkeypatch.setattr(desktop_stats, "_log_files", lambda *_args: iter(logs))
+    return DailySummaryCache(Paths(tmp_path)), logs, datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+
+
+def test_overflow_129_unchanged_logs_use_one_aggregate_without_reads(tmp_path, monkeypatch):
+    import builtins
+    from keys_keeper import desktop_stats
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    assert cache.summary(now=now)["total"] == 129
+    assert len(cache._files) == 128 and cache._aggregate is not None
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unchanged overflow reopened or parsed an audit log")
+    monkeypatch.setattr(builtins, "open", forbidden)
+    monkeypatch.setattr(desktop_stats, "_count_line", forbidden)
+    for minute in range(1, 4):
+        updated = now + timedelta(minutes=minute)
+        result = cache.summary(now=updated)
+        assert result["total"] == 129 and result["complete"] is True
+        assert result["updated_at"] == updated.isoformat()
+    assert cache._full_scans == cache._parsed_lines == 129
+    assert len(cache._aggregate.fingerprint) == 32
+
+
+def test_overflow_change_and_missing_files_recompute_without_lru_cascade(tmp_path, monkeypatch):
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    cache.summary(now=now)
+    write_events(logs[0], [event("2026-09-07T10:00:00Z", success=False),
+                           event("2026-09-07T11:00:00Z", success=False)])
+    changed = cache.summary(now=now)
+    assert changed["total"] == 130 and changed["failed"] == 2
+    assert cache._full_scans == 130  # Only the overflow miss is read again.
+    logs[1].unlink()
+    assert cache.summary(now=now)["total"] == 129
+    write_events(logs[1], [event("2026-09-07T10:00:00Z")])
+    assert cache.summary(now=now)["total"] == 130
+    before = cache._parsed_lines
+    assert cache.summary(now=now)["total"] == 130
+    assert cache._parsed_lines == before
+    assert len(cache._files) == 128
+
+
+def test_overflow_future_day_and_clock_rollback_invalidate_aggregate(tmp_path, monkeypatch):
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    write_events(logs[0], [event("2026-09-07T13:00:00Z")])
+    assert cache.summary(now=now)["total"] == 128
+    assert cache.summary(now=now + timedelta(minutes=30))["total"] == 128
+    assert cache._full_scans == 129
+    assert cache.summary(now=now + timedelta(hours=1))["total"] == 129
+    assert cache.summary(now=now)["total"] == 128
+    assert cache.summary(now=now + timedelta(days=1))["total"] == 0
+
+
+@pytest.mark.parametrize("failure", ["read", "stat"])
+def test_overflow_io_error_discards_aggregate_and_recovers(tmp_path, monkeypatch, failure):
+    import builtins
+    from pathlib import Path
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    assert cache.summary(now=now)["total"] == 129
+    with monkeypatch.context() as broken:
+        if failure == "read":
+            write_events(logs[0], [event("2026-09-07T10:00:00Z", success=False)])
+            original = builtins.open
+            def fail_read(path, *args, **kwargs):
+                if path == logs[0]:
+                    raise PermissionError("synthetic read error")
+                return original(path, *args, **kwargs)
+            broken.setattr(builtins, "open", fail_read)
+        else:
+            original = Path.stat
+            def fail_stat(path, *args, **kwargs):
+                if path == logs[0]:
+                    raise PermissionError("synthetic stat error")
+                return original(path, *args, **kwargs)
+            broken.setattr(Path, "stat", fail_stat)
+        result = cache.summary(now=now)
+        assert result["total"] == 128 and result["unreadable_logs"] == 1
+        assert result["complete"] is False and cache._aggregate is None
+    recovered = cache.summary(now=now)
+    assert recovered["total"] == 129 and recovered["complete"] is True
+    assert cache._aggregate is not None and len(cache._files) == 128
+
+
+def test_overflow_concurrent_change_does_not_cache_inconsistent_aggregate(tmp_path, monkeypatch):
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    original = cache._read_file
+    changed = []
+    def read_then_change(path, *args):
+        result = original(path, *args)
+        if path == logs[0] and not changed:
+            changed.append(True)
+            write_events(path, [event("2026-09-07T10:00:00Z"), event("2026-09-07T11:00:00Z")])
+        return result
+    monkeypatch.setattr(cache, "_read_file", read_then_change)
+    assert cache.summary(now=now)["total"] == 129
+    assert cache._aggregate is None
+    assert cache.summary(now=now)["total"] == 130
+    assert cache._aggregate is not None

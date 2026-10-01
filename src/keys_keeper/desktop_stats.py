@@ -142,6 +142,32 @@ class _CachedFile:
         return counts
 
 
+@dataclass
+class _CachedAggregate:
+    fingerprint: bytes
+    counts: _Counts
+
+
+def _files_fingerprint(files):
+    """One bounded digest of discovered paths and metadata, never file contents."""
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        name = os.fsencode(path)
+        digest.update(len(name).to_bytes(8, "big"))
+        digest.update(name)
+        try:
+            signature = _signature(path.stat())
+            if not stat.S_ISREG(signature[-1]):
+                return None
+        except FileNotFoundError:
+            signature = None
+        except OSError:
+            return None
+        digest.update(json.dumps(signature).encode())
+        digest.update(b"\n")
+    return digest.digest()
+
+
 class DailySummaryCache:
     """Bounded projection cache owned only by one live desktop bridge.
 
@@ -151,6 +177,8 @@ class DailySummaryCache:
     appends verify the old prefix before parsing only the new suffix so an
     in-place rewrite plus growth cannot masquerade as an append. No cache is
     serialized, shared between roots, or used after an I/O error.
+    Overflow retains one aggregate fingerprint and counters so unchanged logs
+    remain read-free even when they exceed the per-file LRU capacity.
     """
 
     def __init__(self, paths: Paths, *, max_files: int = 128):
@@ -159,6 +187,7 @@ class DailySummaryCache:
         self.paths = paths
         self._max_files = max_files
         self._files: OrderedDict = OrderedDict()
+        self._aggregate: _CachedAggregate | None = None
         self._window = None
         self._last_now = None
         self._full_scans = self._incremental_scans = self._parsed_lines = 0
@@ -172,6 +201,7 @@ class DailySummaryCache:
         instant = now.astimezone(timezone.utc)
         if self._window != window or (self._last_now is not None and instant < self._last_now):
             self._files.clear()
+            self._aggregate = None
         self._window, self._last_now = window, instant
         counts = _Counts()
         try:
@@ -179,12 +209,27 @@ class DailySummaryCache:
         except OSError:
             files = [self.paths.audit_jsonl]
             counts.unreadable += 1
+        overflow = len(files) > self._max_files
+        fingerprint = _files_fingerprint(files) if overflow else None
+        aggregate = self._aggregate
+        if (overflow and fingerprint is not None and counts.unreadable == 0 and aggregate is not None
+                and aggregate.fingerprint == fingerprint
+                and (aggregate.counts.future_at is None or now < aggregate.counts.future_at)):
+            return _summary(aggregate.counts, start, now)
+        self._aggregate = None
         available = set(files)
         for path in tuple(self._files):
             if path not in available:
                 del self._files[path]
+        if overflow:
+            # Reuse retained entries before admitting overflow misses, so one
+            # changed file cannot cascade into an LRU miss for every other log.
+            files.sort(key=lambda path: path not in self._files)
         for path in files:
             counts.include(self._file_counts(path, start, now))
+        if (overflow and fingerprint is not None and counts.unreadable == 0
+                and fingerprint == _files_fingerprint(files)):
+            self._aggregate = _CachedAggregate(fingerprint, counts.copy())
         return _summary(counts, start, now)
 
     def _file_counts(self, path, start, now):

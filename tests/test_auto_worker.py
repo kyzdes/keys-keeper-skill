@@ -34,19 +34,100 @@ def test_timeout_reaps_worker_before_return_and_prevents_late_writes(tmp_path, m
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX process-group regression")
-def test_timeout_terminates_descendant_processes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("direct", [False, True], ids=["foreground", "direct"])
+def test_timeout_terminates_descendant_processes(tmp_path, monkeypatch, direct):
     late = tmp_path / "descendant-late"
     ready = tmp_path / "ready"
-    descendant = "import time; from pathlib import Path; time.sleep(0.7); Path(" + repr(str(late)) + ").touch()"
-    script = ("import subprocess,sys,time; from pathlib import Path; "
-              "subprocess.Popen([sys.executable,'-c'," + repr(descendant) + "]); "
-              "Path(" + repr(str(ready)) + ").touch(); time.sleep(10)")
-    monkeypatch.setattr(worker, "_arguments", lambda *_a, **_kw: [sys.executable, "-c", script])
-    with pytest.raises(worker.AutoWorkerError, match="operation_timed_out"):
-        worker.run_auto_worker("personal", Paths(tmp_path), timeout=0.3)
-    assert ready.exists()
-    time.sleep(0.8)
-    assert not late.exists()
+    release = tmp_path / "release"
+    descendant = tmp_path / "synthetic_descendant.py"
+    parent = tmp_path / "synthetic_parent.py"
+    descendant.write_text(
+        "import json,os,sys,time\n"
+        "from pathlib import Path\n"
+        "ready,release,late=map(Path,sys.argv[1:])\n"
+        "temporary=ready.with_suffix('.tmp')\n"
+        "temporary.write_text(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp()}))\n"
+        "temporary.replace(ready)\n"
+        "until=time.monotonic()+10\n"
+        "while not release.exists():\n"
+        "    if time.monotonic()>=until: raise TimeoutError('synthetic release was not received')\n"
+        "    time.sleep(0.01)\n"
+        "late.touch()\n"
+    )
+    parent.write_text(
+        "import subprocess,sys\n"
+        "child=subprocess.Popen([sys.executable,'-I',*sys.argv[1:]])\n"
+        "sys.exit(child.wait())\n"
+    )
+    for script in (descendant, parent):
+        compile(script.read_text(), script.name, "exec")
+    # Separate argv/files avoid nested -c quoting, and isolated interpreters
+    # keep unrelated CI Python environment settings out of this fixture.
+    command = [sys.executable, "-I", str(parent), str(descendant), str(ready), str(release), str(late)]
+    monkeypatch.setattr(worker, "_arguments", lambda *_a, **_kw: command)
+    original_spawn = worker.subprocess.Popen
+    processes = []
+    diagnostic_path = tmp_path / "synthetic-stderr"
+    with diagnostic_path.open("wb", buffering=0) as diagnostics:
+        def diagnostic_text():
+            return diagnostic_path.read_text(errors="replace")[-8192:]
+
+        def spawn(argv, **kwargs):
+            if argv != command:
+                return original_spawn(argv, **kwargs)
+            assert kwargs["start_new_session"] is True
+            # Capture only this allowlisted, stdlib-only synthetic process.
+            # Production workers retain DEVNULL and the secrecy test below.
+            kwargs["stderr"] = diagnostics
+            process = original_spawn(argv, **kwargs)
+            processes.append(process)
+            try:
+                until = time.monotonic() + 5
+                while not ready.exists():
+                    if process.poll() is not None:
+                        pytest.fail(f"synthetic startup exited={process.returncode}: {diagnostic_text()}")
+                    if time.monotonic() >= until:
+                        pytest.fail(f"synthetic descendant did not become ready: {diagnostic_text()}")
+                    time.sleep(0.01)
+                identity = json.loads(ready.read_text())
+                assert identity["ppid"] == identity["pgid"] == process.pid
+                return process  # Start the worker deadline only after actual readiness.
+            except BaseException:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+                raise
+
+        monkeypatch.setattr(worker.subprocess, "Popen", spawn)
+        try:
+            with pytest.raises(worker.AutoWorkerError) as failure:
+                worker.run_auto_worker("personal", Paths(tmp_path), timeout=0.3, _direct=direct)
+            assert str(failure.value) == "operation_timed_out", diagnostic_text()
+            assert processes[0].poll() is not None
+            identity = json.loads(ready.read_text())
+            until = time.monotonic() + 2
+            while True:
+                state = subprocess.run(
+                    ["ps", "-o", "stat=", "-p", str(identity["pid"])],
+                    capture_output=True, text=True, check=False,
+                ).stdout.strip()
+                # An orphan zombie cannot execute or write; macOS may reap it
+                # asynchronously after its parent process group is killed.
+                if not state or state.startswith("Z"):
+                    break
+                assert time.monotonic() < until, f"synthetic descendant remains active: {state}; {diagnostic_text()}"
+                time.sleep(0.01)
+            release.touch()
+            assert not late.exists()
+        finally:
+            for process in processes:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
 
 
 def test_failed_worker_never_exposes_output(tmp_path, monkeypatch, capsys):
