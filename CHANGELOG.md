@@ -4,6 +4,40 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.10.0] — 2026-10-01
+
+### Fixed
+
+- Unchanged project receive/publish cycles perform no encrypted state-journal
+  writes. Authenticated grants and revocations still persist before later
+  processing can fail.
+- Bounded process-local state/journal reuse avoids repeated PBKDF2 while
+  retaining fresh file reads, AES-GCM authentication, the existing KK1 format
+  and 600,000 KDF iterations. No derived key is serialized or shared by profiles.
+- Automatic sync attempts are limited to once per rolling 24 hours, including
+  after failure or restart. Manual Sync remains immediate. A macOS one-shot
+  launcher can serialize explicit scope jobs without persistent workers.
+
+### Added
+
+- Personal VPS sync in Settings → My computers: all current and future keys,
+  read/create replicas, encrypted connection-code enrollment and main-computer
+  approval with matching verification codes.
+- Per-user background sync through launchd, Windows Task Scheduler and systemd;
+  manual sync, pending state, connected computer names and device revocation.
+- Bounded, expiring encrypted pairing mailboxes on the existing KK3 relay.
+  Existing scoped grants and local-only distribution settings are preserved.
+- S3 and KK2 are legacy. Their commands remain compatible; Settings loads the
+  S3 panel only when explicitly expanded.
+- Native macOS menu bar companion with a compact daily activity view.
+- Focused project catalog workflow with explicit manual Sync controls.
+
+### Validation
+
+- Regression coverage for idle persistence, trust/revocation durability,
+  process-local cache invalidation, restart/concurrent daily claims and manual
+  sync. Synthetic six-scope benchmarks are in `docs/PROJECT-SYNC-EFFICIENCY.md`.
+
 ## [0.9.1] — 2026-09-25
 
 ### Fixed
@@ -417,7 +451,9 @@ Initial public release. macOS-only.
 
 ---
 
-[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.10.0
+[0.9.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.9.1
 [0.9.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.9.0
 [0.5.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.5.0
 [0.4.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.4.1

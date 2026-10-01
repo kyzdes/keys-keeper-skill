@@ -310,12 +310,19 @@ systemd:
 [Service]
 User=keys
 Environment=KEYS_KEEPER_HOME=/var/lib/keys-keeper
-ExecStart=/usr/local/bin/keys project-sync watch --scope <SCOPE_UUID> --interval 60
+ExecStart=/usr/local/bin/keys project-sync watch --scope <SCOPE_UUID> --interval 86400
 Restart=on-failure
 RestartSec=15
 ```
 
 Не направляйте этот сервис в директорию master.
+
+Автоматическая попытка выполняется не чаще одного раза за скользящие 24 часа
+для каждого профиля, в том числе после ошибки или перезапуска процесса.
+Прежний `--interval 60` принимается, но не отменяет суточный лимит. Для
+немедленной доставки нажмите **Sync now** или выполните `keys project-sync
+sync --scope <SCOPE_UUID>`. До ручного запуска или следующей суточной попытки
+входящие изменения могут оставаться в очереди.
 
 ## 7. Offline recovery and takeover
 

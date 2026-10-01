@@ -191,6 +191,15 @@ def test_api_audit_returns_recent_events(admin, monkeypatch):
     assert any(e["name"] == "audit-target" for e in events)
 
 
+def test_api_audit_returns_latest_before_applying_limit(admin):
+    from keys_keeper.audit import AuditLog
+    audit = AuditLog(Paths())
+    audit.record(op="inject", name="old-operation", id_="kk:old")
+    audit.record(op="inject", name="latest-operation", id_="kk:new")
+    events = json.loads(_get(admin, "/api/audit?limit=1").read())["events"]
+    assert [event["name"] for event in events] == ["latest-operation"]
+
+
 def test_api_delete_entry(admin, monkeypatch):
     _seed(monkeypatch, "to-del")
     entries = json.loads(_get(admin, "/api/entries").read())["entries"]

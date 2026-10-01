@@ -19,6 +19,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import os
+import platform
+import plistlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,6 +169,79 @@ def install_app(
     if existed:
         shutil.rmtree(bundle)
     _write_bundle(bundle, version or __version__)
+    _spotlight_reindex(bundle)
+    return InstallResult(bundle_path=bundle, created=not existed)
+
+
+def install_menubar_app(
+    target_dir: Path | None = None, *, force: bool = False, version: str | None = None,
+) -> InstallResult:
+    """Build the native companion, then replace only a recognized KK bundle.
+
+    Compilation and signing finish in staging before touching a working app.
+    The existing Python interpreter supplies dependencies; the app contains its
+    own matching Python package snapshot. Xcode command-line tools are needed
+    at build time, not at launch.
+    """
+    if not is_macos():
+        raise RuntimeError("the menu bar app requires macOS")
+    if not Path("/usr/bin/xcrun").exists():
+        raise RuntimeError("install Xcode command-line tools before building the menu bar app")
+    target = target_dir or default_user_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    bundle = target / BUNDLE_NAME
+    existed = bundle.exists()
+    if bundle.is_symlink():
+        raise RuntimeError("refusing to replace an application symlink")
+    if existed and not force:
+        raise FileExistsError(bundle)
+    if existed:
+        try:
+            current = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+        except (OSError, ValueError, plistlib.InvalidFileException) as ex:
+            raise RuntimeError("existing application is not a recognized Keys Keeper bundle") from ex
+        if current.get("CFBundleIdentifier") != BUNDLE_ID:
+            raise RuntimeError("existing application has a different bundle identifier")
+
+    from keys_keeper.paths import Paths
+    source = Path(__file__).parent
+    with tempfile.TemporaryDirectory(prefix=".keys-keeper-build-", dir=target) as temporary:
+        staging = Path(temporary) / BUNDLE_NAME
+        _write_bundle(staging, version or __version__)
+        contents = staging / "Contents"
+        info = plistlib.loads((contents / "Info.plist").read_bytes())
+        info.update({
+            "CFBundleExecutable": "keys-keeper-menubar",
+            "LSMinimumSystemVersion": "13.0",
+            "KKPythonExecutable": sys.executable,
+            "KKDataHome": str(Paths().root.expanduser().resolve()),
+            "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
+        })
+        (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+        (contents / "MacOS/keys-keeper-launcher").unlink()
+        shutil.copytree(source, contents / "Resources/python/keys_keeper",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+        executable = contents / "MacOS/keys-keeper-menubar"
+        try:
+            subprocess.run([
+                "/usr/bin/xcrun", "swiftc", "-O", "-swift-version", "5",
+                "-target", f"{platform.machine()}-apple-macos13.0",
+                str(source / "native/KeysKeeper.swift"), "-o", str(executable),
+                "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "WebKit",
+            ], check=True, capture_output=True, timeout=180)
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(staging)],
+                           check=True, capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as ex:
+            raise RuntimeError("native app build failed; check Xcode command-line tools") from ex
+        previous = Path(temporary) / "previous.app"
+        if existed:
+            os.replace(bundle, previous)
+        try:
+            os.replace(staging, bundle)
+        except OSError:
+            if existed:
+                os.replace(previous, bundle)
+            raise
     _spotlight_reindex(bundle)
     return InstallResult(bundle_path=bundle, created=not existed)
 

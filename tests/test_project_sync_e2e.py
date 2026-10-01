@@ -6,6 +6,7 @@ any interaction with a user keychain.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 import hashlib
 import secrets
 import threading
@@ -589,6 +590,120 @@ def test_publication_intent_ack_retry_and_metadata_only_unchanged(two_scopes, mo
     assert len(set(dispatched)) == 2
     assert restarted.state.load()["checkpoint"]["sequence"] == 3
     assert e["catalog"].capture_publications(e["scope_a"].id) == {}
+
+
+def test_clean_master_idle_cycles_do_not_save_or_rewrite_journal(two_scopes, monkeypatch):
+    env = two_scopes
+    state, master = _new_master(env["tmp_path"] / "idle-master", env["scope_a"], env["endpoint"], env["store"], env["backend"])
+    master.publish()
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in state.paths.operations_dir.glob("*.enc")}
+    saves, writes = [], []
+    real_save, real_write = state.save, state.journal._write_unlocked
+    def save(data):
+        saves.append(None)
+        return real_save(data)
+    def write(record):
+        writes.append(None)
+        return real_write(record)
+    monkeypatch.setattr(state, "save", save)
+    monkeypatch.setattr(state.journal, "_write_unlocked", write)
+    env["backend"].gets.clear()
+    for _ in range(2):
+        assert master.receive() == {"processed": 0, "outcomes": {}}
+        assert master.publish() == {"status": "unchanged", "sequence": 1}
+    assert saves == writes == []
+    assert env["backend"].gets == []
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before} == before
+
+
+def test_clean_replica_pull_and_empty_outbox_do_not_save(two_scopes, monkeypatch):
+    _, _, _, replica = _configured_contributor(two_scopes)
+    writes = []
+    real_write = replica.state.journal._write_unlocked
+    def write(record):
+        writes.append(None)
+        return real_write(record)
+    monkeypatch.setattr(replica.state.journal, "_write_unlocked", write)
+    assert replica.pull() == {"status": "unchanged", "sequence": 1}
+    assert replica.submit() == {"processed": 0, "pending": 0}
+    assert writes == []
+
+
+def test_new_authenticated_grant_is_saved_once_before_recovery_failure(two_scopes, monkeypatch):
+    env = two_scopes
+    state, master = _new_master(env["tmp_path"] / "grant-master", env["scope_a"], env["endpoint"], env["store"], env["backend"])
+    master.publish()
+    observer_state = ProjectState(Paths(env["tmp_path"] / "grant-observer"), lambda: b"x" * 32)
+    observer_state.save(state.load())
+    observer = ProjectMaster(observer_state, env["store"], env["backend"])
+    member = _identity()
+    master.add_grant(member["grant"])
+    writes = []
+    real_write = observer_state.journal._write_unlocked
+    def write(record):
+        writes.append(None)
+        return real_write(record)
+    monkeypatch.setattr(observer_state.journal, "_write_unlocked", write)
+    with pytest.raises(ProjectSyncError, match="recovery is required"):
+        observer.receive()
+    assert len(writes) == 1
+    restarted = ProjectState(observer_state.paths, lambda: b"x" * 32)
+    assert restarted.load()["used_grants"] == [member["grant"]]
+    from keys_keeper.project_sync import _remember_trust
+    _remember_trust(observer_state, {"used_grants": [member["grant"]], "local_revocations": []})
+    assert len(writes) == 1
+
+
+@pytest.mark.parametrize("operation", ["receive", "publish"])
+def test_remote_revocation_is_saved_once_before_local_failure(two_scopes, monkeypatch, operation):
+    from keys_keeper.project_importer import ProjectImporter
+    env = two_scopes
+    member, state, master, _ = _configured_contributor(env)
+    source = state.load()
+    record = protocol.build_revocation(source["policy"], protocol.decode_key(source["pin"]),
+                                      protocol.decode_key(source["signing_private"]), device_id=member["grant"]["device_id"])
+    client = master.client(source)
+    client.block(source["scope_id"], record)
+    assert state.load()["local_revocations"] == []
+    if operation == "receive":
+        def fail_recovery(*args, **kwargs):
+            raise RuntimeError("synthetic importer interruption")
+        monkeypatch.setattr(ProjectImporter, "recover", fail_recovery)
+        message = "synthetic importer interruption"
+    else:
+        def fail_secret_read(*args, **kwargs):
+            raise KeychainError("synthetic locked fixture backend")
+        monkeypatch.setattr(env["backend"], "get", fail_secret_read)
+        message = "secret access failed"
+    writes = []
+    real_write = state.journal._write_unlocked
+    def write(operation_record):
+        writes.append(None)
+        return real_write(operation_record)
+    monkeypatch.setattr(state.journal, "_write_unlocked", write)
+    with pytest.raises(Exception, match=message):
+        getattr(master, operation)()
+    assert len(writes) == 1
+    restarted = ProjectState(state.paths, lambda: b"x" * 32)
+    assert restarted.load()["local_revocations"] == [{"record": record, "policy": source["policy"]}]
+    master._client_override = _HiddenRevocation(client, state)
+    with pytest.raises(Exception, match=message):
+        getattr(master, operation)()
+    assert len(writes) == 1
+    assert state.load()["local_revocations"] == restarted.load()["local_revocations"]
+
+
+def test_merge_trust_reports_authenticated_replacement_and_sticky_revocation():
+    from keys_keeper.project_sync import _merge_trust
+    member = _identity()["grant"]
+    observed = {"record": {"payload": {"grant_id": member["grant_id"]}}, "policy": {"fixture": "original"}}
+    current = {"used_grants": [member], "local_revocations": [observed]}
+    assert _merge_trust(current, {"used_grants": [copy.deepcopy(member)], "local_revocations": []}) is False
+    replacement = {**member, "generation": member["generation"] + 1}
+    alternate = {**observed, "policy": {"fixture": "alternate"}}
+    assert _merge_trust(current, {"used_grants": [replacement], "local_revocations": [alternate]}) is True
+    assert current == {"used_grants": [replacement], "local_revocations": [observed]}
+    assert _merge_trust(current, {"used_grants": [replacement], "local_revocations": [alternate]}) is False
 
 
 def test_epoch_budget_automatically_rotates_key(two_scopes, monkeypatch):

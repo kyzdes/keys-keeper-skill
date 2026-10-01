@@ -128,7 +128,7 @@ Wants=network-online.target
 Type=simple
 User=keys
 Environment=KEYS_KEEPER_HOME=/var/lib/keys-keeper
-ExecStart=/usr/local/bin/keys project-sync watch --scope SCOPE_UUID --interval 60
+ExecStart=/usr/local/bin/keys project-sync watch --scope SCOPE_UUID --interval 86400
 Restart=on-failure
 RestartSec=15
 
@@ -138,6 +138,14 @@ WantedBy=multi-user.target
 
 Use a dedicated OS account with only the selected profile's local state and
 backend access. Do not point a worker service at the master vault directory.
+
+Automatic synchronization attempts are limited to once per rolling 24 hours
+per profile, including after failure or process restart. A legacy shorter
+`--interval` cannot bypass this limit. Use **Sync now** or `keys project-sync
+sync --scope SCOPE_UUID` to deliver changes immediately. Until that manual
+action or the next daily attempt, incoming changes may remain pending.
+See [idle efficiency and scheduling](PROJECT-SYNC-EFFICIENCY.md) for the
+process-local cache design and a one-shot macOS scheduler.
 
 ## Offline recovery and resume
 

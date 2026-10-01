@@ -1,5 +1,8 @@
 """Auto-mode (SessionStart hook) — fail-open, non-interactive, debounced."""
 import io
+import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,6 +11,7 @@ import pytest
 from keys_keeper import cli
 from keys_keeper.paths import Paths
 from keys_keeper.cli_sync import SYNC_PASS
+from keys_keeper import cli_sync
 from keys_keeper.composition import AccessContext
 from _sync_fakes import FakeRemote, FakeBackend
 
@@ -102,3 +106,79 @@ def test_auto_debounced_skips_work(sync_cli):
     # second run without --force is debounced -> no remote work
     assert cli.main(["sync", "auto", "--foreground"]) == 0
     assert sync_cli.remote.objs == {}
+
+
+@pytest.mark.parametrize("configured", ["60", "0", "-1", "invalid", "86400", "172800"])
+def test_automatic_debounce_environment_never_lowers_daily_floor(monkeypatch, configured):
+    monkeypatch.setenv("KEYS_KEEPER_SYNC_DEBOUNCE_SEC", configured)
+    assert cli_sync._auto_debounce_seconds() == (172800 if configured == "172800" else 86400)
+
+
+def test_normal_automatic_work_is_claimed_once_across_concurrent_hooks(sync_cli, monkeypatch):
+    _setup_auto()
+    calls = []
+    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
+    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: calls.append("work"))
+    args = SimpleNamespace(force=False, foreground=True)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: cli_sync.cmd_sync_auto(args), range(2)))
+    assert results == [0, 0]
+    assert calls == ["work"]
+
+
+def test_daily_failure_claim_survives_new_hook_and_explicit_force_is_manual(sync_cli, monkeypatch):
+    _setup_auto()
+    calls = []
+
+    def fail(_paths):
+        calls.append("attempt")
+        raise ConnectionError("SYNTHETIC-ERROR-MUST-NOT-APPEAR")
+
+    monkeypatch.setattr(cli_sync, "_run_auto_worker", fail)
+    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
+    # A failed attempt still blocks a later hook, even if public sync status is
+    # overwritten by some other operation after the first hook.
+    for _ in range(2):
+        assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
+    assert calls == ["attempt"]
+    assert cli_sync.cmd_sync_auto(SimpleNamespace(force=True, foreground=True)) == 0
+    assert calls == ["attempt", "attempt"]
+
+
+def test_s3_daily_marker_corruption_and_stamp_failure_do_not_run_work(sync_cli, monkeypatch):
+    _setup_auto()
+    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: pytest.fail("invalid timing metadata ran work"))
+    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
+    from keys_keeper.auto_schedule import claim_auto_sync
+    schedule = Paths(Paths().root / "sync-auto-schedule")
+    claim_auto_sync(schedule, 1000)
+    marker = schedule.root / "last-attempt.json"
+    marker.write_bytes(b"null")
+    assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
+    assert marker.read_bytes() == b"null"
+    marker.unlink()
+    monkeypatch.setattr(cli_sync, "_touch_auto_stamp", lambda _paths: (_ for _ in ()).throw(OSError("synthetic failure")))
+    assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
+    assert marker.exists()  # Claim was durable before stamping or launching failed.
+
+
+def test_legacy_s3_timestamp_remains_debounced_for_a_full_day(sync_cli, monkeypatch):
+    _setup_auto()
+    paths = Paths()
+    paths.sync_state_json.write_text(json.dumps({"last_auto_at":
+        (datetime.now(timezone.utc) - timedelta(hours=23)).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+    paths.sync_state_json.chmod(0o600)
+    monkeypatch.setattr(cli_sync, "_DEBOUNCE_SEC", 60)
+    assert cli_sync._auto_debounced(paths) is True
+    paths.sync_state_json.write_text(json.dumps({"last_auto_at":
+        (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+    assert cli_sync._auto_debounced(paths) is False
+
+
+def test_manual_s3_push_remains_immediate_after_daily_automatic_pass(sync_cli):
+    _setup_auto()
+    _add("first", "synthetic-first")
+    assert cli.main(["sync", "auto", "--foreground"]) == 0
+    _add("second", "synthetic-second")
+    assert cli.main(["sync", "push"]) == 0
+    assert any(key.startswith("versions/000002") for key in sync_cli.remote.objs)

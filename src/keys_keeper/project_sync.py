@@ -251,22 +251,27 @@ def _local_blocked(state: dict) -> set[str]:
     return blocked
 
 
-def _merge_trust(current: dict, trust: dict) -> None:
+def _merge_trust(current: dict, trust: dict) -> bool:
+    """Merge verified history and report whether durable trust changed."""
     used = {g["grant_id"]: g for g in current.get("used_grants", [])}
     used.update({g["grant_id"]: g for g in trust["used_grants"]})
-    current["used_grants"] = list(used.values())
+    grants = list(used.values())
     blocked = {r["record"]["payload"]["grant_id"]: r for r in current.get("local_revocations", [])}
     for record in trust.get("local_revocations", []):
         blocked.setdefault(record["record"]["payload"]["grant_id"], record)
-    current["local_revocations"] = list(blocked.values())
+    revocations = list(blocked.values())
+    changed = grants != current.get("used_grants", []) or revocations != current.get("local_revocations", [])
+    current["used_grants"] = grants
+    current["local_revocations"] = revocations
+    return changed
 
 
 def _remember_trust(state: ProjectState, trust: dict) -> None:
     """Keep authenticated revocations even if the subsequent local operation fails."""
     with state.locked():
         current = state.load()
-        _merge_trust(current, trust)
-        state.save(current)
+        if _merge_trust(current, trust):
+            state.save(current)
 
 
 class ProjectMaster:
@@ -362,7 +367,8 @@ class ProjectMaster:
         catalog = ProjectService(self.store)
         # Capture first: anything newer remains desired after this delivery.
         captured = catalog.capture_publications(data["scope_id"])
-        preview = preview_scope(self.store, data["scope_id"])
+        personal = data.get("personal_vault") is True
+        preview = preview_scope(self.store, data["scope_id"], personal=personal)
         with self.state.locked():
             current = self.state.load()
             if current["policy"] != data["policy"] or current.get("checkpoint") != anchor:
@@ -376,7 +382,7 @@ class ProjectMaster:
                 return {"status": "unchanged", "sequence": remote["sequence"]}
         # Revalidate the metadata-only preview under the actual local
         # metadata/secret mutation boundary; never hold it across HTTP.
-        payload = build_project_payload(self.store, self.backend, data["scope_id"], expected_revision=preview["source_revision"])
+        payload = build_project_payload(self.store, self.backend, data["scope_id"], expected_revision=preview["source_revision"], personal=personal)
         with self.state.locked():
             current = self.state.load()
             if current["policy"] != data["policy"] or current.get("checkpoint") != anchor:
@@ -456,11 +462,12 @@ class ProjectMaster:
                 raise ProjectSyncError("master recovery is required before importing")
             journal = OperationJournal(paths=Paths(self.state.paths.root / "imports"), password_provider=lambda: _decode(data, "inbox_private"))
             importer = ProjectImporter(self.store, self.backend, journal, signing_private_key=_decode(data, "signing_private"),
-                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"))
+                                       inbox_private_key=_decode(data, "inbox_private"), pinned_key=_decode(data, "pin"),
+                                       personal=data.get("personal_vault") is True)
             with self.state.locked():
                 current = self.state.load()
-                _merge_trust(current, trust)
-                self.state.save(current)
+                if _merge_trust(current, trust):
+                    self.state.save(current)
                 recovered = importer.recover(current_policy=remote["policy"], revoked_grant_ids=_local_blocked(current))
             # Recovery always precedes fetching new submissions. Only local
             # mutation holds state; receipt delivery is outside both local locks.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keys-keeper"
-version = "0.9.1"
+version = "0.10.0"
 description = "Cross-platform secrets workflow that keeps plaintext out of normal agent tool responses by routing values to explicit local sinks"
 readme = "README.md"
 license = {text = "MIT"}
@@ -45,6 +45,8 @@ Issues = "https://github.com/kyzdes/keys-keeper-skill/issues"
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    # Windows has no system IANA database for the local-day/DST test cases.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.scripts]
