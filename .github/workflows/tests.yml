@@ -15,8 +15,6 @@ jobs:
   test:
     name: ${{ matrix.os }} · py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
-    env:
-      COVERAGE_FILE: ${{ runner.temp }}/keys-test-reports/.coverage
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +56,16 @@ jobs:
         run: pip install -e ".[dev]" "pytest-cov>=7,<8" "coverage>=7.10.6,<8"
 
       - name: Prepare test reports
-        run: python -c "import os; from pathlib import Path; Path(os.environ['COVERAGE_FILE']).parent.mkdir(parents=True, exist_ok=True)"
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          report_dir = Path(os.environ["RUNNER_TEMP"]) / "keys-test-reports"
+          report_dir.mkdir(parents=True, exist_ok=True)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"COVERAGE_FILE={report_dir / '.coverage'}\n")
+          PY
+        shell: bash
 
       - name: Compile all modules
         run: python -m compileall -q src
