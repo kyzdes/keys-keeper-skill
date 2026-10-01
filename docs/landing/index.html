@@ -688,7 +688,7 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.9.0 · macOS + Windows + Linux · MIT</p>
+      <p class="eyebrow">v0.9.1 · macOS + Windows + Linux · MIT</p>
       <h1>a cross-platform secrets workflow that keeps plaintext <span class="accent">out of normal agent output</span>.</h1>
       <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Normal commands route values to explicit sinks instead of returning them in tool output. v0.9.0 adds opt-in project-scoped delivery with explicit entry assignments. Free, open source, reviewed-release install.</p>
       <div class="cta-row">
@@ -1201,7 +1201,7 @@ footer .tagline {
     <div class="section-head">
       <p class="eyebrow">install in 2 minutes</p>
       <h2>two lines in Claude Code. reviewed updates.</h2>
-      <p>The Claude Code plugin adds the skill and auto-sync hook. Mutable-HEAD plugin updates are disabled by default; install reviewed releases explicitly. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
+      <p>The Claude Code plugin adds the skill and auto-sync hook. Its fallback updater is disabled by default; Claude's native marketplace auto-update is an independent setting. Disable native auto-update as well when you require reviewed manual updates. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
     </div>
 
     <p class="install-note" style="margin: 0 0 12px; color: var(--text-3); font-size: 14px;">Run these as <strong>two separate slash commands</strong> in Claude Code — paste step 1, press Enter, then paste step 2. (Claude Code runs one slash command at a time.)</p>
@@ -1236,9 +1236,7 @@ footer .tagline {
           <span>copy</span>
         </button>
       </div>
-<pre id="install-pre-pipx"><span class="cmd">git clone</span> <span class="arg">https://github.com/kyzdes/keys-keeper-skill.git</span>
-<span class="cmd">cd</span> <span class="arg">keys-keeper-skill</span>
-<span class="cmd">pipx install</span> <span class="arg">.</span></pre>
+<pre id="install-pre-pipx"><span class="cmd">pipx install</span> <span class="arg">'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.9.1'</span></pre>
     </div>
 
     <div class="install-block" style="margin-top: 24px;">
@@ -1360,7 +1358,7 @@ footer .tagline {
     <div class="row">
       <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.9.0</span>
+        <span>keys-keeper · v0.9.1</span>
       </a>
       <div class="links">
         <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>

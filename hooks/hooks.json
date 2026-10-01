@@ -5,12 +5,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh",
-            "timeout": 30
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh\"",
+            "timeout": 450,
+            "async": true
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-hook.sh",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/sync-hook.sh\"",
             "timeout": 20
           }
         ]

@@ -33,6 +33,19 @@ def test_sync_hook_script_is_failsafe():
 AUTO_UPDATE = ROOT / "scripts" / "auto-update.sh"
 
 
+def isolated_hook_env(tmp_path):
+    """No inherited Claude config, cache, flags, secrets, or real Claude CLI."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "python3").symlink_to(sys.executable)
+    return {
+        "PATH": os.pathsep.join([str(binaries), "/usr/bin", "/bin"]),
+        "HOME": str(tmp_path),
+        "CLAUDE_CONFIG_DIR": str(tmp_path / ".claude"),
+        "KKZ_PLUGIN_CACHE_ROOT": str(tmp_path / ".cache" / "kyzdes-claude-skills"),
+    }
+
+
 def test_auto_update_documents_trust_assumption():
     """The script must spell out that updates are only as trustworthy as the
     kyzdes account/marketplace, and point high-assurance users at pinning."""
@@ -48,11 +61,7 @@ def test_auto_update_documents_trust_assumption():
 @pytest.mark.skipif(sys.platform == "win32", reason="bash hook is POSIX-only")
 def test_auto_update_is_disabled_by_default(tmp_path):
     """A normal SessionStart must not touch disk or attempt an update."""
-    env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
-    env.pop("KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE", None)
-    env.pop("KEYS_KEEPER_NO_AUTOUPDATE", None)
-    env.pop("KKZ_NO_AUTOUPDATE", None)
+    env = isolated_hook_env(tmp_path)
     proc = subprocess.run(
         ["bash", str(AUTO_UPDATE)],
         env=env,
@@ -68,8 +77,7 @@ def test_auto_update_is_disabled_by_default(tmp_path):
 def test_auto_update_optout_exits_zero_with_no_side_effects(tmp_path, optout_var):
     """Security property: the opt-out disables the HEAD-pull. It must return
     early (exit 0, fail-soft) and touch nothing — no stamp dir, no network."""
-    env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
+    env = isolated_hook_env(tmp_path)
     env["KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE"] = "1"
     env[optout_var] = "1"
     proc = subprocess.run(
@@ -118,8 +126,7 @@ def test_ps_dq_escape_leaves_normal_paths_unchanged():
 @pytest.mark.skipif(sys.platform == "win32", reason="bash hook is POSIX-only")
 def test_auto_update_is_failsafe_exit_zero(tmp_path):
     """Even after explicit opt-in, a missing Claude install cannot block start."""
-    env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
+    env = isolated_hook_env(tmp_path)
     env["KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE"] = "1"
     env.pop("KEYS_KEEPER_NO_AUTOUPDATE", None)
     env.pop("KKZ_NO_AUTOUPDATE", None)
