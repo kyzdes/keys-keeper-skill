@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -351,3 +353,193 @@ def test_public_bundle_contains_no_device_private_keys_or_bearer(tmp_path, confi
         assert path.stat().st_mode & 0o077 == 0
     with pytest.raises(RuntimeErrorSafe):
         write_bundle(path, answer)
+
+
+def _watch_profile():
+    scope_id = str(uuid4())
+    return {"id": scope_id, "kind": "master_scope", "scope_id": scope_id,
+            "vault_id": str(uuid4()), "device_id": str(uuid4()),
+            "project": "daily-fixture", "environment": "test",
+            "endpoint": "https://relay.example", "status": "active"}
+
+
+def _watch_runtime(tmp_path):
+    runtime = ProjectRuntime(Paths(tmp_path), backend_factory=lambda: pytest.fail("watch unlocked real backend"))
+    item = _watch_profile()
+    runtime.registry.put(item)
+    return runtime, item
+
+
+def test_watch_legacy_interval_sleeps_for_a_day_and_never_retries(tmp_path, monkeypatch):
+    runtime, item = _watch_runtime(tmp_path)
+    attempts, sleeps, reports = [], [], []
+
+    def failed_sync(selector):
+        attempts.append(selector)
+        raise ValueError("SYNTHETIC-ERROR-MUST-NOT-APPEAR")
+
+    monkeypatch.setattr(runtime, "sync", failed_sync)
+    runtime.watch(item["id"], interval=60, cycles=2, clock=lambda: 1000,
+                  sleep=sleeps.append, report=reports.append)
+
+    assert attempts == [item["id"]]
+    assert sleeps == [86400]
+    assert reports[0]["profiles"][0]["error"] == "operation_failed"
+    assert reports[1]["profiles"][0]["status"] == "deferred"
+    assert "SYNTHETIC-ERROR" not in json.dumps(reports)
+
+
+def test_watch_claim_survives_restart_and_enforces_rolling_24_hours(tmp_path, monkeypatch):
+    runtime, item = _watch_runtime(tmp_path)
+    attempts, reports = [], []
+    monkeypatch.setattr(runtime, "sync", lambda selector: attempts.append(selector))
+    runtime.watch(item["id"], cycles=1, clock=lambda: 1000.5)
+    marker = tmp_path / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    before = marker.read_bytes()
+
+    restarted = ProjectRuntime(Paths(tmp_path), backend_factory=lambda: pytest.fail("deferred watch unlocked backend"))
+    monkeypatch.setattr(restarted, "sync", lambda selector: attempts.append(selector))
+    monkeypatch.setattr(restarted, "state", lambda _item: pytest.fail("deferred watch decrypted project state"))
+    restarted.watch(item["id"], interval=5, cycles=1, clock=lambda: 87400.4, report=reports.append)
+    assert attempts == [item["id"]]
+    assert marker.read_bytes() == before
+    assert reports[0]["profiles"][0]["status"] == "deferred"
+    restarted.watch(item["id"], interval=5, cycles=1, clock=lambda: 87400.5)
+    assert attempts == [item["id"], item["id"]]
+    assert marker.read_bytes() != before
+    if os.name == "posix":
+        assert marker.stat().st_mode & 0o077 == 0
+
+
+def test_parallel_watchers_claim_one_daily_attempt(tmp_path):
+    runtime, item = _watch_runtime(tmp_path)
+    other = ProjectRuntime(Paths(tmp_path))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(lambda worker: worker._claim_auto_sync(item, 1000), [runtime, other]))
+    assert sorted(claimed for claimed, _due in claims) == [False, True]
+
+
+def test_watch_runs_next_pass_only_when_a_full_day_has_elapsed(tmp_path, monkeypatch):
+    runtime, item = _watch_runtime(tmp_path)
+    clock_value, attempts, sleeps = [1000.0], [], []
+    monkeypatch.setattr(runtime, "sync", lambda _selector: attempts.append(clock_value[0]))
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        clock_value[0] += seconds
+
+    runtime.watch(item["id"], interval=60, cycles=3, clock=lambda: clock_value[0], sleep=advance)
+    assert attempts == [1000, 87400, 173800]
+    assert sleeps == [86400, 86400]
+
+
+@pytest.mark.parametrize("marker_bytes", [
+    b"null", b"[]", b"not json", b'{"schema_version":true,"last_attempt":1}',
+    b'{"schema_version":1,"last_attempt":true}',
+    b'{"schema_version":1,"last_attempt":-1}',
+    b'{"schema_version":1,"last_attempt":NaN}',
+])
+def test_invalid_watch_marker_fails_closed_without_sync(tmp_path, monkeypatch, marker_bytes):
+    runtime, item = _watch_runtime(tmp_path)
+    runtime._claim_auto_sync(item, 1000)
+    marker = tmp_path / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    marker.write_bytes(marker_bytes)
+    reports = []
+    monkeypatch.setattr(runtime, "sync", lambda _selector: pytest.fail("invalid timing metadata permitted expensive work"))
+    runtime.watch(item["id"], cycles=1, clock=lambda: 999999, report=reports.append)
+    assert reports[0]["profiles"][0]["error"] == "schedule_unavailable"
+    assert marker.read_bytes() == marker_bytes
+
+
+def test_manual_sync_runs_immediately_after_daily_watch(tmp_path, monkeypatch):
+    runtime, item = _watch_runtime(tmp_path)
+    calls = []
+
+    class SyntheticMaster:
+        def receive(self):
+            calls.append("receive")
+            return {"status": "idle"}
+
+        def publish(self):
+            calls.append("publish")
+            return {"status": "unchanged"}
+
+    monkeypatch.setattr(runtime, "master", lambda _item: SyntheticMaster())
+    runtime.watch(item["id"], cycles=1, clock=lambda: 1000)
+    marker = tmp_path / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    before = marker.read_bytes()
+    for _ in range(2):
+        assert runtime.sync(item["id"])["publish"]["status"] == "unchanged"
+    assert calls == ["receive", "publish"] * 3
+    assert marker.read_bytes() == before
+
+
+def test_watch_profiles_have_independent_daily_claims(tmp_path, monkeypatch):
+    runtime, first = _watch_runtime(tmp_path)
+    second = _watch_profile()
+    runtime.registry.put(second)
+    runtime._claim_auto_sync(first, 1000)
+    calls, reports = [], []
+    monkeypatch.setattr(runtime, "sync", lambda selector: calls.append(selector))
+    runtime.watch(None, cycles=1, clock=lambda: 2000, report=reports.append)
+    assert calls == [second["id"]]
+    assert [result["status"] for result in reports[0]["profiles"]] == ["deferred", "synced"]
+
+
+def test_runtime_state_cache_uses_immutable_identity_and_defensive_copy(tmp_path, monkeypatch):
+    runtime = ProjectRuntime(Paths(tmp_path))
+    item = _watch_profile()
+    monkeypatch.setattr(runtime, "_profile_password", lambda profile: profile["scope_id"])
+    original_id = item["scope_id"]
+    first = runtime.state(item)
+    assert runtime.state(dict(item)) is first
+    item["scope_id"] = str(uuid4())
+    assert first.journal._password_provider() == original_id
+    assert runtime.state(item) is not first
+    same_identity = dict(item, project="renamed", status="pending")
+    assert runtime.state(same_identity) is runtime.state(item)
+
+
+def test_runtime_state_cache_is_bounded_and_profile_local(tmp_path):
+    runtime = ProjectRuntime(Paths(tmp_path))
+    first_item = _watch_profile()
+    first = runtime.state(first_item)
+    others = [runtime.state(_watch_profile()) for _ in range(32)]
+    assert len(runtime._states) == 32
+    assert all(other is not first for other in others)
+    assert runtime.state(first_item) is not first
+    assert ProjectRuntime(Paths(tmp_path)).state(first_item) is not first
+
+
+@pytest.mark.parametrize("field", ["vault_id", "device_id", "endpoint"])
+def test_runtime_state_cache_does_not_cross_profile_identity_changes(tmp_path, field):
+    runtime = ProjectRuntime(Paths(tmp_path))
+    item = _watch_profile()
+    state = runtime.state(item)
+    changed = dict(item)
+    changed[field] = "https://other.example" if field == "endpoint" else str(uuid4())
+    assert runtime.state(changed) is not state
+
+
+def test_reused_runtime_state_reads_external_journal_updates(tmp_path, monkeypatch):
+    item = _watch_profile()
+    runtime = ProjectRuntime(Paths(tmp_path))
+    other = ProjectRuntime(Paths(tmp_path))
+    for worker in (runtime, other):
+        monkeypatch.setattr(worker, "_profile_password", lambda _profile: "synthetic-cache-password")
+    state = runtime.state(item)
+    state.save({"revision": 1})
+    assert state.load() == {"revision": 1}
+    other.state(item).save({"revision": 2})
+    assert runtime.state(dict(item)) is state
+    assert state.load() == {"revision": 2}
+
+
+def test_cli_watch_defaults_daily_but_accepts_legacy_interval():
+    from keys_keeper.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["project-sync", "watch"]).interval == 86400
+    legacy = parser.parse_args(["project-sync", "watch", "--scope", "fixture/test", "--interval", "60"])
+    assert legacy.scope == "fixture/test"
+    assert legacy.interval == 60

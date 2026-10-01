@@ -9,8 +9,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from contextlib import ExitStack
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -42,6 +45,9 @@ _REGISTRY_FIELDS = {"schema_version", "default_profile", "profiles"}
 _PROFILE_FIELDS = {"id", "kind", "scope_id", "vault_id", "project", "environment", "endpoint", "device_id", "status"}
 _MAX_BUNDLE = 32 * 1024 * 1024
 _MAX_REGISTRY = 1024 * 1024
+_STATE_CACHE_LIMIT = 32
+_PROFILE_IDENTITY_FIELDS = ("id", "kind", "scope_id", "vault_id", "device_id", "endpoint")
+_AUTO_SYNC_INTERVAL = 24 * 60 * 60
 
 
 def _uuid(value):
@@ -354,6 +360,11 @@ class ProjectRuntime:
         self._backend = backend
         self._backend_factory = backend_factory
         self.master_store = MetadataStore(paths)
+        # Reuse only journal objects and their process-local unlock caches. Each
+        # load still reads the actual encrypted file under the journal lock;
+        # mutable plaintext state is never cached as the source of truth.
+        self._states = OrderedDict()
+        self._states_lock = threading.RLock()
 
     def assert_available(self) -> None:
         marker = self.paths.root / "recovery-only"
@@ -422,9 +433,20 @@ class ProjectRuntime:
 
     def state(self, item):
         self.assert_available()
-        root = (self.paths.root / "project-sync" / item["scope_id"] if item["kind"] == "master_scope"
-                else self.paths.for_profile(item["id"]).root)
-        return ProjectState(Paths(root / "state"), lambda: self._profile_password(item))
+        identity = tuple(item[field] for field in _PROFILE_IDENTITY_FIELDS)
+        with self._states_lock:
+            cached = self._states.get(identity)
+            if cached is not None:
+                self._states.move_to_end(identity)
+                return cached
+            profile = copy.deepcopy(item)
+            root = (self.paths.root / "project-sync" / profile["scope_id"] if profile["kind"] == "master_scope"
+                    else self.paths.for_profile(profile["id"]).root)
+            state = ProjectState(Paths(root / "state"), lambda: self._profile_password(profile))
+            self._states[identity] = state
+            if len(self._states) > _STATE_CACHE_LIMIT:
+                self._states.popitem(last=False)
+            return state
 
     def replica_store(self, item):
         self.assert_available()
@@ -609,33 +631,79 @@ class ProjectRuntime:
             raise RuntimeErrorSafe("master recovery bundle does not cover this project authority")
         return proof
 
-    def watch(self, selector, *, interval=60, cycles=0, report=lambda result: None, sleep=time.sleep):
-        """One bounded job per cycle; durable queues survive stopping this process."""
+    def _claim_auto_sync(self, item, now):
+        """Claim one automatic attempt per rolling day without unlocking state.
+
+        Only scheduling metadata is persisted, separately from encrypted project
+        state. Claiming before work means a crash, failure, or second watcher
+        cannot trigger another expensive attempt that day. Manual ``sync`` does
+        not use this guard. An invalid marker fails closed instead of retrying.
+        """
+        if not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now) or now < 0:
+            raise RuntimeErrorSafe("invalid automatic synchronization clock")
+        schedule = Paths(self.paths.root / "project-watch-schedule" / _uuid(item["id"]))
+        marker = schedule.root / "last-attempt.json"
+        with profile_lock(schedule):
+            try:
+                saved = _json_read(marker, 4096)
+            except FileNotFoundError:
+                pass
+            else:
+                if (not isinstance(saved, dict) or set(saved) != {"schema_version", "last_attempt"}
+                        or type(saved["schema_version"]) is not int or saved["schema_version"] != 1
+                        or type(saved["last_attempt"]) not in {int, float}
+                        or not math.isfinite(saved["last_attempt"]) or saved["last_attempt"] < 0):
+                    raise RuntimeErrorSafe("invalid automatic synchronization schedule")
+                due = saved["last_attempt"] + _AUTO_SYNC_INTERVAL
+                if now < due:
+                    return False, due
+            _atomic_write_bytes(marker, json.dumps({"schema_version": 1, "last_attempt": now},
+                                                   sort_keys=True).encode())
+            return True, now + _AUTO_SYNC_INTERVAL
+
+    def watch(self, selector, *, interval=_AUTO_SYNC_INTERVAL, cycles=0,
+              report=lambda result: None, sleep=time.sleep, clock=time.time):
+        """Run automatic sync at most once per rolling 24 hours for each profile.
+
+        Legacy short ``interval`` values remain accepted as a minimum sleep,
+        never permission for frequent sync. Deferred cycles read scheduling
+        metadata only and sleep until work is due. Durable queues survive stops.
+        """
         if self.access != AccessContext.UI_FORBIDDEN:
             raise RuntimeErrorSafe("background synchronization requires noninteractive backend access")
         self.assert_available()
+        if type(interval) is not int or not 5 <= interval <= _AUTO_SYNC_INTERVAL or type(cycles) is not int or cycles < 0:
+            raise RuntimeErrorSafe("invalid synchronization interval or cycle count")
         cycle = 0
         while cycles == 0 or cycle < cycles:
             cycle += 1
             items = [self.registry.resolve(selector)] if selector else self.registry.list()
             results = []
+            next_due = clock() + _AUTO_SYNC_INTERVAL
             for item in items:
                 if not item or item["status"] != "active":
                     continue
                 result = {"profile_id": item["id"], "status": "pending"}
-                for attempt in range(5):
-                    try:
-                        result.update(status="synced", result=self.sync(item["id"]))
-                        break
-                    except Exception:
-                        # Persist only one stable code, never types or payloads.
-                        result.update(status="pending", error="operation_failed")
-                        if attempt < 4:
-                            sleep(min(2 ** attempt, 8))
+                try:
+                    now = clock()
+                    claimed, due = self._claim_auto_sync(item, now)
+                    next_due = min(next_due, due)
+                except Exception:
+                    result.update(error="schedule_unavailable")
+                else:
+                    if not claimed:
+                        result.update(status="deferred", next_auto_sync_in=math.ceil(due - now))
+                    else:
+                        try:
+                            result.update(status="synced", result=self.sync(item["id"]))
+                        except Exception:
+                            # One stable code only; retry on the next daily
+                            # attempt or explicit Sync, never in a tight loop.
+                            result.update(error="operation_failed")
                 results.append(result)
             report({"cycle": cycle, "profiles": results})
             if cycles == 0 or cycle < cycles:
-                sleep(interval + secrets.randbelow(max(2, interval // 10)))
+                sleep(max(interval, next_due - clock()))
         return {"cycles": cycle}
 
     def invite(self, selector, *, ttl=900):

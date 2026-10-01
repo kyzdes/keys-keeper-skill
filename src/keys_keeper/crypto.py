@@ -33,20 +33,36 @@ def _derive_key(password: str, salt: bytes) -> bytes:
 
 
 def encrypt_blob(data: bytes, *, password: str) -> bytes:
+    blob, _key = _encrypt_blob_with_key(data, password=password)
+    return blob
+
+
+def _encrypt_blob_with_key(data: bytes, *, password: str) -> tuple[bytes, bytes]:
+    """Return the new blob and its key for a process-local journal cache only."""
     salt = secrets.token_bytes(16)
     nonce = secrets.token_bytes(12)
     key = _derive_key(password, salt)
     ct = AESGCM(key).encrypt(nonce, data, _MAGIC)
-    return _MAGIC + salt + nonce + ct
+    return _MAGIC + salt + nonce + ct, key
 
 
 def decrypt_blob(blob: bytes, *, password: str) -> bytes:
-    if blob[:4] != _MAGIC:
+    salt = _blob_salt(blob)
+    key = _derive_key(password, salt)
+    return _decrypt_blob_with_key(blob, key=key)
+
+
+def _blob_salt(blob: bytes) -> bytes:
+    """Validate the fixed header and GCM tag before considering a cached key."""
+    if len(blob) < 48 or blob[:4] != _MAGIC:
         raise BadPassword("not a keys-keeper export blob")
-    salt = blob[4:20]
+    return blob[4:20]
+
+
+def _decrypt_blob_with_key(blob: bytes, *, key: bytes) -> bytes:
+    _blob_salt(blob)
     nonce = blob[20:32]
     ct = blob[32:]
-    key = _derive_key(password, salt)
     try:
         return AESGCM(key).decrypt(nonce, ct, _MAGIC)
     except Exception as ex:

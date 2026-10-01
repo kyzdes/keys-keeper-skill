@@ -75,8 +75,16 @@ class OperationJournal:
         self.paths = paths
         self._password_provider = password_provider
         self._password_cache: Sealed | None = None
+        # A live journal already retains its unlocking material. Keep at most
+        # one derived key for this instance's currently read record salt to
+        # avoid repeated PBKDF2 work. Never serialize, log, or share this cache;
+        # every read still loads fresh file bytes and authenticates with GCM.
+        self._derived_key_cache: tuple[bytes, bytes] | None = None
         self._thread_lock = threading.RLock()
         self._lock_depth = 0
+
+    def __getstate__(self) -> None:
+        raise TypeError("operation journal contains process-local unlocking material")
 
     @contextmanager
     def locked(self) -> Iterator["OperationJournal"]:
@@ -312,8 +320,10 @@ class OperationJournal:
             ).encode("utf-8")
         except (TypeError, ValueError) as ex:
             raise JournalError("journal state is not JSON serializable") from ex
-        blob = crypto.encrypt_blob(plaintext, password=self._password())
+        blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
         _atomic_write_bytes(self._record_path(record.operation_id), blob)
+        # Only a successful durable local write replaces the previous key.
+        self._derived_key_cache = (crypto._blob_salt(blob), key)
 
     def _read_unlocked(self, operation_id: UUID) -> OperationRecord:
         path = self._record_path(operation_id)
@@ -322,11 +332,24 @@ class OperationJournal:
         except FileNotFoundError as ex:
             raise JournalNotFound("journal operation not found") from ex
         try:
-            plaintext = crypto.decrypt_blob(blob, password=self._password())
+            salt = crypto._blob_salt(blob)
+            cached = self._derived_key_cache
+            if cached is not None and cached[0] == salt:
+                key = cached[1]
+            else:
+                key = crypto._derive_key(self._password(), salt)
+            plaintext = crypto._decrypt_blob_with_key(blob, key=key)
             raw = json.loads(plaintext.decode("utf-8"))
         except (crypto.BadPassword, UnicodeDecodeError, ValueError) as ex:
+            self._derived_key_cache = None
             raise JournalError("cannot decrypt or decode journal record") from ex
-        return _decode_record(raw, expected_id=operation_id)
+        try:
+            record = _decode_record(raw, expected_id=operation_id)
+        except (JournalError, ValueError):
+            self._derived_key_cache = None
+            raise
+        self._derived_key_cache = (salt, key)
+        return record
 
 
 @contextmanager

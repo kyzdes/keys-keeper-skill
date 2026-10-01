@@ -221,8 +221,9 @@ def register(subparsers):
     takeover.add_argument("--admin-token-file", required=True, help="protected bootstrap token file")
     takeover.add_argument("--password-file")
     takeover.set_defaults(func=command)
-    watch = commands.add_parser("watch", help="run bounded retries in a background-safe foreground worker")
+    watch = commands.add_parser("watch", help="synchronize automatically at most once per rolling 24 hours")
     watch.add_argument("--scope")
-    watch.add_argument("--interval", type=int, default=60)
+    watch.add_argument("--interval", type=int, default=86400,
+                       help="minimum sleep in seconds; automatic work is always limited to once per 24 hours")
     watch.add_argument("--cycles", type=int, default=0, help="0 continues until stopped")
     watch.set_defaults(func=command)
