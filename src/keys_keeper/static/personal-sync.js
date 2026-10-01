@@ -6,7 +6,44 @@
   const message = document.getElementById('personal-message');
   const pairing = document.getElementById('personal-pairing');
   const requests = document.getElementById('personal-requests');
-  let state = null, busy = false, codeTimer = null, polls = 0;
+  let state = null, busy = false, codeTimer = null;
+  let pollTimer = null, pollExpiryTimer = null, pollUntil = 0;
+
+  function stopPolling() {
+    clearTimeout(pollTimer); clearTimeout(pollExpiryTimer);
+    pollTimer = pollExpiryTimer = null; pollUntil = 0;
+  }
+  function schedulePolling() {
+    clearTimeout(pollTimer);
+    if (!document.hidden && pollUntil > Date.now()) pollTimer = setTimeout(poll, 5000);
+  }
+  function startPolling(expiresAt) {
+    stopPolling();
+    const deadline = Number(expiresAt) * 1000;
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
+    pollUntil = Math.min(deadline, Date.now() + 600000);
+    pollExpiryTimer = setTimeout(() => {
+      stopPolling(); requests.replaceChildren();
+      message.textContent = 'Connection code expired. Start a new connection to continue.';
+    }, pollUntil - Date.now());
+    schedulePolling();
+  }
+  async function poll() {
+    pollTimer = null;
+    if (pollUntil <= Date.now()) { stopPolling(); return; }
+    if (busy || document.hidden) { schedulePolling(); return; }
+    busy = true;
+    try {
+      if (state?.state === 'pending') {
+        const result = await api('poll', {});
+        if (result.status === 'active') { stopPolling(); window.location.reload(); }
+        else if (result.status === 'expired') {
+          stopPolling(); message.textContent = 'Connection code expired. Start a new connection to continue.';
+        }
+      } else if (state?.role === 'master') await pending();
+    } catch (error) { message.textContent = error.message; }
+    finally { busy = false; schedulePolling(); }
+  }
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -78,6 +115,7 @@
   }
   function clearCode() {
     clearTimeout(codeTimer);
+    stopPolling();
     pairing.replaceChildren();
   }
   async function invite() {
@@ -95,6 +133,7 @@
     }, true), button('Hide code', async () => { clearCode(); message.textContent = ''; }));
     panel.append(code, actions); pairing.replaceChildren(panel);
     codeTimer = setTimeout(() => { clearCode(); message.textContent = 'Connection code expired. Choose Add computer for a new one.'; }, Math.max(0, value.expires_at * 1000 - Date.now()));
+    startPolling(value.expires_at);
     message.textContent = '';
   }
   function connected(value) {
@@ -131,16 +170,22 @@
   }
   async function refresh() {
     state = await api('status'); body.setAttribute('aria-busy', 'false');
-    if (!state.configured) setup(state.options);
+    if (!state.configured) { stopPolling(); setup(state.options); }
     else if (state.state === 'pending') {
+      startPolling(state.pairing_expires_at);
       body.replaceChildren(el('h3', '', 'Confirm on your main computer'), el('p', '', 'Check that both screens show this verification code, then approve this computer on the main one.'), el('strong', 'personal-verification', state.comparison_code));
       body.append(button('Cancel connection', async () => {
+        stopPolling();
         await api('cancel', {}); await refresh();
         message.textContent = 'Connection cancelled. You can paste a new code. If you already approved the old request, disconnect that device on your main computer.';
       }));
     } else if (state.state === 'setup_incomplete') {
+      stopPolling();
       body.replaceChildren(el('p', '', 'Setup was interrupted. Retry with the same VPS and saved credential.'), button('Retry setup', async () => { const options = await api('options'); setup(options); message.textContent = ''; }));
-    } else connected(state);
+    } else {
+      if (state.role !== 'master') stopPolling();
+      connected(state);
+    }
   }
   async function pending() {
     const result = await api('pending');
@@ -157,19 +202,6 @@
     requests.replaceChildren(...nodes);
   }
   run(async () => { await refresh(); message.textContent = ''; });
-  setInterval(async () => {
-    if (busy || !state?.configured || document.hidden) return;
-    busy = true;
-    try {
-      if (state.state === 'pending') {
-        const result = await api('poll', {});
-        if (result.status === 'active') window.location.reload();
-      } else {
-        if (state.role === 'master') await pending();
-        if (++polls % 6 === 0) await refresh();
-      }
-    } catch (error) { message.textContent = error.message; }
-    finally { busy = false; }
-  }, 5000);
+  document.addEventListener('visibilitychange', schedulePolling);
   window.addEventListener('pagehide', clearCode);
 })();

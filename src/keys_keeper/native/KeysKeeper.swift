@@ -41,8 +41,13 @@ struct PanelMaterial: NSViewRepresentable {
 }
 
 final class ActivityPanel: NSPanel {
+    var didHide: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { orderOut(sender) }
+    override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        didHide?()
+    }
 }
 
 final class Bridge {
@@ -177,7 +182,6 @@ struct ActivityView: View {
                 }
             } else if !model.unavailable {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
                     Text("Читаем журнал обращений…").font(.system(size: 12)).foregroundStyle(.secondary)
                 }.padding(.vertical, 12)
             }
@@ -234,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private var pendingPage: String?
     private var requestedPage = "home"
     private var openRequest = 0
+    private var summaryPending = false
+    private var summaryRequest = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenu()
@@ -258,6 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         activityPanel.isReleasedWhenClosed = false
         activityPanel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         activityPanel.delegate = self
+        activityPanel.didHide = { [weak self] in self?.stopActivityRefresh() }
         activityPanel.contentViewController = NSHostingController(rootView: ActivityView(
             model: model,
             toggleWindow: { [weak self] in self?.toggleWindow() },
@@ -265,8 +272,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             refresh: { [weak self] in self?.refresh() },
             quit: { NSApplication.shared.terminate(nil) }
         ))
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
         // First launch introduces the menu bar panel. Start the admin server
         // only when the owner chooses to open the vault window.
         DispatchQueue.main.async { [weak self] in self?.togglePopover() }
@@ -306,7 +311,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         DispatchQueue.main.async { [weak self] in
             self?.sizeActivityPanel()
             self?.activityPanel.makeKeyAndOrderFront(nil)
+            self?.startActivityRefresh()
         }
+    }
+
+    private func startActivityRefresh() {
+        stopActivityRefresh()
+        guard activityPanel.isVisible else { return }
+        let refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.activityPanel.isVisible else { self.stopActivityRefresh(); return }
+            self.refresh()
+        }
+        refreshTimer.tolerance = 5
+        timer = refreshTimer
+    }
+
+    private func stopActivityRefresh() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func sizeActivityPanel() {
@@ -355,10 +378,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     private func refresh() {
-        if ensureBridge() { bridge?.send("summary") }
+        guard !summaryPending, ensureBridge() else { return }
+        summaryPending = true
+        summaryRequest += 1
+        let request = summaryRequest
+        bridge?.send("summary")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self, self.summaryPending, self.summaryRequest == request else { return }
+            self.statisticsUnavailable()
+        }
     }
 
     private func statisticsUnavailable() {
+        summaryPending = false
         model.unavailable = true
         statusItem.button?.title = " —"
         statusItem.button?.toolTip = "Keys Keeper — статистика недоступна"
@@ -370,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     private func receive(_ message: [String: Any]) {
         switch message["type"] as? String {
         case "summary":
+            summaryPending = false
             if let payload = message["summary"],
                let data = try? JSONSerialization.data(withJSONObject: payload),
                let summary = try? JSONDecoder().decode(DailySummary.self, from: data) {
@@ -501,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate()
+        stopActivityRefresh()
         bridge?.stop()
     }
 

@@ -4,6 +4,34 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.10.1] — 2026-10-01
+
+### Fixed
+
+- Settings performs no repeated idle personal-sync requests. Enrollment polling
+  runs only during an explicitly started, unexpired pairing flow and stops when
+  hidden, cancelled or completed. Local HTTP requests share a bounded runtime
+  while still authenticating current encrypted state.
+- Native activity summaries reuse process-local counters for unchanged audit
+  logs and update appended records incrementally. Hidden panels stop automatic
+  summary refreshes; rotation, rewrites, day changes and errors invalidate cache.
+- Project watchers and daily launchers share a durable daily claim by scope.
+  Existing timestamps survive migration; labels and restarts cannot reset a slot.
+- Automatic workers run under a five-minute process deadline with cancellation
+  of their process tree. Response reads and S3 pagination have explicit bounds.
+- Personal autostart uses daily one-shot work rather than retrying failed
+  processes every 30 seconds. Invalid settings fail closed.
+- The opt-in Keys Keeper fallback updater records an attempt before work and
+  permits one attempt per rolling day, including failures and zero-interval
+  overrides. Native host update settings and manual updates remain separate.
+
+### Validation
+
+- Regression coverage for idle/active Settings, retained HTTP runtimes, audit
+  append/rewrite/rotation/day boundaries, mixed automatic triggers, worker
+  cancellation and daily update failures. Installed working-mode measurements
+  are recorded separately from physical battery-life claims.
+
 ## [0.10.0] — 2026-10-01
 
 ### Fixed

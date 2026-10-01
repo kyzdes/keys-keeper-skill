@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import tempfile
@@ -83,12 +84,46 @@ def _write_attempt(path: Path, now: float) -> None:
             pass
 
 
+def _run_child(command):
+    # auto owns the shared scope claim; preserve the old launcher label guard
+    # outside it until private timestamps have been migrated during rollout.
+    automatic = [*command]
+    automatic[2] = "auto"
+    child = subprocess.Popen(automatic, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    try:
+        return child.wait(timeout=300)
+    except subprocess.TimeoutExpired:
+        # Its supervisor handles TERM by cancelling and waiting for its worker.
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        child.wait()
+        raise
+    except BaseException:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+        raise
+
+
 def run_daily(root: Path, job_id: str, command: list[str], *, clock=time.time) -> tuple[str, int]:
     if not re.fullmatch(r"[a-f0-9]{64}", job_id):
         raise ValueError("invalid scheduler job")
     if (len(command) != 5 or not Path(command[0]).is_absolute()
             or Path(command[0]).name != "keys"
-            or command[1:4] != ["project-sync", "sync", "--scope"]):
+            or command[1] != "project-sync" or command[2] not in {"sync", "auto"}
+            or command[3] != "--scope"):
         raise ValueError("explicit project sync command required")
     UUID(command[4])
     _private_directory(root)
@@ -108,12 +143,10 @@ def run_daily(root: Path, job_id: str, command: list[str], *, clock=time.time) -
         # Count failures as attempts too; commit before any costly child work.
         _write_attempt(stamp, now)
         try:
-            result = subprocess.run(command, stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    timeout=300, check=False)
+            result = _run_child(command)
         except (OSError, subprocess.TimeoutExpired):
             return "failed", 1
-        return ("synced", 0) if result.returncode == 0 else ("failed", 1)
+        return ("synced", 0) if result == 0 else ("failed", 1)
 
 
 def main() -> int:

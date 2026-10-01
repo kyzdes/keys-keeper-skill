@@ -11,6 +11,34 @@ from urllib.request import urlopen
 import pytest
 
 
+def test_bridge_owns_one_summary_cache_for_all_requests(monkeypatch, capsys, tmp_path):
+    from keys_keeper import desktop_bridge
+    instances = []
+    class Cache:
+        def __init__(self, paths):
+            assert paths.root == tmp_path
+            self.calls = 0
+            instances.append(self)
+        def summary(self):
+            self.calls += 1
+            return {"total": self.calls}
+    monkeypatch.setenv("KEYS_KEEPER_HOME", str(tmp_path))
+    monkeypatch.setattr(desktop_bridge, "DailySummaryCache", Cache)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"command":"summary"}\n{"command":"summary"}\n{"command":"quit"}\n'))
+    assert desktop_bridge.main() == 0
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [row["summary"]["total"] for row in responses] == [1, 2]
+    assert len(instances) == 1
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native Swift app requires macOS")
+def test_native_statistics_lifecycle_typechecks():
+    source = Path(__file__).parents[1] / "src/keys_keeper/native/KeysKeeper.swift"
+    result = subprocess.run(["/usr/bin/xcrun", "swiftc", "-typecheck", str(source)],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
 def test_failed_open_can_retry_with_a_new_server(monkeypatch, capsys, tmp_path):
     from keys_keeper import desktop_bridge, server
     from threading import Event

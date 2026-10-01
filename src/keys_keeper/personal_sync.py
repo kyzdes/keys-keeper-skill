@@ -16,6 +16,7 @@ from uuid import uuid4
 from keys_keeper import pairing, project_protocol as wire
 from keys_keeper.backend import Sealed
 from keys_keeper.auto_schedule import DAILY_INTERVAL
+from keys_keeper.auto_worker import run_auto_worker
 from keys_keeper.composition import AccessContext
 from keys_keeper.models import EntryType, now_iso
 from keys_keeper.operation_journal import _atomic_write_bytes, profile_lock
@@ -67,7 +68,18 @@ class PersonalSync:
 
     def runtime(self):
         child = worker_paths(self.paths)
-        return ProjectRuntime(child, access=AccessContext.UI_FORBIDDEN) if child else self.root
+        # API managers are request-local, but their root runtime belongs to the
+        # server. Retain at most one child by immutable replica-root identity;
+        # never retain plaintext state or reuse it after another replica joins.
+        with self.root._states_lock:
+            cached = getattr(self.root, "_personal_child_runtime", None)
+            if child is None:
+                self.root._personal_child_runtime = None
+                return self.root
+            if cached is None or cached.paths.root != child.root:
+                cached = ProjectRuntime(child, access=AccessContext.UI_FORBIDDEN)
+                self.root._personal_child_runtime = cached
+            return cached
 
     def _configured(self, *, master=False):
         settings = read_settings(self.paths)
@@ -164,6 +176,9 @@ class PersonalSync:
             if item["status"] == "pending" and state.get("personal_pairing"):
                 request_hash = wire.canonical_hash(state["enrollment"]["request"])
                 result["comparison_code"] = pairing.comparison(request_hash)
+                # Public expiry from the authenticated enrollment limits UI
+                # polling without exposing connection or unlocking material.
+                result["pairing_expires_at"] = state["enrollment"]["invitation"]["payload"]["expires_at"]
         try:
             result["last_sync"] = _json_read(self.paths.root / "personal-sync-status.json", 8192)
         except FileNotFoundError:
@@ -183,7 +198,9 @@ class PersonalSync:
                 if settings["role"] == "master":
                     self._flush_responses(runtime, item)
                 result = runtime.sync(item["id"])
-            status = {"at": now_iso(), "status": "waiting_for_approval" if result.get("status") == "pending" else "synced"}
+            status = {"at": now_iso(), "status": {
+                "pending": "waiting_for_approval", "expired": "expired",
+            }.get(result.get("status"), "synced")}
             _atomic_write_bytes(self.paths.root / "personal-sync-status.json", json.dumps(status).encode())
             return result
         except Exception:
@@ -344,7 +361,10 @@ class PersonalSync:
             raise RuntimeErrorSafe("This is the main computer")
         if item["status"] == "active":
             return {"status": "active"}
-        record = runtime.state(item).load()["personal_pairing"]
+        data = runtime.state(item).load()
+        if data["enrollment"]["invitation"]["payload"]["expires_at"] <= time.time():
+            return {"status": "expired"}
+        record = data["personal_pairing"]
         self._upload_request(runtime, item)
         mailbox = pairing.client(record["endpoint"], wire.decode_key(record["key"]))._request("GET", pairing.route(item["scope_id"], record["pair_id"]))
         if mailbox["response"] is None:
@@ -394,17 +414,20 @@ class PersonalSync:
         _atomic_write_bytes(self.paths.root / "personal-sync-startup.json", json.dumps(result).encode())
         return result
 
+    def _run_auto_sync(self):
+        run_auto_worker("personal", self.paths)
+
     def watch(self, *, interval=DAILY_INTERVAL, cycles=0, sleep=time.sleep, clock=time.time):
         """Attempt automatic personal sync once per rolling day; manual Sync is immediate."""
         if type(interval) is not int or not 5 <= interval <= DAILY_INTERVAL or type(cycles) is not int or cycles < 0:
             raise RuntimeErrorSafe("Invalid synchronization interval")
         cycle = 0
         while cycles == 0 or cycle < cycles:
-            settings = read_settings(self.paths)
-            if settings is None or not settings["auto"]:
-                break
             next_due = clock() + DAILY_INTERVAL
             try:
+                settings = read_settings(self.paths)
+                if settings is None or not settings["auto"]:
+                    break
                 # Settings and registry are routing metadata. Do not use
                 # status() or state.load() merely to check whether work is due.
                 runtime = self.runtime()
@@ -413,7 +436,7 @@ class PersonalSync:
                     raise RuntimeErrorSafe("Personal sync setup is incomplete")
                 claimed, next_due = runtime._claim_auto_sync(item, clock())
                 if claimed:
-                    self.sync()
+                    self._run_auto_sync()
             except Exception:
                 pass  # Invalid schedules and failures never cause short retries.
             cycle += 1

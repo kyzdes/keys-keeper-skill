@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from keys_keeper.audit import AuditLog
 from keys_keeper.auto_schedule import DAILY_INTERVAL, claim_auto_sync
+from keys_keeper.auto_worker import run_auto_worker, start_auto_worker
 from keys_keeper.backend import KeychainError
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.config import (
@@ -273,16 +274,18 @@ def cmd_sync_auto(args: argparse.Namespace) -> int:
         # retry on every new session. A manual `keys sync push/pull` is unaffected.
         _touch_auto_stamp(paths)
         if args.foreground:
-            _run_auto_worker(paths)
+            run_auto_worker("s3", paths)
         else:
-            _spawn_worker()
+            _spawn_worker(paths)
     except Exception:
         pass  # fail OPEN + SILENT — never block or noise up session start
     return 0
 
 
-def _run_auto_worker(paths: Paths) -> None:
+def _run_auto_worker(paths: Paths) -> bool:
     try:
+        if load_sync_config(paths).mode != "auto":
+            return True
         engine, cfg, backend = _build_engine(
             paths, access=AccessContext.UI_FORBIDDEN
         )
@@ -290,22 +293,15 @@ def _run_auto_worker(paths: Paths) -> None:
         engine.pull(pw)
         engine.push(pw)
         _auto_log(paths, "ok")
+        return True
     except Exception as e:
         # Log the EXCEPTION TYPE only — never its message/value (S2).
         _auto_log(paths, f"skipped:{type(e).__name__}")
+        return False
 
 
-def _spawn_worker() -> None:
-    kwargs = {}
-    if os.name == "posix":
-        kwargs["start_new_session"] = True
-    else:
-        kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
-    subprocess.Popen(
-        [sys.executable, "-m", "keys_keeper", "sync", "auto", "--foreground", "--force"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-        **kwargs,
-    )
+def _spawn_worker(paths=None) -> None:
+    start_auto_worker("s3", paths or Paths())
 
 
 def _auto_debounced(paths: Paths) -> bool:
@@ -486,5 +482,5 @@ def register_sync(sub) -> None:
     auto = ss.add_parser("auto", help="(hook) auto-sync if enabled; always exits 0")
     auto.add_argument("--foreground", action="store_true")
     auto.add_argument("--force", action="store_true",
-                      help="explicit manual sync override; also used by the already claimed background worker")
+                      help="explicit manual sync override for the daily timing limit")
     auto.set_defaults(func=cmd_sync_auto)

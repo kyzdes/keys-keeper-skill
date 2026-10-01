@@ -23,6 +23,13 @@ from keys_keeper.sync_server import SyncServerApp
 from test_project_sync_e2e import FakeBackend, _running
 
 
+@pytest.fixture(autouse=True)
+def isolated_automatic_worker_boundary(monkeypatch):
+    # Runtime fixtures inject synthetic backends; execute their operation in
+    # place while separate supervisor tests prove hard process cancellation.
+    monkeypatch.setattr(ProjectRuntime, "_run_auto_sync", lambda self, item: self.sync(item["id"]))
+
+
 @pytest.fixture
 def configured(tmp_path):
     paths = Paths(tmp_path / "master")
@@ -484,6 +491,54 @@ def test_watch_profiles_have_independent_daily_claims(tmp_path, monkeypatch):
     runtime.watch(None, cycles=1, clock=lambda: 2000, report=reports.append)
     assert calls == [second["id"]]
     assert [result["status"] for result in reports[0]["profiles"]] == ["deferred", "synced"]
+
+
+def test_auto_entry_and_watch_share_daily_claim(tmp_path, monkeypatch):
+    runtime, item = _watch_runtime(tmp_path)
+    attempts = []
+    monkeypatch.setattr(runtime, "sync", lambda *_args: attempts.append("work"))
+    assert runtime.auto_sync(item["scope_id"], clock=lambda: 1000)["status"] == "synced"
+    runtime.watch(item["id"], interval=5, cycles=1, clock=lambda: 1001)
+    assert runtime.auto_sync(item["id"], clock=lambda: 2000)["status"] == "deferred"
+    assert attempts == ["work"]
+
+
+def test_profile_identity_changes_do_not_reset_scope_claim_and_legacy_is_preserved(tmp_path):
+    from keys_keeper.auto_schedule import claim_auto_sync
+    runtime, item = _watch_runtime(tmp_path)
+    item = {**item, "id": str(uuid4()), "kind": "replica"}
+    legacy = Paths(tmp_path / "project-watch-schedule" / item["id"])
+    claim_auto_sync(legacy, 1000)
+    assert runtime._claim_auto_sync(item, 1001) == (False, 87400)
+    shared = tmp_path / "project-watch-schedule" / item["scope_id"] / "last-attempt.json"
+    assert json.loads(shared.read_bytes())["last_attempt"] == 1000
+    item["id"] = str(uuid4())
+    assert runtime._claim_auto_sync(item, 87400 - 0.01) == (False, 87400)
+    assert runtime._claim_auto_sync(item, 87400) == (True, 173800)
+
+
+def test_automatic_timeout_consumes_slot_and_manual_sync_remains_immediate(tmp_path, monkeypatch):
+    from keys_keeper.auto_worker import AutoWorkerError
+    runtime, item = _watch_runtime(tmp_path)
+    calls = []
+    def timeout(_item):
+        calls.append("automatic")
+        raise AutoWorkerError("operation_timed_out")
+    monkeypatch.setattr(runtime, "_run_auto_sync", timeout)
+    assert runtime.auto_sync(item["id"], clock=lambda: 1000) == {"status": "failed", "error": "operation_timed_out"}
+    assert runtime.auto_sync(item["id"], clock=lambda: 1001)["status"] == "deferred"
+    monkeypatch.setattr(runtime, "sync", lambda *_args: calls.append("manual"))
+    runtime.sync(item["id"])
+    assert calls == ["automatic", "manual"]
+
+
+def test_actual_supervised_project_worker_uses_only_synthetic_replica(tmp_path, configured):
+    from keys_keeper.auto_worker import run_auto_worker
+    worker, joined, _answer = _connect(tmp_path, configured)
+    run_auto_worker("project", worker.paths, joined["profile_id"], timeout=10)
+    context = worker.context(joined["profile_id"])
+    assert context.kind == "replica"
+    assert [entry.name for entry in context.store.list()] == ["project-key"]
 
 
 def test_runtime_state_cache_uses_immutable_identity_and_defensive_copy(tmp_path, monkeypatch):

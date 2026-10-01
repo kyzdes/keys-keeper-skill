@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/auto-update.sh\"",
-            "timeout": 450,
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/keys-keeper-auto-update.sh\"",
+            "timeout": 300,
             "async": true
           },
           {

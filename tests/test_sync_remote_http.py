@@ -20,10 +20,13 @@ class FakeResp:
     def __init__(self, status=200, headers=None, body=b""):
         self.status = status
         self.headers = headers or {}
-        self._body = body
+        self._body = io.BytesIO(body)
 
     def read(self, n=-1):
-        return self._body
+        return self._body.read(n)
+
+    def close(self):
+        self._body.close()
 
 
 def _remote(handler):
@@ -207,3 +210,47 @@ def test_proxy_tunnel_error_adds_actionable_hint(monkeypatch):
     with pytest.raises(TransportError) as ei:
         remote._request("GET", "/b/kk/x")
     assert 'sync.proxy="direct"' in str(ei.value)
+
+
+@pytest.mark.parametrize("headers", [{}, {"Content-Length": "1000"}])
+def test_large_s3_response_is_bounded_and_closed(monkeypatch, headers):
+    response = FakeResp(headers=headers, body=b"x" * 1000)
+    remote, _, fake = _remote(lambda *_a: response)
+    monkeypatch.setattr(sr, "urlopen", fake)
+    monkeypatch.setattr(sr, "MAX_RESPONSE_BYTES", 16)
+    with pytest.raises(TransportError, match="^response_size_exceeded$"):
+        remote.get_object("snapshot")
+    assert response._body.closed
+
+
+def test_repeated_s3_pagination_token_is_rejected(monkeypatch):
+    body = b"<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>"
+    remote, captured, fake = _remote(lambda *_a: FakeResp(body=body))
+    monkeypatch.setattr(sr, "urlopen", fake)
+    with pytest.raises(TransportError, match="^repeated_pagination_token$"):
+        remote.list_objects("versions/")
+    assert len(captured) == 2
+
+
+def test_s3_pagination_has_a_finite_page_limit(monkeypatch):
+    def page(_request, captured):
+        return FakeResp(body=("<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>"
+                              + str(len(captured)) + "</NextContinuationToken></ListBucketResult>").encode())
+    remote, captured, fake = _remote(page)
+    monkeypatch.setattr(sr, "urlopen", fake)
+    monkeypatch.setattr(sr, "MAX_LIST_PAGES", 2)
+    with pytest.raises(TransportError, match="^object_list_page_limit_exceeded$"):
+        remote.list_objects("versions/")
+    assert len(captured) == 2
+
+
+def test_s3_error_body_is_never_read(monkeypatch):
+    class HostileBody(io.BytesIO):
+        def read(self, *_args):
+            pytest.fail("S3 error payload was read")
+    body = HostileBody(b"SYNTHETIC-PRIVATE")
+    remote, _, fake = _remote(lambda req, _c: (_ for _ in ()).throw(HTTPError(req.full_url, 403, "forbidden", {}, body)))
+    monkeypatch.setattr(sr, "urlopen", fake)
+    with pytest.raises(AuthError):
+        remote.get_object("snapshot")
+    assert body.closed

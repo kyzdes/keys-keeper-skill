@@ -38,6 +38,17 @@ class AdminServer:
                  profile_selector: str | None = None, project_runtime=None):
         self.paths = paths
         self.profile_selector = profile_selector
+        if project_runtime is None:
+            from keys_keeper.api import _web_backend
+            from keys_keeper.composition import AccessContext
+            from keys_keeper.project_runtime import ProjectRuntime
+
+            # One bounded runtime owns process-local unlock caches for this
+            # server. Journal reads still reload and authenticate file bytes.
+            project_runtime = ProjectRuntime(
+                paths, access=AccessContext.UI_FORBIDDEN,
+                backend_factory=lambda: _web_backend(paths),
+            )
         self.project_runtime = project_runtime
         self.requested_port = port
         self.bound_port = 0

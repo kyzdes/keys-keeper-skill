@@ -16,6 +16,7 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from keys_keeper.backend import Sealed
+from keys_keeper.http_body import BodyTooLargeError, read_bounded_body
 
 
 JsonObject: TypeAlias = dict[str, Any]
@@ -438,23 +439,25 @@ class VpsSyncClient:
             if content_encoding and content_encoding.lower() != "identity":
                 raise VpsProtocolError("compressed sync responses are not accepted")
 
-            data = response.read(self.max_response_bytes + 1)
-            if len(data) > self.max_response_bytes:
+            try:
+                data = read_bounded_body(response, max_bytes=self.max_response_bytes, timeout=self.timeout)
+            except BodyTooLargeError:
                 raise VpsPayloadTooLargeError("response body exceeds the configured limit")
             if not data:
                 raise VpsProtocolError("sync server returned an empty JSON response")
             return _decode_json(data)
         except HTTPError as exc:
+            response = exc
             server_code = None
             try:
-                error_body = exc.read(min(self.max_response_bytes, 64 * 1024) + 1)
-                if len(error_body) <= min(self.max_response_bytes, 64 * 1024):
-                    decoded = _decode_json(error_body)
-                    error = decoded.get("error") if isinstance(decoded, dict) else None
-                    candidate = error.get("code") if isinstance(error, dict) else None
-                    if isinstance(candidate, str):
-                        server_code = candidate
-            except (OSError, VpsClientError):
+                error_body = read_bounded_body(exc, max_bytes=min(self.max_response_bytes, 64 * 1024),
+                                               timeout=self.timeout)
+                decoded = _decode_json(error_body)
+                error = decoded.get("error") if isinstance(decoded, dict) else None
+                candidate = error.get("code") if isinstance(error, dict) else None
+                if isinstance(candidate, str):
+                    server_code = candidate
+            except (OSError, VpsClientError, BodyTooLargeError):
                 pass
             raise _status_error(method, path, int(exc.code), server_code) from None
         except VpsClientError:
