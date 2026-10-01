@@ -70,7 +70,7 @@ def _request_context(handler, paths: Paths, parsed: ParseResult, *, runtime=None
             backend_factory=lambda: _web_backend(paths),
         )
     context = active_runtime.context(_selector(parsed, server_selector))
-    handler._kk_runtime = active_runtime
+    handler._kk_runtime = getattr(context, "runtime", active_runtime)
     handler._kk_context = context
     return context
 
@@ -99,7 +99,7 @@ def _context_payload(context) -> dict:
         "kind": kind,
         "profile_id": context.profile_id,
         "scope_id": context.scope_id,
-        "can_create": kind in {"master", "replica"},
+        "can_create": kind in {"master", "replica"} and (getattr(context, "item", None) or {}).get("status", "active") == "active",
         "can_mutate": kind == "master",
     }
 
@@ -116,6 +116,11 @@ def handle_api(
     runtime=None, server_selector: str | None = None,
 ) -> None:
     parsed = urlparse(path)
+    if parsed.path.startswith("/api/personal-sync/"):
+        from keys_keeper.api_personal_sync import handle_personal_api
+        handle_personal_api(handler, paths=paths, method=method, parsed=parsed,
+                            body=body, runtime=runtime, server_selector=server_selector)
+        return
     try:
         _request_context(handler, paths, parsed, runtime=runtime,
                          server_selector=server_selector)
@@ -617,7 +622,9 @@ def _audit(handler, paths: Paths, query: str) -> None:
     name = qs.get("name", [None])[0]
     limit = int(qs.get("limit", ["100"])[0])
     audit = _context(handler, paths).audit
-    events = list(audit.search(op=op, name=name, limit=limit))
+    # The journal opened from the menu must show current activity, even once
+    # the file contains more than the UI's 2,000-event limit.
+    events = list(audit.search(op=op, name=name, limit=limit, newest_first=True))
     handler._send_json(200, {"events": events})
 
 

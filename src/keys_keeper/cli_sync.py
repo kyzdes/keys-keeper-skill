@@ -428,7 +428,7 @@ def web_setup(paths: Paths, data: dict) -> dict:
 # ---------------- registration ----------------
 
 def register_sync(sub) -> None:
-    sp = sub.add_parser("sync", help="sync the vault through S3 or a zero-knowledge VPS")
+    sp = sub.add_parser("sync", help="legacy S3/KK2 sync; use Settings → My computers for personal VPS sync")
     ss = sp.add_subparsers(dest="sync_command", required=True)
 
     # The VPS workflow is namespaced so existing `keys sync setup/push/pull`

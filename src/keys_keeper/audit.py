@@ -38,12 +38,36 @@ class AuditEvent:
     file_target: str | None
     success: bool
     error: str | None
+    caller_kind: str = "unknown"
+    caller_agent: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(self.__dict__, separators=(",", ":"))
 
 
 _UNTRUSTED_FIELD_MAX_LEN = 256
+
+
+def caller_identity(caller_path: str, environ=None) -> tuple[str, str | None]:
+    """Best-effort display attribution, never an authorization decision.
+
+    Persist only a fixed agent name, not environment values, session IDs,
+    process arguments, or working directories. A shell alone proves nothing.
+    Desktop requests must not inherit the agent that launched the UI.
+    """
+    env = os.environ if environ is None else environ
+    if env.get("KEYS_KEEPER_CALLER") == "desktop":
+        return "desktop", None
+    if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
+        return "agent", "codex"
+    if env.get("CLAUDECODE") == "1":
+        return "agent", "claude"
+    executable = caller_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    known = {"codex": "codex", "claude": "claude", "opencode": "opencode",
+             "codex.exe": "codex", "claude.exe": "claude", "opencode.exe": "opencode"}
+    if executable in known:
+        return "agent", known[executable]
+    return "unknown", None
 
 
 def _sanitize_untrusted(s: str | None) -> str | None:
@@ -142,19 +166,23 @@ class AuditLog:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # parent pid is the caller (CLI was invoked by zsh / claude / etc)
         ppid = os.getppid()
+        caller_path = _resolve_caller_path(ppid)
+        caller_kind, caller_agent = caller_identity(caller_path)
         event = AuditEvent(
             ts=now,
             op=_sanitize_untrusted(op) or "?",
             name=_sanitize_untrusted(name) or "?",
             id=_sanitize_untrusted(id_) or "?",
             caller_pid=ppid,
-            caller_path=_resolve_caller_path(ppid),
+            caller_path=caller_path,
             file_target=_sanitize_untrusted(file_target),
             success=success,
             # Exception text is not durable audit metadata: an upstream tool or
             # backend can embed a credential in it. Keep only the fact of an
             # error; the interactive caller already receives the live message.
             error="operation failed" if error else None,
+            caller_kind=caller_kind,
+            caller_agent=caller_agent,
         )
         with open(self.paths.audit_jsonl, "a", opener=_private_opener) as f:
             f.write(event.to_json() + "\n")
@@ -174,10 +202,12 @@ class AuditLog:
         name: str | None = None,
         since: datetime | None = None,
         limit: int = 1000,
+        newest_first: bool = False,
     ) -> Iterator[dict]:
         if not self.paths.audit_jsonl.exists():
             return
-        for line in self.paths.audit_jsonl.read_text().splitlines():
+        lines = self.paths.audit_jsonl.read_text().splitlines()
+        for line in reversed(lines) if newest_first else lines:
             if not line.strip():
                 continue
             ev = json.loads(line)
