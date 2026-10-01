@@ -15,6 +15,11 @@ from keys_keeper import cli_sync
 from keys_keeper.composition import AccessContext
 from _sync_fakes import FakeRemote, FakeBackend
 
+
+@pytest.fixture(autouse=True)
+def isolated_automatic_worker_boundary(monkeypatch):
+    monkeypatch.setattr(cli_sync, "run_auto_worker", lambda mode, paths: cli_sync._run_auto_worker(paths))
+
 AKID, S3SECRET, PW = "AKID", "s3secret", "passphrase-X"
 
 
@@ -92,7 +97,8 @@ def test_default_path_spawns_detached_worker(sync_cli, monkeypatch):
     monkeypatch.setattr("keys_keeper.cli_sync.subprocess.Popen", fake_popen)
     rc = cli.main(["sync", "auto", "--force"])   # no --foreground
     assert rc == 0
-    assert calls["argv"][1:] == ["-m", "keys_keeper", "sync", "auto", "--foreground", "--force"]
+    assert calls["argv"][1:4] == ["-m", "keys_keeper.auto_worker", "s3"]
+    assert calls["argv"][-1] == "--supervise"
     # detached: new session (POSIX) or DETACHED_PROCESS (Windows)
     assert ("start_new_session" in calls["kwargs"]) or ("creationflags" in calls["kwargs"])
 

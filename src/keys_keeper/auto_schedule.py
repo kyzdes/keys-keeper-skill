@@ -23,7 +23,25 @@ def _unique_fields(items):
     return value
 
 
-def claim_auto_sync(schedule: Paths, now, *, interval=DAILY_INTERVAL, force=False):
+def _read_attempt(marker):
+    try:
+        blob = _secure_read(marker, max_bytes=4096)
+    except FileNotFoundError:
+        return None
+    try:
+        saved = json.loads(blob, object_pairs_hook=_unique_fields,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    except (ValueError, UnicodeError):
+        raise AutoScheduleError("invalid automatic synchronization schedule") from None
+    if (not isinstance(saved, dict) or set(saved) != {"schema_version", "last_attempt"}
+            or type(saved["schema_version"]) is not int or saved["schema_version"] != 1
+            or type(saved["last_attempt"]) not in {int, float}
+            or not math.isfinite(saved["last_attempt"]) or saved["last_attempt"] < 0):
+        raise AutoScheduleError("invalid automatic synchronization schedule")
+    return saved["last_attempt"]
+
+
+def claim_auto_sync(schedule: Paths, now, *, interval=DAILY_INTERVAL, force=False, legacy=None):
     """Claim before expensive work, serializing restarts and other workers.
 
     A failed attempt consumes the daily slot. ``force`` is reserved for an
@@ -36,22 +54,17 @@ def claim_auto_sync(schedule: Paths, now, *, interval=DAILY_INTERVAL, force=Fals
         raise AutoScheduleError("invalid automatic synchronization interval")
     marker = schedule.root / "last-attempt.json"
     with profile_lock(schedule):
-        try:
-            blob = _secure_read(marker, max_bytes=4096)
-        except FileNotFoundError:
-            pass
-        else:
-            try:
-                saved = json.loads(blob, object_pairs_hook=_unique_fields,
-                                   parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-            except (ValueError, UnicodeError):
-                raise AutoScheduleError("invalid automatic synchronization schedule") from None
-            if (not isinstance(saved, dict) or set(saved) != {"schema_version", "last_attempt"}
-                    or type(saved["schema_version"]) is not int or saved["schema_version"] != 1
-                    or type(saved["last_attempt"]) not in {int, float}
-                    or not math.isfinite(saved["last_attempt"]) or saved["last_attempt"] < 0):
-                raise AutoScheduleError("invalid automatic synchronization schedule")
-            due = saved["last_attempt"] + interval
+        previous = _read_attempt(marker)
+        if legacy is not None and legacy.root != schedule.root:
+            old = _read_attempt(legacy.root / "last-attempt.json")
+            if old is not None and (previous is None or old > previous):
+                previous = old
+                # Preserve the latest old profile claim even if its registry
+                # identity changes later. Migration never resets a daily slot.
+                _atomic_write_bytes(marker, json.dumps({"schema_version": 1, "last_attempt": old},
+                                                       sort_keys=True).encode())
+        if previous is not None:
+            due = previous + interval
             if not force and now < due:
                 return False, due
         _atomic_write_bytes(marker, json.dumps({"schema_version": 1, "last_attempt": now},

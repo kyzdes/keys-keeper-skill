@@ -430,3 +430,20 @@ def test_timeout_is_a_transport_error(monkeypatch):
     )
     with pytest.raises(vc.VpsTransportError, match="timed out"):
         _client().get_head("v1")
+
+
+def test_trickled_http_error_body_has_elapsed_deadline_and_is_closed(monkeypatch):
+    from keys_keeper import http_body
+    current = [0.0]
+    class TrickledBody(io.BytesIO):
+        def read1(self, maximum):
+            current[0] += 0.6
+            return b"x"
+    body = TrickledBody()
+    error = HTTPError("https://sync.example.test", 500, "error", {}, body)
+    monkeypatch.setattr(http_body.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(vc, "urlopen", lambda *_a, **_kw: (_ for _ in ()).throw(error))
+    with pytest.raises(vc.VpsTransportError):
+        _client(timeout=1).get_head("v1")
+    assert current[0] == pytest.approx(1.2)
+    assert body.closed

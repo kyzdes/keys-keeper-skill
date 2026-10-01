@@ -25,6 +25,11 @@ from keys_keeper.sync_vps_client import VpsAuthenticationError, VpsConflictError
 from test_project_sync_e2e import FakeBackend, _running
 
 
+@pytest.fixture(autouse=True)
+def isolated_automatic_worker_boundary(monkeypatch):
+    monkeypatch.setattr(PersonalSync, "_run_auto_sync", lambda self: self.sync())
+
+
 @pytest.fixture
 def personal(tmp_path):
     paths = Paths(tmp_path / "master")
@@ -324,7 +329,7 @@ def test_personal_daily_watch_restart_and_deferred_checks_use_metadata_only(tmp_
     monkeypatch.setattr(restarted, "sync", lambda: attempts.append("second"))
     monkeypatch.setattr(restarted, "_configured", lambda **_kwargs: pytest.fail("deferred check requested configured state"))
     monkeypatch.setattr(ProjectRuntime, "state", lambda *_args: pytest.fail("deferred check decrypted state"))
-    marker = runtime.paths.root / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    marker = runtime.paths.root / "project-watch-schedule" / item["scope_id"] / "last-attempt.json"
     before = marker.read_bytes()
     restarted.watch(interval=5, cycles=1, clock=lambda: 87400.4)
     assert attempts == ["first"]
@@ -373,7 +378,7 @@ def test_personal_manual_sync_remains_immediate_after_daily_attempt(personal, mo
 def test_personal_daily_watch_invalid_marker_never_runs_work(tmp_path, monkeypatch):
     manager, runtime, item = _daily_personal(tmp_path)
     runtime._claim_auto_sync(item, 1000)
-    marker = runtime.paths.root / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    marker = runtime.paths.root / "project-watch-schedule" / item["scope_id"] / "last-attempt.json"
     marker.write_bytes(b"null")
     monkeypatch.setattr(manager, "sync", lambda: pytest.fail("corrupt schedule authorized work"))
     manager.watch(cycles=1, clock=lambda: 999999)
@@ -399,3 +404,19 @@ def test_personal_watch_cli_defaults_daily_and_accepts_legacy_interval():
     parser = build_parser()
     assert parser.parse_args(["devices", "watch"]).interval == 86400
     assert parser.parse_args(["devices", "watch", "--interval", "60"]).interval == 60
+
+
+def test_invalid_personal_settings_fail_closed_without_restart_error(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from keys_keeper import cli_devices
+    from keys_keeper.operation_journal import _atomic_write_bytes
+    paths = Paths(tmp_path)
+    _atomic_write_bytes(paths.root / "personal-sync.json", b"invalid")
+    manager = PersonalSync(paths)
+    monkeypatch.setattr(manager, "_run_auto_sync", lambda: pytest.fail("invalid config ran sync"))
+    sleeps = []
+    assert manager.watch(interval=5, cycles=2, clock=lambda: 1000, sleep=sleeps.append) == {"cycles": 2}
+    assert sleeps == [86400]
+    assert not (paths.root / "project-watch-schedule").exists()
+    args = SimpleNamespace(home=str(tmp_path), devices_command="watch", interval=86400, cycles=1)
+    assert cli_devices.command(args) == 0

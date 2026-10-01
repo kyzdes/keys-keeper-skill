@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 from keys_keeper import project_protocol as wire
 from keys_keeper.audit import AuditLog
 from keys_keeper.auto_schedule import AutoScheduleError, claim_auto_sync
+from keys_keeper.auto_worker import AutoWorkerError, run_auto_worker
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.models import Entry, now_iso
@@ -662,11 +663,33 @@ class ProjectRuntime:
         cannot trigger another expensive attempt that day. Manual ``sync`` does
         not use this guard. An invalid marker fails closed instead of retrying.
         """
-        schedule = Paths(self.paths.root / "project-watch-schedule" / _uuid(item["id"]))
+        schedule = Paths(self.paths.root / "project-watch-schedule" / _uuid(item["scope_id"]))
+        legacy = Paths(self.paths.root / "project-watch-schedule" / _uuid(item["id"]))
         try:
-            return claim_auto_sync(schedule, now)
+            return claim_auto_sync(schedule, now, legacy=legacy)
         except AutoScheduleError as ex:
             raise RuntimeErrorSafe(str(ex)) from None
+
+    def auto_sync(self, selector, *, clock=time.time):
+        """Automatic-only entry shared by watchers and external daily launchers."""
+        self.assert_available()
+        if self.access != AccessContext.UI_FORBIDDEN:
+            raise RuntimeErrorSafe("background synchronization requires noninteractive backend access")
+        item = self.registry.resolve(selector)
+        if not item or item["status"] != "active":
+            raise RuntimeErrorSafe("active project profile required")
+        now = clock()
+        claimed, due = self._claim_auto_sync(item, now)
+        if not claimed:
+            return {"status": "deferred", "next_auto_sync_in": math.ceil(due - now)}
+        try:
+            self._run_auto_sync(item)
+        except AutoWorkerError as ex:
+            return {"status": "failed", "error": str(ex)}
+        return {"status": "synced"}
+
+    def _run_auto_sync(self, item):
+        run_auto_worker("project", self.paths, item["id"])
 
     def watch(self, selector, *, interval=_AUTO_SYNC_INTERVAL, cycles=0,
               report=lambda result: None, sleep=time.sleep, clock=time.time):
@@ -702,7 +725,10 @@ class ProjectRuntime:
                         result.update(status="deferred", next_auto_sync_in=math.ceil(due - now))
                     else:
                         try:
-                            result.update(status="synced", result=self.sync(item["id"]))
+                            self._run_auto_sync(item)
+                            result.update(status="synced")
+                        except AutoWorkerError as ex:
+                            result.update(error=str(ex))
                         except Exception:
                             # One stable code only; retry on the next daily
                             # attempt or explicit Sync, never in a tight loop.

@@ -25,7 +25,7 @@ it does not cache mutable plaintext state or change the at-rest threat model.
 The KK1 blob format and PBKDF2-HMAC-SHA256 with 600,000 iterations are unchanged.
 
 The watcher records non-secret timing metadata separately from encrypted
-project state under `project-watch-schedule/<profile-id>/last-attempt.json`.
+project state under `project-watch-schedule/<scope-id>/last-attempt.json`.
 It claims the attempt under a profile lock before expensive work. A failed
 attempt counts against the daily limit; invalid timing metadata fails closed.
 Deferred cycles do not decrypt project state. Manual sync bypasses this
@@ -35,15 +35,50 @@ Personal-device watchers use the same metadata-only claim without changing
 their configured auto-sync setting or recipients. Legacy S3 SessionStart sync
 uses a separate claim and an interval of at least 24 hours, even if an older
 environment setting requests less. Its explicit `sync auto --force` remains a
-manual override and the handoff for an already claimed detached worker. Manual
+manual override. Detached workers receive an already claimed attempt. Manual
 project/device Sync and S3 push/pull remain immediate.
+
+## Working UI and activity summaries
+
+Idle Settings does not issue periodic personal-sync requests. The owner starts
+connection polling by adding/joining a computer; polling has an invitation
+expiry and stops while the page is hidden or after cancellation/completion.
+Local admin requests share a bounded runtime for the server lifetime. Cached
+journal keys stay in that process; each encrypted read still authenticates the
+current file, preserving external writes and revocations.
+
+The native activity bridge caches counters and file fingerprints in memory.
+Unchanged audit files are not reopened or parsed. Appended records update the
+counters; replacement, rewrite, rotation, new profiles, read errors, and local
+day/timezone changes invalidate the relevant cache. Automatic native refreshes
+stop when the activity panel is hidden; explicit refresh stays immediate.
+The cache retains at most 128 file entries plus one aggregate fingerprint and
+counter set. The aggregate prevents repeated reads when discovered logs exceed
+the per-file capacity; errors and concurrent changes invalidate it.
+
+## Automatic worker bounds
+
+Project and personal watchers plus the standalone launcher use the same
+scope-based daily claim. A portable supervisor bounds automatic workers to five
+minutes and terminates their owned process tree on timeout/cancellation. Manual
+operations use their ordinary immediate path. Failed or corrupt configurations
+cannot cause a frequent autostart restart loop. HTTP response sizes and S3
+pagination are bounded in addition to per-socket timeouts.
+
+The opt-in Keys Keeper fallback updater also claims a daily attempt before
+work. Lower interval overrides and failures cannot permit a short retry. The
+shared updater templates remain unchanged. Native Claude/Codex update policy
+belongs to the host; the hook defers to that policy without changing it.
 
 ## macOS one-shot scheduler
 
 `scripts/daily-project-sync.py` is a standard-library launcher usable with an
 existing installed package. It runs exactly one scope-specific `project-sync
-sync` command. A global POSIX lock serializes different jobs; private durable
-timestamps enforce 24 hours between attempts even across launcher restarts.
+auto` command. The legacy `sync` input is converted to the automatic entry;
+manual CLI `project-sync sync` remains immediate. A global POSIX lock serializes different jobs; private durable
+timestamps retain the old daily guard across launcher restarts. The inner
+scope-based claim additionally prevents a duplicate/recreated label or a watcher
+from gaining another attempt for the same scope.
 Errors do not trigger retries, and a child process is bounded to five minutes.
 Its output contains only a fixed status, never child output or scope metadata.
 
@@ -55,10 +90,12 @@ hex digest of the existing LaunchAgent label, and these LaunchAgent settings:
 - no `KeepAlive`
 - `ProgramArguments`: Python, launcher, `--state-dir`, scheduling directory,
   `--job-id`, label digest, `--command`, existing keys executable,
-  `project-sync`, `sync`, `--scope`, existing scope selector
+  `project-sync`, `auto`, `--scope`, existing scope selector
 
-Initialize each timestamp to the activation time to defer the first automatic
-attempt for a day. Back up the original plists privately before replacing them.
+For a first setup, initialize timestamps to the activation time to defer work
+for a day. For an upgrade, preserve the latest old job/profile attempt when
+seeding the scope-based marker; never reset it to an earlier time. Back up plists
+and scheduling metadata privately before replacing them.
 Keep each existing scope explicit; never substitute an unscoped watcher that
 could also process a separate personal-device profile.
 
@@ -90,6 +127,14 @@ Measured on 1 October 2026, six scopes × three idle cycles:
 The combined retained-state measurement starts each journal cold. It derives
 once per scope, then reuses that key. All measured cycles remained idle; CPU
 fell by approximately 97.1% in this synthetic scenario.
+
+The separate `scripts/benchmark-desktop-stats.py` creates a synthetic 100,000-row
+audit log. On the same MacBook, three stateless summaries used 0.800136 CPU
+seconds and parsed 300,000 rows. After one cache warmup, 100 unchanged refreshes
+used 0.004758 CPU seconds with zero file reads or parsed rows. Appending ten rows
+used 0.009250 CPU seconds and parsed only those ten rows; a streaming prefix
+hash also checked for an interior rewrite. These are synthetic measurements,
+not a battery-life estimate.
 
 ## Core rollout boundary
 

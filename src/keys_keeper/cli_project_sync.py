@@ -124,6 +124,11 @@ def _run(args):
         return dataclasses.asdict(result)
     if command == "sync":
         return runtime.sync(selector)
+    if command == "auto":
+        result = runtime.auto_sync(selector)
+        if result["status"] == "failed":
+            raise RuntimeErrorSafe(result["error"])
+        return result
     if command == "watch":
         if not 5 <= args.interval <= 86400 or args.cycles < 0:
             raise RuntimeErrorSafe("invalid synchronization interval or cycle count")
@@ -167,6 +172,9 @@ def register(subparsers):
         if name != "profiles":
             parser.add_argument("--scope", help="profile UUID or project/environment")
         parser.set_defaults(func=command)
+    automatic = commands.add_parser("auto", help="one bounded automatic attempt; shares the daily watcher limit")
+    automatic.add_argument("--scope", required=True)
+    automatic.set_defaults(func=command)
     use = commands.add_parser("use", help="choose the default local profile")
     use.add_argument("scope")
     use.set_defaults(func=command)

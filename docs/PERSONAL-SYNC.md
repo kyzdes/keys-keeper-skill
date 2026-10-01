@@ -35,11 +35,11 @@ Download and run `scripts/install-windows.ps1` in PowerShell. It finds Python
 dedicated virtual environment under `%LOCALAPPDATA%\KeysKeeper`, adds only a
 `keys` wrapper to the user PATH, installs a Start Menu shortcut and opens the
 local app. It does not require Git, SSH, administrator rights or any vault token.
-The default download source is the reviewed `v0.10.0` release;
+The default download source is the reviewed `v0.10.1` release;
 `-Source` accepts another reviewed archive URL or local checkout.
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/v0.10.0/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
+Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/v0.10.1/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\install-keys-keeper.ps1"
 ```
 

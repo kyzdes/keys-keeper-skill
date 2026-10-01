@@ -20,6 +20,13 @@ from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
 from keys_keeper.backend import Sealed
+from keys_keeper.http_body import BodyTooLargeError, read_bounded_body
+
+# Generous bounds: encrypted snapshots up to 64 MiB and up to a million S3
+# objects, while a malformed pagination response can never loop indefinitely.
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_LIST_PAGES = 1024
+MAX_LIST_OBJECTS = 1_000_000
 
 _EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 _UNRESERVED = frozenset(
@@ -250,9 +257,23 @@ class S3Remote:
             req.add_header(k, v)
         try:
             resp = urlopen(req, timeout=self.timeout, proxy=self._proxy)
-            return resp.status, dict(resp.headers), resp.read()
+            try:
+                declared = resp.headers.get("Content-Length")
+                if declared is not None and (int(declared) < 0 or int(declared) > MAX_RESPONSE_BYTES):
+                    raise BodyTooLargeError("response_size_exceeded")
+                data = read_bounded_body(resp, max_bytes=MAX_RESPONSE_BYTES, timeout=self.timeout)
+                return resp.status, dict(resp.headers), data
+            finally:
+                close = getattr(resp, "close", None)
+                if close is not None:
+                    close()
+        except BodyTooLargeError:
+            raise TransportError("response_size_exceeded") from None
+        except ValueError:
+            raise TransportError("invalid_response_length") from None
         except HTTPError as e:
             status = e.code
+            e.close()  # S3 errors are mapped without reading hostile error XML.
             # NB: we deliberately do NOT splice the provider's error body into the
             # message — S3 error XML routinely echoes back the AWSAccessKeyId and
             # the StringToSign, which would leak to stderr/logs (S2/S5).
@@ -301,7 +322,8 @@ class S3Remote:
         full = self._full_key(prefix)
         keys: list[str] = []
         token: str | None = None
-        while True:
+        seen = set()
+        for _ in range(MAX_LIST_PAGES):
             query = {"list-type": "2", "prefix": full}
             if token:
                 query["continuation-token"] = token
@@ -314,11 +336,16 @@ class S3Remote:
                 k = c.findtext(f"{ns}Key")
                 if k is not None:
                     keys.append(k[len(self.prefix) + 1:] if self.prefix else k)
+                    if len(keys) > MAX_LIST_OBJECTS:
+                        raise TransportError("object_list_size_exceeded")
             truncated = (root.findtext(f"{ns}IsTruncated") or "false").lower() == "true"
             token = root.findtext(f"{ns}NextContinuationToken")
             if not truncated or not token:
-                break
-        return keys
+                return keys
+            if token in seen:
+                raise TransportError("repeated_pagination_token")
+            seen.add(token)
+        raise TransportError("object_list_page_limit_exceeded")
 
     def delete_object(self, key: str) -> None:
         try:

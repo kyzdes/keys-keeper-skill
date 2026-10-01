@@ -11,13 +11,14 @@ import os
 import sys
 import threading
 
-from keys_keeper.desktop_stats import today_summary
+from keys_keeper.desktop_stats import DailySummaryCache
 from keys_keeper.paths import Paths
 
 
 def main() -> int:
     os.environ["KEYS_KEEPER_CALLER"] = "desktop"
     paths = Paths()
+    summaries = DailySummaryCache(paths)
     server = None
     try:
         for line in sys.stdin:
@@ -30,7 +31,7 @@ def main() -> int:
                 if command == "summary":
                     if server is not None:
                         server.heartbeat()
-                    response = {"type": "summary", "summary": today_summary(paths)}
+                    response = {"type": "summary", "summary": summaries.summary()}
                 elif command == "open":
                     if server is None or server._stop_event.is_set():
                         from keys_keeper.server import AdminServer
