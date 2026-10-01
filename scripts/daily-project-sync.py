@@ -9,6 +9,7 @@ Manual Sync uses the ordinary CLI/API and bypasses this launcher entirely.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import math
@@ -19,6 +20,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 from uuid import UUID
 
@@ -45,7 +47,7 @@ def _unique_fields(items):
 
 def _last_attempt(path: Path) -> float | None:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
     with os.fdopen(fd, "rb") as stream:
@@ -84,37 +86,61 @@ def _write_attempt(path: Path, now: float) -> None:
             pass
 
 
+@contextlib.contextmanager
+def _cancel_on_termination():
+    cancellation = {"protected": True, "pending": False}
+    previous = {}
+    def cancelled(*_args):
+        if cancellation["protected"]:
+            cancellation["pending"] = True
+        else:
+            raise SystemExit(1)
+    if threading.current_thread() is threading.main_thread():
+        for kind in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            previous[kind] = signal.getsignal(kind)
+            signal.signal(kind, cancelled)
+    try:
+        yield cancellation
+    finally:
+        for kind, handler in previous.items():
+            signal.signal(kind, handler)
+
+
+def _stop_child(child):
+    # The CLI propagates TERM to its independent supervisor and waits for it.
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait()
+
+
 def _run_child(command):
     # auto owns the shared scope claim; preserve the old launcher label guard
     # outside it until private timestamps have been migrated during rollout.
     automatic = [*command]
     automatic[2] = "auto"
-    child = subprocess.Popen(automatic, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-    try:
-        return child.wait(timeout=300)
-    except subprocess.TimeoutExpired:
-        # Its supervisor handles TERM by cancelling and waiting for its worker.
-        child.terminate()
+    with _cancel_on_termination() as cancellation:
+        child = subprocess.Popen(automatic, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
         try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        child.wait()
-        raise
-    except BaseException:
-        child.terminate()
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-        raise
+            cancellation["protected"] = False
+            if cancellation["pending"]:
+                raise SystemExit(1)
+            return child.wait(timeout=300)
+        except BaseException:
+            cancellation["protected"] = True
+            _stop_child(child)
+            raise
 
 
 def run_daily(root: Path, job_id: str, command: list[str], *, clock=time.time) -> tuple[str, int]:
@@ -136,6 +162,8 @@ def run_daily(root: Path, job_id: str, command: list[str], *, clock=time.time) -
         fcntl.flock(lock, fcntl.LOCK_EX)
         stamp = root / (job_id + ".json")
         now = clock()
+        if type(now) not in {int, float} or not math.isfinite(now) or now < 0:
+            raise ValueError("invalid scheduler clock")
         previous = _last_attempt(stamp)
         # A backwards clock adjustment delays work instead of bypassing the cap.
         if previous is not None and now - previous < DAY:

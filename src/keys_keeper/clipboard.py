@@ -18,9 +18,19 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
-__all__ = ["read", "write", "clear", "spawn_clear_after"]
+__all__ = ["read", "write", "clear", "spawn_clear_after", "schedule_clear_after"]
+_COMMAND_TIMEOUT = 10
+MAX_CLEAR_DELAY_SECONDS = 86400
+
+
+def _run_clipboard(command, **kwargs):
+    try:
+        return subprocess.run(command, timeout=_COMMAND_TIMEOUT, **kwargs)
+    except (OSError, subprocess.SubprocessError):
+        raise ClipboardUnavailable("clipboard helper failed or timed out") from None
 
 
 class ClipboardUnavailable(RuntimeError):
@@ -178,30 +188,30 @@ if sys.platform == "win32":
 elif sys.platform == "darwin":
 
     def read() -> str:
-        result = subprocess.run(
+        result = _run_clipboard(
             ["/usr/bin/pbpaste"], capture_output=True, text=True
         )
         return result.stdout
 
     def write(value: str) -> bool:
-        proc = subprocess.run(["/usr/bin/pbcopy"], input=value, text=True)
+        proc = _run_clipboard(["/usr/bin/pbcopy"], input=value, text=True)
         return proc.returncode == 0
 
     def clear() -> None:
-        subprocess.run(["/usr/bin/pbcopy"], input="", text=True)
+        _run_clipboard(["/usr/bin/pbcopy"], input="", text=True)
 
 elif sys.platform.startswith("linux"):
 
     def read() -> str:
-        result = subprocess.run(_linux_paste_cmd(), capture_output=True, text=True)
+        result = _run_clipboard(_linux_paste_cmd(), capture_output=True, text=True)
         return result.stdout
 
     def write(value: str) -> bool:
-        proc = subprocess.run(_linux_copy_cmd(), input=value, text=True)
+        proc = _run_clipboard(_linux_copy_cmd(), input=value, text=True)
         return proc.returncode == 0
 
     def clear() -> None:
-        subprocess.run(_linux_copy_cmd(), input="", text=True)
+        _run_clipboard(_linux_copy_cmd(), input="", text=True)
 
 else:
     def read() -> str:
@@ -214,6 +224,67 @@ else:
         raise NotImplementedError(f"clipboard.clear not supported on {sys.platform}")
 
 
+class _ClearScheduler:
+    """One sleeping thread and one latest digest per long-lived UI process."""
+
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.pending = None
+        self.thread = None
+
+    def schedule(self, digest: str, delay: int):
+        if (not isinstance(delay, int) or isinstance(delay, bool)
+                or not 0 <= delay <= MAX_CLEAR_DELAY_SECONDS):
+            raise ValueError("clipboard delay must be an integer from 0 to 86400")
+        with self.condition:
+            self.pending = (digest, time.monotonic() + delay) if delay else None
+            if self.pending is not None and self.thread is None:
+                self.thread = threading.Thread(target=self._run, daemon=True,
+                                               name="keys-keeper-clipboard-clear")
+                self.thread.start()
+            self.condition.notify()
+
+    def _take_due(self):
+        # Caller holds the condition; replacing a copy also resets its deadline.
+        if self.pending is None:
+            return None
+        digest, deadline = self.pending
+        if deadline > time.monotonic():
+            return None
+        self.pending = None
+        return digest
+
+    def _run(self):
+        while True:
+            with self.condition:
+                while self.pending is None:
+                    self.condition.wait()
+                digest = self._take_due()
+                if digest is None:
+                    self.condition.wait(max(0, self.pending[1] - time.monotonic()))
+                    continue
+            _clear_if_matching(digest)
+
+
+def _clear_if_matching(digest):
+    import hashlib
+    try:
+        current = read()
+        if hashlib.sha256(current.encode("utf-8")).hexdigest() == digest:
+            clear()
+    except (ClipboardUnavailable, OSError):
+        # An unavailable native clipboard cannot be cleared; no secret-bearing
+        # provider exception reaches logs or leaves a failed repeating worker.
+        pass
+
+
+_clear_scheduler = _ClearScheduler()
+
+
+def schedule_clear_after(value_hash: str, delay_sec: int) -> None:
+    _clear_scheduler.schedule(value_hash, delay_sec)
+
+
 def spawn_clear_after(value_hash: str, delay_sec: int) -> None:
     """Spawn a detached process that clears the clipboard after `delay_sec`
     if its SHA-256 still matches `value_hash` (i.e. the user hasn't copied
@@ -223,6 +294,9 @@ def spawn_clear_after(value_hash: str, delay_sec: int) -> None:
     verifier for the clipboard value, so it crosses a private stdin pipe and
     never appears in the child process's argv.
     """
+    if (not isinstance(delay_sec, int) or isinstance(delay_sec, bool)
+            or not 0 <= delay_sec <= MAX_CLEAR_DELAY_SECONDS):
+        raise ValueError("clipboard delay must be an integer from 0 to 86400")
     if len(value_hash) != 64 or any(ch not in "0123456789abcdef" for ch in value_hash):
         raise ValueError("value_hash must be a lowercase SHA-256 digest")
     args = [

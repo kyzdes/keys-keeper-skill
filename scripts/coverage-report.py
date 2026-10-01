@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -53,9 +54,48 @@ def coverage_totals(totals):
             "branch_percent": percentage(totals.get("covered_branches", 0), branches)}
 
 
+def valid_floor(value):
+    floor = float(value)
+    if not math.isfinite(floor) or not 0 <= floor <= 100:
+        raise argparse.ArgumentTypeError("coverage floor must be a finite percentage from 0 to 100")
+    return floor
+
+
+def evaluate_gate(manifest, min_line=None, min_branch=None):
+    """Compare raw counts, never rounded display percentages."""
+    gate = {"status": "not-configured", "min_line": min_line, "min_branch": min_branch, "errors": []}
+    if min_line is None and min_branch is None:
+        return gate
+    if manifest["errors"] or not manifest.get("totals"):
+        gate["status"] = "not-evaluated"
+        gate["errors"].append("coverage evidence is incomplete")
+        return gate
+    for kind, floor, covered, total in (
+        ("line", min_line, "covered_lines", "lines"),
+        ("branch", min_branch, "covered_branches", "branches"),
+    ):
+        if floor is None:
+            continue
+        totals = manifest["totals"]
+        if totals[total] == 0:
+            gate["errors"].append(f"no {kind} coverage denominator")
+        elif 100 * totals[covered] < floor * totals[total]:
+            gate["errors"].append(f"{kind} coverage is below the {floor:g}% floor")
+    gate["status"] = "failed" if gate["errors"] else "passed"
+    return gate
+
+
 def render_summary(manifest, coverage_data, metrics_by_job):
     lines = ["# Python test evidence", "", f"Coverage status: **{manifest['coverage_status']}**.",
              "", "## Coverage", ""]
+    gate = manifest["coverage_gate"]
+    if gate["status"] != "not-configured":
+        floors = ", ".join(f"{kind} >= {gate['min_' + kind]:g}%" for kind in ("line", "branch")
+                           if gate['min_' + kind] is not None)
+        lines.extend([f"Measured coverage gate: **{gate['status']}** ({floors}).", ""])
+        lines.extend([f"- {error}" for error in gate["errors"]])
+        if gate["errors"]:
+            lines.append("")
     if coverage_data:
         totals = coverage_totals(coverage_data["totals"])
         lines.extend([f"Lines: {totals['covered_lines']}/{totals['lines']} "
@@ -102,7 +142,7 @@ def write_durations(path, metrics_by_job):
                                    for phase in ("setup", "call", "teardown")), row["seconds"]])
 
 
-def save_reports(report_dir, coverage_files, manifest, metrics_by_job):
+def save_reports(report_dir, coverage_files, manifest, metrics_by_job, *, min_line=None, min_branch=None):
     import coverage
 
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +172,7 @@ def save_reports(report_dir, coverage_files, manifest, metrics_by_job):
     else:
         manifest["errors"].append("no usable coverage files")
     manifest["coverage_status"] = "partial" if manifest["errors"] else "complete"
+    manifest["coverage_gate"] = evaluate_gate(manifest, min_line, min_branch)
     manifest["coverage_tool_version"] = coverage.__version__
     manifest["limitations"] = list(LIMITATIONS)
     write_json(report_dir / "manifest.json", manifest)
@@ -142,8 +183,9 @@ def save_reports(report_dir, coverage_files, manifest, metrics_by_job):
         with open(summary_path, "a", encoding="utf-8") as stream:
             stream.write(summary)
     print(json.dumps({"coverage_status": manifest["coverage_status"], "jobs": manifest["jobs"],
-                      "totals": manifest.get("totals"), "errors": manifest["errors"]}))
-    return 1 if manifest["errors"] else 0
+                      "totals": manifest.get("totals"), "coverage_gate": manifest["coverage_gate"],
+                      "errors": manifest["errors"]}))
+    return 1 if manifest["errors"] or manifest["coverage_gate"]["errors"] else 0
 
 
 def job(report_dir, label, commit):
@@ -171,7 +213,7 @@ def job(report_dir, label, commit):
     return code
 
 
-def merge(input_dir, report_dir, expected_jobs):
+def merge(input_dir, report_dir, expected_jobs, *, min_line=None, min_branch=None):
     rows, metrics_by_job, files, errors = [], {}, [], []
     for manifest_path in sorted(input_dir.glob("*/manifest.json")):
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -196,7 +238,7 @@ def merge(input_dir, report_dir, expected_jobs):
     manifest = {"schema_version": 1, "jobs": [row["label"] for row in rows],
                 "commit": next(iter(commits)) if len(commits) == 1 else None,
                 "matrix": rows, "expected_jobs": expected_jobs, "errors": errors}
-    return save_reports(report_dir, files, manifest, metrics_by_job)
+    return save_reports(report_dir, files, manifest, metrics_by_job, min_line=min_line, min_branch=min_branch)
 
 
 def main():
@@ -210,10 +252,13 @@ def main():
     combined.add_argument("--input-dir", type=Path, required=True)
     combined.add_argument("--report-dir", type=Path, required=True)
     combined.add_argument("--expected-jobs", type=int, required=True)
+    combined.add_argument("--min-line", type=valid_floor)
+    combined.add_argument("--min-branch", type=valid_floor)
     args = parser.parse_args()
     if args.command == "job":
         return job(args.report_dir, args.label, args.commit)
-    return merge(args.input_dir, args.report_dir, args.expected_jobs)
+    return merge(args.input_dir, args.report_dir, args.expected_jobs,
+                 min_line=args.min_line, min_branch=args.min_branch)
 
 
 if __name__ == "__main__":

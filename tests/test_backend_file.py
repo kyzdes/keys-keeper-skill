@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import stat
 import sys
+import pickle
 
 import pytest
 
@@ -216,3 +217,127 @@ def test_password_fd_is_cached_for_repeated_operations(tmp_path):
         os.close(read_fd)
         if write_fd >= 0:
             os.close(write_fd)
+
+
+def test_live_reads_see_external_rewrite_and_new_accounts(backend):
+    backend.set("kk:one", "before")
+    assert backend.get("kk:one").unseal() == "before"
+    other = EncryptedFileBackend(paths=backend.paths)
+    other.set("kk:one", "after")
+    other.set("kk:two", "second")
+    assert backend.get("kk:one").unseal() == "after"
+    assert sorted(backend.list_ids()) == ["kk:one", "kk:two"]
+
+
+def test_each_warm_read_authenticates_same_stat_ciphertext_and_clears_bad_key(backend, monkeypatch):
+    from keys_keeper import crypto
+    backend.set("kk:one", "value")
+    path = backend.paths.secrets_enc
+    original, info = path.read_bytes(), path.stat()
+    calls = []
+    real_authenticate = crypto._decrypt_blob_with_key
+    def authenticate(*args, **kwargs):
+        calls.append(True)
+        return real_authenticate(*args, **kwargs)
+    monkeypatch.setattr(crypto, "_decrypt_blob_with_key", authenticate)
+    assert backend.get("kk:one").unseal() == "value"
+    tampered = original[:-1] + bytes([original[-1] ^ 1])
+    path.write_bytes(tampered)
+    os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+    assert path.stat().st_size == info.st_size
+    assert path.stat().st_mtime_ns == info.st_mtime_ns
+    with pytest.raises(KeychainError, match="corrupted"):
+        backend.get("kk:one")
+    assert len(calls) == 2
+    assert backend._derived_key_cache is None
+    path.write_bytes(original)
+    assert backend.get("kk:one").unseal() == "value"
+
+
+def test_external_delete_never_returns_old_values(backend):
+    backend.set("kk:one", "value")
+    backend.paths.secrets_enc.unlink()
+    assert backend.list_ids() == []
+    assert backend._derived_key_cache is None
+    with pytest.raises(KeychainError, match="not found"):
+        backend.get("kk:one")
+
+
+def test_warm_reads_and_unchanged_mutations_do_not_kdf_encrypt_or_write(backend, monkeypatch):
+    from keys_keeper import crypto
+    backend.set("kk:one", "value")
+    before = backend.paths.secrets_enc.read_bytes()
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unchanged warm operation derived/encrypted/wrote ciphertext")
+    monkeypatch.setattr(crypto, "_derive_key", forbidden)
+    monkeypatch.setattr(crypto, "_encrypt_blob_with_key", forbidden)
+    monkeypatch.setattr(backend, "_atomic_write_bytes", forbidden)
+    for _ in range(3):
+        assert backend.get("kk:one").unseal() == "value"
+        assert backend.list_ids() == ["kk:one"]
+        backend.set("kk:one", "value")
+        backend.delete("kk:absent")
+    assert backend.paths.secrets_enc.read_bytes() == before
+    assert not hasattr(backend, "_cache")
+
+
+def test_missing_delete_does_not_unlock_or_create_ciphertext(backend, monkeypatch):
+    from keys_keeper import crypto
+    monkeypatch.delenv("KEYS_KEEPER_MASTER_KEY")
+    monkeypatch.setattr(crypto, "_derive_key", lambda *_a: pytest.fail("empty no-op derived a key"))
+    monkeypatch.setattr(backend, "_atomic_write_bytes", lambda *_a: pytest.fail("empty no-op wrote ciphertext"))
+    backend.delete("kk:absent")
+    assert not backend.paths.secrets_enc.exists()
+
+
+@pytest.mark.parametrize("binding", ["paths", "service", "password_file"])
+def test_cached_unlock_material_does_not_cross_backend_identity(backend, monkeypatch, tmp_path, binding):
+    backend.set("kk:one", "value")
+    if binding == "paths":
+        other = Paths(tmp_path / "other-profile")
+        other.ensure()
+        other.secrets_enc.write_bytes(backend.paths.secrets_enc.read_bytes())
+        other.secrets_enc.chmod(0o600)
+        backend.paths = other
+    elif binding == "service":
+        backend.service = "different-profile"
+    else:
+        password = tmp_path / "other-password"
+        password.write_text("different-password")
+        password.chmod(0o600)
+        backend.password_file = password
+    monkeypatch.delenv("KEYS_KEEPER_MASTER_KEY")
+    with pytest.raises(KeychainError):
+        backend.get("kk:one")
+    assert backend._derived_key_cache is None
+
+
+def test_ciphertext_read_cap_rejects_before_reading_or_kdf(backend, monkeypatch):
+    from keys_keeper import backend_file, crypto
+    backend.paths.ensure()
+    with backend.paths.secrets_enc.open("wb") as stream:
+        stream.truncate(backend_file._MAX_BLOB_BYTES + 1)
+    backend.paths.secrets_enc.chmod(0o600)
+    monkeypatch.setattr(crypto, "_derive_key", lambda *_a: pytest.fail("oversized file derived a key"))
+    monkeypatch.setattr(backend_file.os, "open", lambda *_a: pytest.fail("oversized file opened for reading"))
+    with pytest.raises(KeychainError, match="size limit"):
+        backend.list_ids()
+
+
+def test_ciphertext_write_cap_preserves_previous_file_and_key(backend, monkeypatch):
+    from keys_keeper import backend_file, crypto
+    backend.set("kk:one", "value")
+    before, cached = backend.paths.secrets_enc.read_bytes(), backend._derived_key_cache
+    monkeypatch.setattr(backend_file, "_MAX_BLOB_BYTES", len(before) + 5)
+    monkeypatch.setattr(crypto, "_encrypt_blob_with_key", lambda *_a, **_kw: pytest.fail("oversized write encrypted"))
+    monkeypatch.setattr(crypto, "_derive_key", lambda *_a: pytest.fail("oversized write derived a key"))
+    with pytest.raises(KeychainError, match="size limit"):
+        backend.set("kk:two", "x" * 100)
+    assert backend.paths.secrets_enc.read_bytes() == before
+    assert backend._derived_key_cache == cached
+    assert backend.get("kk:one").unseal() == "value"
+
+
+def test_backend_unlock_cache_cannot_be_pickled(backend):
+    with pytest.raises(TypeError, match="process-local"):
+        pickle.dumps(backend)

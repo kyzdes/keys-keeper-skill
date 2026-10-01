@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import socket
+import stat
 import uuid
 from dataclasses import dataclass, replace
 from urllib.parse import urlparse
@@ -26,6 +27,7 @@ class SyncConfigError(ValueError):
 VALID_MODES = ("off", "manual", "auto")
 VALID_ADDRESSING = ("path", "virtual")
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+MAX_CONFIG_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -161,9 +163,25 @@ def _emit(text_key: str, value: object) -> str:
 
 def load_sync_config(paths: Paths | None = None) -> SyncConfig:
     paths = paths or Paths()
-    if not paths.config_toml.exists():
+    try:
+        # SessionStart reads this routing file before the daily claim. Avoid
+        # unbounded parsing and blocking on a pipe even when the vault is idle.
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(paths.config_toml, flags)
+    except FileNotFoundError:
         return SyncConfig()
-    raw = _read_sync_table(paths.config_toml.read_text(encoding="utf-8"))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_CONFIG_BYTES:
+            raise SyncConfigError("invalid sync configuration file")
+        blob = stream.read(MAX_CONFIG_BYTES + 1)
+        if len(blob) > MAX_CONFIG_BYTES:
+            raise SyncConfigError("sync configuration exceeds size limit")
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeError:
+        raise SyncConfigError("invalid sync configuration encoding") from None
+    raw = _read_sync_table(text)
     cfg = SyncConfig(**{k: v for k, v in raw.items() if k in _FIELD_TYPES})
     cfg.validate()
     return cfg
@@ -178,8 +196,11 @@ def save_sync_config(cfg: SyncConfig, paths: Paths | None = None) -> None:
              "", "[sync]"]
     for fname in SyncConfig.__annotations__:
         lines.append(_emit(fname, getattr(cfg, fname)))
+    text = "\n".join(lines) + "\n"
+    if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
+        raise SyncConfigError("sync configuration exceeds size limit")
     tmp = paths.config_toml.with_suffix(".toml.tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     try:
         os.chmod(tmp, 0o600)  # S11: no group/other access (POSIX; no-op on Windows)
     except OSError:

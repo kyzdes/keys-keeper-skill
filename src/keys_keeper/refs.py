@@ -22,23 +22,31 @@ def detect_cycles(entries: list[Entry]) -> None:
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {e.name: WHITE for e in entries}
 
-    def dfs(name: str, path: list[str]) -> None:
-        if name not in by_name:
-            return
-        color[name] = GRAY
-        for ref in by_name[name].refs:
-            target = ref.get("name")
+    for e in entries:
+        if color[e.name] != WHITE:
+            continue
+        color[e.name] = GRAY
+        path = [e.name]
+        stack = [(e.name, iter(by_name[e.name].refs))]
+        while stack:
+            name, refs = stack[-1]
+            try:
+                target = next(refs).get("name")
+            except StopIteration:
+                color[name] = BLACK
+                stack.pop()
+                path.pop()
+                continue
             if target == name:
                 raise RefCycleError(f"self-ref on {name}")
-            if target in color and color[target] == GRAY:
-                raise RefCycleError(f"cycle: {' -> '.join(path + [name, target])}")
-            if target in color and color[target] == WHITE:
-                dfs(target, path + [name])
-        color[name] = BLACK
-
-    for e in entries:
-        if color[e.name] == WHITE:
-            dfs(e.name, [])
+            if color.get(target) == GRAY:
+                # Construct the diagnostic only on failure; valid deep graphs
+                # require neither recursive calls nor repeated path copies.
+                raise RefCycleError(f"cycle: {' -> '.join(path + [target])}")
+            if color.get(target) == WHITE:
+                color[target] = GRAY
+                path.append(target)
+                stack.append((target, iter(by_name[target].refs)))
 
 
 def reverse_refs(entries: list[Entry]) -> dict[str, list[str]]:

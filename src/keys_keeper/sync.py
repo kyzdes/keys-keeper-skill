@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass, field, replace
 
 from keys_keeper.backend import KeychainBackend, KeychainError
@@ -34,9 +33,11 @@ from keys_keeper.models import (
 from keys_keeper.service import ConcurrentMutation, VaultService
 from keys_keeper.store import SCHEMA_VERSION, MetadataStore, StoreError
 from keys_keeper.sync_remote import NotFound, PreconditionFailed, TransportError
+from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
 
 _MAGIC = b"KK1\x00"
 HEAD_KEY = "HEAD"
+_MAX_SYNC_STATE_BYTES = 64 * 1024
 
 
 class LegacyCatalogSyncError(RuntimeError):
@@ -753,12 +754,31 @@ class SyncEngine:
             pass  # HEAD is only a cache; lineage is recoverable by listing
 
     def _read_state(self) -> dict:
-        if self.paths is None or not self.paths.sync_state_json.exists():
+        if self.paths is None:
             return {}
         try:
-            return json.loads(self.paths.sync_state_json.read_text())
-        except (ValueError, OSError):
+            raw = _secure_read(self.paths.sync_state_json, max_bytes=_MAX_SYNC_STATE_BYTES)
+        except FileNotFoundError:
             return {}
+        except (JournalError, OSError):
+            raise TransportError("local sync state unavailable") from None
+        try:
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    if key in result:
+                        raise ValueError("duplicate member")
+                    result[key] = value
+                return result
+            state = json.loads(raw, object_pairs_hook=pairs)
+            if not isinstance(state, dict):
+                raise ValueError("invalid sync state")
+            for key in ("highest_version", "last_version"):
+                if key in state and (type(state[key]) is not int or not 0 <= state[key] < 2**63):
+                    raise ValueError("invalid sync version")
+            return state
+        except (ValueError, UnicodeError, RecursionError):
+            raise TransportError("local sync state invalid") from None
 
     def _write_state(self, *, version: int | None = None,
                      reset_watermark: bool = False, **extra) -> None:
@@ -778,12 +798,10 @@ class SyncEngine:
                 state["highest_version"] = version
         state["last_sync_at"] = now_iso()
         state.update(extra)
-        self.paths.ensure()
         try:
-            self.paths.sync_state_json.write_text(json.dumps(state))
-            try:
-                os.chmod(self.paths.sync_state_json, 0o600)  # S11 (no-op on Windows)
-            except OSError:
-                pass
-        except OSError:
-            pass
+            encoded = json.dumps(state).encode("utf-8")
+            if len(encoded) > _MAX_SYNC_STATE_BYTES:
+                raise TransportError("local sync state exceeds size limit")
+            _atomic_write_bytes(self.paths.sync_state_json, encoded)
+        except (JournalError, OSError):
+            raise TransportError("cannot persist local sync state") from None

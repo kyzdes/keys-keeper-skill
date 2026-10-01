@@ -4,6 +4,47 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.11.0] — 2026-10-02
+
+### Fixed
+
+- Automatic workers reap their descendants after normal exit and cancellation;
+  Windows guardians use a kill-on-close Job Object. Daily claims also bound lock
+  contention and reject special files without waiting on a FIFO.
+- Retained mutation managers avoid repeatedly deriving keys for unchanged,
+  authenticated terminal journal history. State is bound to the selected
+  scope, vault and mode; caches always read fresh ciphertext and authenticate it.
+- Graph validation handles deep reference/folder chains iteratively in linear
+  time. Metadata, sync state, configuration and recovery records have bounded
+  reads and matching write limits.
+- Local admin and WebVault HTTP servers bound handler admission and absolute
+  request input time. Framing rejects ambiguous lengths and truncated bodies;
+  unauthenticated static requests cannot extend the local server's lifetime.
+- WebVault sessions and login buckets have finite capacity. Deleted accounts
+  fail closed instead of inheriting the operator's storage prefix; a damaged
+  account registry cannot be overwritten by a new registration.
+- Desktop activity summaries bound both compressed and decompressed input,
+  logical line size and total work. Stable oversized logs return an explicitly
+  incomplete summary and are not repeatedly rescanned.
+- File/replica backends authenticate fresh ciphertext with one process-local
+  current key. File no-op mutations perform no encryption or payload writes.
+  Audit tail/search stream bounded chunks and stop after requested results.
+- Native bridge messages and main-thread deliveries are bounded; protocol
+  failures use the same termination escalation as normal shutdown. Clipboard
+  UI copies share one timer worker, and native helper commands have deadlines.
+- Personal-sync API validates routes and duplicate JSON keys before expensive
+  work and contains construction failures inside its safe error boundary.
+
+### Validation
+
+- Full OS/Python CI records line and branch coverage, per-test phase timings,
+  installed-wheel verification and native app builds. Matrix reports include
+  every Python module and preserve platform skips and instrumentation limits.
+- Regression tests cover resource bounds, process cleanup, stale/tampered
+  ciphertext, profile substitution, deep graphs and tenant isolation. KK1
+  interoperability tests independently exercise real 600,000-round PBKDF2;
+  encryption formats and iteration counts are unchanged.
+
 ## [0.10.1] — 2026-10-01
 
 ### Fixed

@@ -11,9 +11,9 @@ It reuses the same crypto primitive as `keys export` (`crypto.encrypt_blob` /
 cross-platform advisory lock as `MetadataStore`. No new dependencies (the file
 backend rides on the existing `cryptography` dep — consistent with D-014).
 
-Storage model: the plaintext is a JSON object mapping `account -> value`. The
-whole map is decrypted once per process on first access (one PBKDF2), cached in
-memory, and re-encrypted + atomically rewritten on every mutation.
+Storage model: the plaintext is a JSON object mapping `account -> value`. Each
+read authenticates fresh ciphertext. One current salt/key pair stays inside
+this backend object; unchanged mutations do not encrypt or rewrite the map.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from keys_keeper._locking import lock_exclusive, unlock
 
 _MASTER_ENV = "KEYS_KEEPER_MASTER_KEY"
 _MAX_PASSWORD_BYTES = 64 * 1024
+_MAX_BLOB_BYTES = 64 * 1024 * 1024
 
 
 class EncryptedFileBackend(KeychainBackend):
@@ -55,8 +56,24 @@ class EncryptedFileBackend(KeychainBackend):
         self.password_file = Path(password_file) if password_file is not None else None
         self.password_fd = password_fd
         self.allow_env_password = allow_env_password
-        self._cache: dict[str, str] | None = None
         self._password_cache: Sealed | None = None
+        self._derived_key_cache: tuple[bytes, bytes] | None = None
+        self._cache_identity = self._identity()
+
+    def __getstate__(self):
+        raise TypeError("file backend contains process-local unlocking material")
+
+    def _identity(self):
+        return (self.service, self.paths.root.resolve(),
+                self.password_file.resolve() if self.password_file is not None else None,
+                self.password_fd, self.allow_env_password)
+
+    def _bind_identity(self):
+        identity = self._identity()
+        if identity != self._cache_identity:
+            self._password_cache = None
+            self._derived_key_cache = None
+            self._cache_identity = identity
 
     # ---- master key ----
 
@@ -161,34 +178,40 @@ class EncryptedFileBackend(KeychainBackend):
     # ---- load / persist ----
 
     def _decrypt_file(self) -> dict[str, str]:
-        """Read + decrypt the secrets file fresh from disk (no cache)."""
+        """Read fresh ciphertext and authenticate it even when its salt is cached."""
+        self._bind_identity()
         path = self.paths.secrets_enc
-        if not path.exists():
-            return {}
-        blob = self._secure_read_blob(path)
         try:
-            plaintext = crypto.decrypt_blob(blob, password=self._password())
-        except crypto.BadPassword as ex:
+            blob = self._secure_read_blob(path)
+            salt = crypto._blob_salt(blob)
+            cached = self._derived_key_cache
+            key = cached[1] if cached is not None and cached[0] == salt else crypto._derive_key(self._password(), salt)
+            plaintext = crypto._decrypt_blob_with_key(blob, key=key)
+            data = json.loads(plaintext.decode("utf-8"))
+            if not isinstance(data, dict) or not all(
+                isinstance(account, str) and isinstance(value, str) for account, value in data.items()
+            ):
+                raise KeychainError("corrupt encrypted secrets entry map")
+        except FileNotFoundError:
+            self._derived_key_cache = None
+            return {}
+        except (crypto.BadPassword, ValueError, UnicodeError, RecursionError):
+            self._derived_key_cache = None
             raise KeychainError(
                 f"cannot decrypt {path.name}: password incorrect or file corrupted"
-            ) from ex
-        try:
-            data = json.loads(plaintext.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError) as ex:
-            raise KeychainError(f"corrupt secrets file {path.name}: {ex}") from ex
-        if not isinstance(data, dict):
-            # The blob authenticated (GCM) but isn't our {account: value} map —
-            # that's real corruption, not an empty store. Refuse rather than
-            # silently treating it as empty and overwriting on the next write.
-            raise KeychainError(f"corrupt secrets file {path.name}: not an object")
-        if not all(isinstance(key, str) and isinstance(value, str) for key, value in data.items()):
-            raise KeychainError(f"corrupt secrets file {path.name}: invalid entry map")
+            ) from None
+        except Exception:
+            self._derived_key_cache = None
+            raise
+        self._derived_key_cache = (salt, key)
         return data
 
     @staticmethod
     def _secure_read_blob(path: Path) -> bytes:
         try:
             before = path.lstat()
+        except FileNotFoundError:
+            raise
         except OSError as ex:
             raise KeychainError("cannot inspect encrypted secrets file") from ex
         if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
@@ -196,29 +219,34 @@ class EncryptedFileBackend(KeychainBackend):
         if os.name == "posix":
             if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077:
                 raise KeychainError("encrypted secrets file has unsafe ownership or permissions")
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        if before.st_size > _MAX_BLOB_BYTES:
+            raise KeychainError("encrypted secrets file exceeds size limit")
+        flags = (os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
         try:
             fd = os.open(path, flags)
+        except FileNotFoundError:
+            raise
         except OSError as ex:
             raise KeychainError("cannot open encrypted secrets file") from ex
         try:
             opened = os.fstat(fd)
             if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
                 raise KeychainError("encrypted secrets file changed while opening")
+            if not stat.S_ISREG(opened.st_mode) or opened.st_size > _MAX_BLOB_BYTES:
+                raise KeychainError("invalid encrypted secrets file")
+            if os.name == "posix" and (opened.st_uid != os.getuid() or stat.S_IMODE(opened.st_mode) & 0o077):
+                raise KeychainError("encrypted secrets file has unsafe ownership or permissions")
             with os.fdopen(fd, "rb", closefd=False) as stream:
-                return stream.read()
+                blob = stream.read(_MAX_BLOB_BYTES + 1)
+            if len(blob) > _MAX_BLOB_BYTES:
+                raise KeychainError("encrypted secrets file exceeds size limit")
+            return blob
         finally:
             os.close(fd)
 
     def _load(self) -> dict[str, str]:
-        """Cached decrypt for read-only callers (get / list_ids).
-
-        Mutations do NOT use this — they re-read under the lock (see _mutate),
-        so a stale cache can never clobber another process's concurrent write.
-        """
-        if self._cache is None:
-            self._cache = self._decrypt_file()
-        return self._cache
+        return self._decrypt_file()
 
     @contextmanager
     def _mutate(self) -> Iterator[dict[str, str]]:
@@ -233,7 +261,7 @@ class EncryptedFileBackend(KeychainBackend):
         # encrypted store's parent dir is never created world-readable.
         ensure_private_dir(self.paths.root)
         lock_path = self.paths.root / "secrets.lock"
-        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
             lock_fd = os.open(lock_path, flags, 0o600)
@@ -249,12 +277,19 @@ class EncryptedFileBackend(KeychainBackend):
                 os.fchmod(lock_fd, 0o600)
             lock_exclusive(lock_fd)
             try:
-                data = self._decrypt_file()   # fresh read under the lock, not the cache
+                original = self._decrypt_file()
+                data = dict(original)
                 yield data
+                if data == original:
+                    return
+                if not all(isinstance(account, str) and isinstance(value, str) for account, value in data.items()):
+                    raise KeychainError("invalid encrypted secrets entry map")
                 plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
-                blob = crypto.encrypt_blob(plaintext, password=self._password())
+                if len(plaintext) + 48 > _MAX_BLOB_BYTES:
+                    raise KeychainError("encrypted secrets file exceeds size limit")
+                blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
                 self._atomic_write_bytes(blob)
-                self._cache = data
+                self._derived_key_cache = (crypto._blob_salt(blob), key)
             finally:
                 unlock(lock_fd)
         finally:

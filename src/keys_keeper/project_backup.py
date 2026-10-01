@@ -309,7 +309,7 @@ def restore_backup(
 
 def _require_matching_recovery_marker(root: Path, manifest: BackupManifest) -> dict:
     try:
-        marker = json.loads(_secure_read(root / "recovery-only").decode("utf-8"))
+        marker = json.loads(_secure_read(root / "recovery-only", max_bytes=4096).decode("utf-8"))
     except (FileNotFoundError, UnicodeError, ValueError) as ex:
         raise ProjectBackupError("resume requires a valid recovery-only marker") from ex
     expected = {
@@ -351,7 +351,10 @@ def _write_bundle(
         "manifest": manifest_data,
         "payload": payload,
     }
-    blob = crypto.encrypt_blob(_canonical_bytes(bundle), password=_password(password))
+    plaintext = _canonical_bytes(bundle)
+    if len(plaintext) + 48 > _MAX_BACKUP_BYTES:
+        raise ProjectBackupError("project backup exceeds size limit")
+    blob = crypto.encrypt_blob(plaintext, password=_password(password))
     _atomic_write(Path(destination), blob)
     return _manifest(manifest_data)
 
@@ -576,7 +579,7 @@ def _capture_journal_files(paths: Paths) -> dict[str, str]:
     for path in sorted(paths.operations_dir.iterdir()):
         if not _JOURNAL_FILE.fullmatch(path.name):
             continue
-        data = _secure_read(path)
+        data = _secure_read(path, max_bytes=_MAX_STATE_BYTES)
         if len(data) > _MAX_STATE_BYTES:
             raise ProjectBackupError("journal file exceeds backup size limit")
         result[path.name] = base64.b64encode(data).decode("ascii")
@@ -680,7 +683,8 @@ def _canonical_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _secure_read(path: Path) -> bytes:
+def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
+    maximum = _MAX_BACKUP_BYTES if max_bytes is None else min(max_bytes, _MAX_BACKUP_BYTES)
     before = path.lstat()
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
         raise ProjectBackupError("project backup path must be a regular file")
@@ -693,14 +697,17 @@ def _secure_read(path: Path) -> bytes:
         | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
     )
     fd = os.open(path, flags)
     try:
         opened = os.fstat(fd)
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             raise ProjectBackupError("project backup file changed while opening")
+        if opened.st_size > maximum:
+            raise ProjectBackupError("project backup exceeds size limit")
         chunks = []
-        remaining = _MAX_BACKUP_BYTES + 1
+        remaining = maximum + 1
         while remaining:
             chunk = os.read(fd, min(1024 * 1024, remaining))
             if not chunk:
@@ -708,7 +715,7 @@ def _secure_read(path: Path) -> bytes:
             chunks.append(chunk)
             remaining -= len(chunk)
         result = b"".join(chunks)
-        if len(result) > _MAX_BACKUP_BYTES:
+        if len(result) > maximum:
             raise ProjectBackupError("project backup exceeds size limit")
         return result
     finally:

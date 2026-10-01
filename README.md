@@ -8,7 +8,13 @@ Stores API keys, SSH keys, server credentials, and domain info in the OS-native 
 
 **Status:** v0.11.0 · macOS + Windows + Linux · local-first · MIT license
 
-v0.11.0 removes idle Settings polling and repeated activity-log parsing,
+v0.11.0 bounds large logs, HTTP handlers and native bridge messages; avoids
+repeated journal/replica KDF work; and validates fresh ciphertext and profile
+identity on every access. Architecture findings, resource limits and test
+evidence are in the [0.11 audit](docs/architecture/AUDIT-0.11.md) and
+[coverage guide](docs/TEST-QUALITY-AND-COVERAGE.md).
+
+v0.10.1 removes idle Settings polling and repeated activity-log parsing,
 shares daily limits across project auto triggers, and bounds automatic workers.
 Manual Sync and refresh remain immediate.
 

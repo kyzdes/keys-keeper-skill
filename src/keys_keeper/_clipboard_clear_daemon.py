@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import sys
 import time
+from keys_keeper.clipboard import MAX_CLEAR_DELAY_SECONDS
 
 
 def main(argv: list[str]) -> int:
@@ -21,7 +22,7 @@ def main(argv: list[str]) -> int:
         delay = int(argv[1])
     except ValueError:
         return 2
-    if delay < 0:
+    if not 0 <= delay <= MAX_CLEAR_DELAY_SECONDS:
         return 2
     expected_hash = sys.stdin.readline(66).strip()
     if len(expected_hash) != 64 or any(
@@ -31,10 +32,13 @@ def main(argv: list[str]) -> int:
     if delay > 0:
         time.sleep(delay)
     from keys_keeper import clipboard
-    current = clipboard.read()
-    current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
-    if current_hash == expected_hash:
-        clipboard.clear()
+    try:
+        current = clipboard.read()
+        current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if current_hash == expected_hash:
+            clipboard.clear()
+    except clipboard.ClipboardUnavailable:
+        return 1
     return 0
 
 

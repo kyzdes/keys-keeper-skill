@@ -141,7 +141,7 @@ jobs:
       - name: Combine matrix coverage and inventory test quality
         run: |
           python scripts/test-quality-inventory.py --output "${{ runner.temp }}/combined-test-reports/test-quality-inventory.json"
-          python scripts/coverage-report.py merge --input-dir "${{ runner.temp }}/matrix-test-reports" --report-dir "${{ runner.temp }}/combined-test-reports" --expected-jobs 5
+          python scripts/coverage-report.py merge --input-dir "${{ runner.temp }}/matrix-test-reports" --report-dir "${{ runner.temp }}/combined-test-reports" --expected-jobs 5 --min-line 84 --min-branch 69
       - name: Retain combined coverage
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

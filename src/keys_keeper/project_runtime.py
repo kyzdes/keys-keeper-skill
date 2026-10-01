@@ -368,6 +368,8 @@ class ProjectRuntime:
         # mutable plaintext state is never cached as the source of truth.
         self._states = OrderedDict()
         self._states_lock = threading.RLock()
+        self._mutation_manager = None
+        self._replica_stores = OrderedDict()
 
     def assert_available(self) -> None:
         marker = self.paths.root / "recovery-only"
@@ -403,13 +405,19 @@ class ProjectRuntime:
         from keys_keeper.personal_sync import worker_paths
         child = worker_paths(self.paths)
         if child is not None:
-            runtime = ProjectRuntime(child, access=self.access)
+            with self._states_lock:
+                runtime = getattr(self, "_personal_child_runtime", None)
+                if runtime is None or runtime.paths.root != child.root or runtime.access != self.access:
+                    runtime = ProjectRuntime(child, access=self.access)
+                    self._personal_child_runtime = runtime
             item = runtime.registry.resolve(selector)
             if not item or item["kind"] != "replica":
                 raise RuntimeErrorSafe("master profile is unavailable on a personal replica")
             # Pending personal enrollment can render Settings after a restart.
             # ReadView has no generation yet; all writes still require active.
             return RuntimeContext(runtime, item)
+        with self._states_lock:
+            self._personal_child_runtime = None
         item = self.registry.resolve(selector)
         if item is None and any(p["kind"] == "replica" for p in self.registry.list()):
             raise RuntimeErrorSafe("master profile is unavailable in a worker root")
@@ -429,18 +437,36 @@ class ProjectRuntime:
             return raw
 
     def mutations(self):
-        self.assert_available()
         from keys_keeper.master_journal import MasterMutationManager
-        journal = OperationJournal(paths=self.paths,
-                                   password_provider=lambda: self._master_password(create=True))
-        return MasterMutationManager(self.master_store, self.master_backend, journal)
+        # Recheck worker/recovery authorization even when a previous manager
+        # exists. One manager per runtime preserves its bounded journal caches.
+        try:
+            self.assert_available()
+            backend = self.master_backend
+        except RuntimeErrorSafe:
+            with self._states_lock:
+                self._mutation_manager = None
+            raise
+        with self._states_lock:
+            manager = self._mutation_manager
+            if (manager is None or manager.backend is not backend
+                    or manager.store is not self.master_store
+                    or manager.journal.paths.root != self.paths.root):
+                if self.master_store.paths.root != self.paths.root:
+                    self._mutation_manager = None
+                    raise RuntimeErrorSafe("runtime metadata root changed")
+                journal = OperationJournal(paths=self.paths,
+                                           password_provider=lambda: self._master_password(create=True))
+                manager = MasterMutationManager(self.master_store, backend, journal)
+                self._mutation_manager = manager
+            return manager
 
     def _profile_password(self, item):
         self.assert_available()
         if item["kind"] == "master_scope":
             return self._master_password()
         path = self.paths.for_profile(item["id"]).backend_password_file
-        blob = _secure_read(path)
+        blob = _secure_read(path, max_bytes=43)
         if len(blob) != 43:
             raise RuntimeErrorSafe("invalid replica unlock material")
         value = blob.decode("ascii")
@@ -449,7 +475,7 @@ class ProjectRuntime:
 
     def state(self, item):
         self.assert_available()
-        identity = tuple(item[field] for field in _PROFILE_IDENTITY_FIELDS)
+        identity = (self.paths.root,) + tuple(item[field] for field in _PROFILE_IDENTITY_FIELDS)
         with self._states_lock:
             cached = self._states.get(identity)
             if cached is not None:
@@ -458,7 +484,10 @@ class ProjectRuntime:
             profile = copy.deepcopy(item)
             root = (self.paths.root / "project-sync" / profile["scope_id"] if profile["kind"] == "master_scope"
                     else self.paths.for_profile(profile["id"]).root)
-            state = ProjectState(Paths(root / "state"), lambda: self._profile_password(profile))
+            state = ProjectState(Paths(root / "state"), lambda: self._profile_password(profile),
+                                 expected_identity={"scope_id": profile["scope_id"],
+                                                    "vault_id": profile["vault_id"],
+                                                    "mode": "master" if profile["kind"] == "master_scope" else "replica"})
             self._states[identity] = state
             if len(self._states) > _STATE_CACHE_LIMIT:
                 self._states.popitem(last=False)
@@ -468,8 +497,21 @@ class ProjectRuntime:
         self.assert_available()
         if item["kind"] != "replica":
             raise RuntimeErrorSafe("replica profile required")
-        root = self.paths.for_profile(item["id"]).root
-        return ReplicaStore(paths=Paths(root / "replica"), password_provider=lambda: self._profile_password(item))
+        identity = (self.paths.root,) + tuple(item[field] for field in _PROFILE_IDENTITY_FIELDS)
+        with self._states_lock:
+            cached = self._replica_stores.get(identity)
+            if cached is not None:
+                self._replica_stores.move_to_end(identity)
+                return cached
+            profile = copy.deepcopy(item)
+            root = self.paths.for_profile(profile["id"]).root
+            replica = ReplicaStore(paths=Paths(root / "replica"),
+                                   password_provider=lambda: self._profile_password(profile),
+                                   expected_identity={"scope_id": profile["scope_id"], "vault_id": profile["vault_id"]})
+            self._replica_stores[identity] = replica
+            if len(self._replica_stores) > _STATE_CACHE_LIMIT:
+                self._replica_stores.popitem(last=False)
+            return replica
 
     def master(self, item):
         self.assert_available()

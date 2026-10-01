@@ -257,7 +257,7 @@ def cmd_sync_rollback(args: argparse.Namespace) -> int:
 # ---------------- auto (SessionStart hook) ----------------
 
 def cmd_sync_auto(args: argparse.Namespace) -> int:
-    """Daily hook entrypoint; --force is an explicit manual/worker override."""
+    """Daily hook entrypoint; --force is an explicit manual override."""
     try:
         paths = Paths()
         cfg = load_sync_config(paths)
@@ -324,7 +324,7 @@ def _auto_debounced(paths: Paths) -> bool:
 
 
 def _touch_auto_stamp(paths: Paths) -> None:
-    with profile_lock(Paths(paths.root / "sync-auto-status")):
+    with profile_lock(Paths(paths.root / "sync-auto-status"), timeout=1):
         try:
             state = _json_read(paths.sync_state_json, 1024 * 1024)
         except FileNotFoundError:

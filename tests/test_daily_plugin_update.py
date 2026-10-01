@@ -144,3 +144,40 @@ def test_concurrent_sessions_only_start_one_helper(install, monkeypatch):
             finish.set()
         assert first.result(timeout=5) == "attempted"
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("which", ["plugin", "installed", "known"])
+def test_oversized_public_configuration_fails_before_parsing_or_helper(install, monkeypatch, which):
+    plugin, config, env, calls = install
+    paths = {"plugin": plugin / ".claude-plugin/plugin.json",
+             "installed": config / "plugins/installed_plugins.json",
+             "known": config / "plugins/known_marketplaces.json"}
+    with paths[which].open("wb") as stream:
+        stream.truncate(module.MAX_CONFIG_BYTES + 1)
+    with pytest.raises(ValueError, match="updater configuration"):
+        module.update_daily(plugin, env, clock=lambda: 100_000)
+    assert not calls
+    assert not module.shared.cache_directory(config, env).exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX pipe fixture")
+def test_configuration_pipe_never_blocks_or_starts_helper(install):
+    plugin, config, env, calls = install
+    installed = config / "plugins/installed_plugins.json"
+    installed.unlink()
+    os.mkfifo(installed)
+    with pytest.raises(ValueError, match="updater configuration"):
+        module.update_daily(plugin, env, clock=lambda: 100_000)
+    assert not calls
+    assert not module.shared.cache_directory(config, env).exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX pipe fixture")
+def test_updater_timestamp_pipe_never_blocks_or_starts_helper(install):
+    plugin, config, env, calls = install
+    cache = module.shared.cache_directory(config, env)
+    cache.mkdir(parents=True, mode=0o700)
+    os.mkfifo(cache / "keys-keeper.daily.json", 0o600)
+    with pytest.raises(ValueError, match="update marker"):
+        module.update_daily(plugin, env, clock=lambda: 100_000)
+    assert not calls

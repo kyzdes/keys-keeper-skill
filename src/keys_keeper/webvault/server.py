@@ -14,21 +14,26 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import secrets
 import ssl
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import OrderedDict, deque
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from keys_keeper.sync_remote import AuthError, NotFound, TransportError
+from keys_keeper.http_resources import BoundedThreadingHTTPServer, RequestDeadlineMixin
 from keys_keeper.webvault.remote import (
     default_base_prefix, load_s3_base, remote_for,
 )
-from keys_keeper.webvault.store import AccountStore, AccountError, SessionStore
+from keys_keeper.webvault.store import (
+    AccountStore, AccountError, AccountStoreError, SessionCapacityError, SessionStore,
+)
 
 _STATIC = Path(__file__).parent / "static"
 _AUTH_ITERS_DEFAULT = 600_000     # AH must be >= the blob's 600k so it's not the weak link
@@ -55,27 +60,38 @@ class _RateLimiter:
     returns False once a key exceeds `limit`. Bounded memory: stale keys are
     dropped lazily and the table is swept when it grows large."""
 
-    def __init__(self, limit: int, window: int):
+    def __init__(self, limit: int, window: int, *, max_keys: int = 4096):
+        if any(type(v) is not int or v < 1 for v in (limit, window, max_keys)):
+            raise ValueError("rate limits must be positive integers")
         self.limit = limit
         self.window = window
-        self._hits: dict[str, list[float]] = {}
+        self.max_keys = max_keys
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = threading.Lock()
 
     def allow(self, key: str) -> bool:
-        now = time.time()
+        now = time.monotonic()
         cutoff = now - self.window
         with self._lock:
-            if len(self._hits) > 4096:
-                # lazy sweep so a churn of distinct IPs can't grow the table forever
-                self._hits = {k: [t for t in v if t >= cutoff]
-                              for k, v in self._hits.items()}
-                self._hits = {k: v for k, v in self._hits.items() if v}
-            times = [t for t in self._hits.get(key, ()) if t >= cutoff]
+            # Last accepted hit orders expiry. Each key is removed at most
+            # once; distinct live clients cannot trigger repeated whole sweeps.
+            while self._hits:
+                first, hits = next(iter(self._hits.items()))
+                if hits[-1] > cutoff:
+                    break
+                self._hits.pop(first)
+            times = self._hits.get(key)
+            if times is None:
+                if len(self._hits) >= self.max_keys:
+                    return False
+                times = deque()
+            while times and times[0] <= cutoff:
+                times.popleft()
             if len(times) >= self.limit:
-                self._hits[key] = times
                 return False
             times.append(now)
             self._hits[key] = times
+            self._hits.move_to_end(key)
             return True
 
 # Only these (account-relative) keys may be fetched; the prefix is added
@@ -163,14 +179,24 @@ class WebVaultServer:
 
     def prefix_for(self, uid: str) -> str:
         acct = self.accounts.get(uid)
-        return acct.prefix if acct else default_base_prefix()
+        if acct is None:
+            raise AccountStoreError("session account unavailable")
+        return acct.prefix
 
-    def serve_forever(self) -> None:
-        httpd = ThreadingHTTPServer((self.host, self.port), _make_handler(self))
+    def create_http_server(self):
+        httpd = BoundedThreadingHTTPServer((self.host, self.port), _make_handler(self),
+                                          max_workers=16, request_timeout=15)
         if self.certfile and self.keyfile:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(self.certfile, self.keyfile)
-            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+            # Accepted TLS handshakes run in admitted handlers, where the
+            # cumulative input deadline applies, instead of blocking accept().
+            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True,
+                                          do_handshake_on_connect=False)
+        return httpd
+
+    def serve_forever(self) -> None:
+        httpd = self.create_http_server()
         self.bound_port = httpd.socket.getsockname()[1]
         scheme = "https" if self.certfile else "http"
         print(f"keys-keeper web vault on {scheme}://{self.host}:{self.bound_port}/")
@@ -186,10 +212,12 @@ class WebVaultServer:
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass
+        finally:
+            httpd.server_close()
 
 
 def _make_handler(srv: "WebVaultServer"):
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         server_version = "kkvault"
         protocol_version = "HTTP/1.1"
 
@@ -240,24 +268,34 @@ def _make_handler(srv: "WebVaultServer"):
             if srv.trust_forwarded:
                 parts = [p.strip() for p in self.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
                 if parts:
-                    return parts[-1]
+                    try:
+                        return str(ipaddress.ip_address(parts[-1]))
+                    except ValueError:
+                        pass
             return (self.client_address[0] if self.client_address else "?")
 
         def _body(self) -> bytes:
             # Validate Content-Length BEFORE reading anything off the wire so an
             # oversized (or malformed) request is rejected without buffering it.
-            raw = self.headers.get("Content-Length", None)
-            if raw is None:
+            if self.headers.get("Transfer-Encoding") is not None:
+                raise self._BadLength()
+            lengths = self.headers.get_all("Content-Length", [])
+            if not lengths:
                 return b""
+            if len(lengths) != 1:
+                raise self._BadLength()
             try:
-                n = int(raw)
+                n = int(lengths[0])
             except (TypeError, ValueError):
                 raise self._BadLength()
             if n < 0:
                 raise self._BadLength()
             if n > _MAX_BODY_BYTES:
                 raise self._BodyTooLarge()
-            return self.rfile.read(n) if n else b""
+            data = self.rfile.read(n) if n else b""
+            if len(data) != n:
+                raise self._BadLength()
+            return data
 
         # ---- auth ----
         def _uid(self) -> str | None:
@@ -267,6 +305,9 @@ def _make_handler(srv: "WebVaultServer"):
                 if k in _SESSION_COOKIE_NAMES:
                     uid = srv.sessions.resolve(v)
                     if uid:
+                        if srv.accounts.get(uid) is None:
+                            srv.sessions.destroy(v)
+                            return None
                         return uid
             return None
 
@@ -274,25 +315,50 @@ def _make_handler(srv: "WebVaultServer"):
         def _reject_oversized(self) -> bool:
             """Enforce the hard body cap for ALL endpoints up front (before any
             handler runs). Returns True if a 4xx was already sent."""
-            raw = self.headers.get("Content-Length", None)
-            if raw is None:
+            lengths = self.headers.get_all("Content-Length", [])
+            if self.headers.get("Transfer-Encoding") is not None or len(lengths) > 1:
+                self.close_connection = True
+                self._json(400, {"error": "bad content-length"})
+                return True
+            if not lengths:
                 return False
             try:
-                n = int(raw)
+                n = int(lengths[0])
             except (TypeError, ValueError):
+                self.close_connection = True
                 self._json(400, {"error": "bad content-length"})
                 return True
             if n < 0:
+                self.close_connection = True
                 self._json(400, {"error": "bad content-length"})
                 return True
             if n > _MAX_BODY_BYTES:
+                self.close_connection = True
                 self._json(413, {"error": "request body too large"})
                 return True
             return False
 
         def do_GET(self):
+            self._dispatch(self._get)
+
+        def do_POST(self):
+            self._dispatch(self._post)
+
+        def _dispatch(self, action):
+            try:
+                action()
+            except AccountStoreError:
+                self._json(503, {"error": "account registry unavailable"})
+            except SessionCapacityError:
+                self._json(429, {"error": "session capacity exceeded"},
+                           extra={"Retry-After": "60"})
+
+        def _get(self):
             if self._reject_oversized():
                 return
+            if int(self.headers.get("Content-Length", "0")):
+                self.close_connection = True
+                return self._json(400, {"error": "GET request body unsupported"})
             u = urlparse(self.path)
             p = u.path
             if p == "/healthz":
@@ -310,7 +376,10 @@ def _make_handler(srv: "WebVaultServer"):
                 return self._json(200, {"uid": uid} if uid else {"uid": None})
             self._json(404, {"error": "not found"})
 
-        def do_POST(self):
+        def _post(self):
+            # Early token/rate-limit failures do not consume the body. Close
+            # POST connections so those bytes cannot become another request.
+            self.close_connection = True
             if self._reject_oversized():
                 return
             p = urlparse(self.path).path
@@ -339,7 +408,9 @@ def _make_handler(srv: "WebVaultServer"):
             data = self._parse_json()
             if data is None:
                 return
-            uid = (data.get("uid") or "").strip()
+            uid = self._input_uid(data)
+            if uid is None:
+                return
             acct = srv.accounts.get(uid) if uid else None
             if acct:
                 return self._json(200, {"auth_salt": acct.auth_salt,
@@ -374,17 +445,23 @@ def _make_handler(srv: "WebVaultServer"):
             data = self._parse_json()
             if data is None:
                 return
-            uid = (data.get("uid") or "").strip()
+            uid = self._input_uid(data)
+            if uid is None:
+                return
             try:
-                auth_iters = int(data["auth_iters"])
+                auth_iters = data["auth_iters"]
+                if type(auth_iters) is not int:
+                    return self._json(400, {"error": "invalid authentication parameters"})
                 if auth_iters < _AUTH_ITERS_MIN:
                     return self._json(400, {"error": f"auth_iters must be >= "
                                                      f"{_AUTH_ITERS_MIN}"})
                 prefix = (f"tenants/{uid}" if srv.multi_tenant else default_base_prefix())
                 srv.accounts.register(
                     uid=uid, prefix=prefix,
-                    auth_salt=str(data["auth_salt"]), auth_iters=auth_iters,
-                    auth_hash=str(data["auth_hash"]))
+                    auth_salt=data["auth_salt"], auth_iters=auth_iters,
+                    auth_hash=data["auth_hash"])
+            except AccountStoreError:
+                raise
             except (AccountError, KeyError, ValueError) as e:
                 return self._json(400, {"error": str(e)})
             self._json(201, {"ok": True, "uid": uid})
@@ -409,8 +486,10 @@ def _make_handler(srv: "WebVaultServer"):
             data = self._parse_json()
             if data is None:
                 return
-            uid = (data.get("uid") or "").strip()
-            auth_hash = str(data.get("auth_hash") or "")
+            uid = self._input_uid(data)
+            if uid is None:
+                return
+            auth_hash = data.get("auth_hash")
             if not srv.accounts.verify(uid, auth_hash):
                 return self._json(401, {"error": "invalid credentials"})
             token = srv.sessions.create(uid)
@@ -442,7 +521,8 @@ def _make_handler(srv: "WebVaultServer"):
             uid = self._uid()
             if not uid:
                 return self._json(401, {"error": "not authenticated"})
-            remote = remote_for(srv.s3_base(), srv.prefix_for(uid))
+            prefix = srv.prefix_for(uid)
+            remote = remote_for(srv.s3_base(), prefix)
             try:
                 head = json.loads(remote.get_object("HEAD"))
                 return self._json(200, head)
@@ -466,9 +546,10 @@ def _make_handler(srv: "WebVaultServer"):
             if not uid:
                 return self._json(401, {"error": "not authenticated"})
             key = (query.get("key", [""])[0])
-            if not _KEY_RE.match(key):
+            if not _KEY_RE.fullmatch(key):
                 return self._json(400, {"error": "bad key"})
-            remote = remote_for(srv.s3_base(), srv.prefix_for(uid))
+            prefix = srv.prefix_for(uid)
+            remote = remote_for(srv.s3_base(), prefix)
             try:
                 body = remote.get_object(key)
             except NotFound:
@@ -480,21 +561,41 @@ def _make_handler(srv: "WebVaultServer"):
             self._send(200, body, ctype)
 
         # ---- helpers ----
+        def _input_uid(self, data):
+            uid = data.get("uid", "")
+            if not isinstance(uid, str) or len(uid) > 128:
+                self._json(400, {"error": "invalid uid"})
+                return None
+            return uid.strip()
+
         def _parse_json(self):
             """Return a dict, or None after having already sent a 4xx error
             (oversized / malformed body). Callers must stop on None."""
             try:
                 body = self._body()
             except self._BodyTooLarge:
+                self.close_connection = True
                 self._json(413, {"error": "request body too large"})
                 return None
             except self._BadLength:
+                self.close_connection = True
                 self._json(400, {"error": "bad content-length"})
                 return None
             try:
-                d = json.loads(body or b"{}")
-            except ValueError:
-                return {}
-            return d if isinstance(d, dict) else {}
+                def pairs(items):
+                    result = {}
+                    for key, value in items:
+                        if key in result:
+                            raise ValueError("duplicate member")
+                        result[key] = value
+                    return result
+                d = json.loads(body or b"{}", object_pairs_hook=pairs,
+                               parse_constant=lambda value: (_ for _ in ()).throw(ValueError("invalid number")))
+                if not isinstance(d, dict):
+                    raise ValueError("invalid object")
+            except (ValueError, UnicodeError, RecursionError):
+                self._json(400, {"error": "invalid JSON object"})
+                return None
+            return d
 
     return Handler

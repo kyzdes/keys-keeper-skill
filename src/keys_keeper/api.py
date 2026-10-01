@@ -568,8 +568,8 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
     except (TypeError, ValueError):
         handler._send_json(400, {"error": "clear_after must be an integer"})
         return
-    if clear_after < 0:
-        handler._send_json(400, {"error": "clear_after must be >= 0"})
+    if not 0 <= clear_after <= clipboard.MAX_CLEAR_DELAY_SECONDS:
+        handler._send_json(400, {"error": "clear_after must be from 0 to 86400 seconds"})
         return
     context = _context(handler, paths)
     store = context.store
@@ -587,7 +587,11 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
         return
     # Clipboard sink (controlled, not transcript-visible to the agent).
     value = sealed.unseal()
-    if not clipboard.write(value):
+    try:
+        written = clipboard.write(value)
+    except clipboard.ClipboardUnavailable:
+        written = False
+    if not written:
         audit.record(
             op="copy",
             name=e.name,
@@ -599,32 +603,33 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
         return
     audit.record(op="copy", name=e.name, id_=e.id, success=True)
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    if clear_after > 0:
-        threading.Thread(
-            target=_clipboard_clear_after,
-            args=(written_hash, clear_after),
-            daemon=True,
-        ).start()
+    clipboard.schedule_clear_after(written_hash, clear_after)
     handler._send_json(200, {"ok": True, "clear_after": clear_after})
-
-
-def _clipboard_clear_after(written_hash: str, delay: int) -> None:
-    time.sleep(delay)
-    current = clipboard.read()
-    current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
-    if current_hash == written_hash:
-        clipboard.clear()
 
 
 def _audit(handler, paths: Paths, query: str) -> None:
     qs = parse_qs(query)
     op = qs.get("op", [None])[0]
     name = qs.get("name", [None])[0]
-    limit = int(qs.get("limit", ["100"])[0])
+    limits = qs.get("limit", ["100"])
+    try:
+        if len(limits) != 1:
+            raise ValueError
+        limit = int(limits[0])
+        if not 1 <= limit <= 2000:
+            raise ValueError
+    except ValueError:
+        handler._send_json(400, {"error": "limit must be an integer from 1 to 2000"})
+        return
     audit = _context(handler, paths).audit
     # The journal opened from the menu must show current activity, even once
     # the file contains more than the UI's 2,000-event limit.
-    events = list(audit.search(op=op, name=name, limit=limit, newest_first=True))
+    from keys_keeper.audit import AuditReadLimit
+    try:
+        events = list(audit.search(op=op, name=name, limit=limit, newest_first=True))
+    except AuditReadLimit:
+        handler._send_json(413, {"error": "audit read limit exceeded; narrow the filter or rotate the log"})
+        return
     handler._send_json(200, {"events": events})
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 import uuid
 from collections.abc import Iterator
@@ -15,11 +14,13 @@ from keys_keeper._locking import lock_exclusive, unlock
 from keys_keeper.models import Entry, ValidationError, now_iso, validate_tombstone
 from keys_keeper.project_models import CatalogState, CatalogValidationError, Folder, new_catalog_id
 from keys_keeper.paths import Paths, ensure_private_dir
+from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
 # S3 sync instead of being resurrected by an older peer snapshot. See sync.py.
 SCHEMA_VERSION = 2
 CATALOG_SCHEMA_VERSION = 3
+_MAX_METADATA_BYTES = 128 * 1024 * 1024
 
 
 class StoreError(RuntimeError):
@@ -419,12 +420,32 @@ class MetadataStore:
     # ---------- internal ----------
 
     def _read(self) -> dict:
-        if not self.paths.data_json.exists():
+        try:
+            # Legacy plaintext metadata may have owner-readable public mode;
+            # still require an owned, regular, non-symlink bounded file.
+            raw = _secure_read(self.paths.data_json, max_bytes=_MAX_METADATA_BYTES,
+                               require_private=False)
+        except FileNotFoundError:
             return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
-        raw = self.paths.data_json.read_text()
+        except (JournalError, OSError):
+            raise StoreError("metadata file unavailable or exceeds size limit") from None
         if not raw.strip():
             return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
-        data = json.loads(raw)
+        try:
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    if key in result:
+                        raise ValueError("duplicate member")
+                    result[key] = value
+                return result
+            data = json.loads(raw, object_pairs_hook=pairs)
+            if (not isinstance(data, dict) or type(data.get("schema_version", 0)) is not int
+                    or not isinstance(data.get("entries", []), list)
+                    or not isinstance(data.get("tombstones", []), list)):
+                raise ValueError("invalid metadata schema")
+        except (ValueError, UnicodeError, RecursionError):
+            raise StoreError("metadata file invalid") from None
         sv = data.get("schema_version", 0)
         if sv > CATALOG_SCHEMA_VERSION:
             raise StoreError(
@@ -444,7 +465,12 @@ class MetadataStore:
         # actual v2 persistence happens on the next _locked_write.
         bak = self.paths.root / f"data.v{from_version}.json.bak"
         if self.paths.data_json.exists() and not bak.exists():
-            shutil.copy2(self.paths.data_json, bak)
+            try:
+                _atomic_write_bytes(bak, _secure_read(self.paths.data_json,
+                                                    max_bytes=_MAX_METADATA_BYTES,
+                                                    require_private=False))
+            except (JournalError, OSError):
+                raise StoreError("cannot persist migration backup") from None
         # 1 -> 2: introduce the tombstones container (lossless; entries unchanged).
         if from_version < 2:
             data.setdefault("tombstones", [])
@@ -475,15 +501,32 @@ class MetadataStore:
 
     def _atomic_write(self, data: dict) -> None:
         # Backup the current good file (if any) before overwriting.
-        if self.paths.data_json.exists():
-            shutil.copy2(self.paths.data_json, self.paths.data_json_bak)
+        try:
+            previous = _secure_read(self.paths.data_json, max_bytes=_MAX_METADATA_BYTES,
+                                    require_private=False)
+        except FileNotFoundError:
+            previous = None
+        except (JournalError, OSError):
+            raise StoreError("metadata file unavailable before write") from None
+        if previous is not None:
+            try:
+                _atomic_write_bytes(self.paths.data_json_bak, previous)
+            except (JournalError, OSError):
+                raise StoreError("cannot persist metadata backup") from None
         # Write to temp file in same dir, then rename.
         fd, tmp_path = tempfile.mkstemp(
             dir=self.paths.root, prefix=".data.", suffix=".tmp"
         )
         try:
             with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2, sort_keys=False)
+                class BoundedWriter:
+                    size = 0
+                    def write(self, text):
+                        self.size += len(text.encode("utf-8"))
+                        if self.size > _MAX_METADATA_BYTES:
+                            raise StoreError("metadata file exceeds size limit")
+                        return f.write(text)
+                json.dump(data, BoundedWriter(), indent=2, sort_keys=False)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, self.paths.data_json)

@@ -1,5 +1,6 @@
 import gzip
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -235,6 +236,7 @@ def test_live_cache_rotation_archives_and_new_profiles_are_discovered(tmp_path, 
     def forbidden(*args, **kwargs):
         raise AssertionError("unchanged archive decompressed again")
     monkeypatch.setattr(gzip, "open", forbidden)
+    monkeypatch.setattr(gzip, "GzipFile", forbidden)
     assert cache.summary(now=now)["total"] == 2
     profile.audit_jsonl.unlink()
     assert cache.summary(now=now)["total"] == 1
@@ -408,3 +410,262 @@ def test_overflow_concurrent_change_does_not_cache_inconsistent_aggregate(tmp_pa
     assert cache._aggregate is None
     assert cache.summary(now=now)["total"] == 130
     assert cache._aggregate is not None
+
+
+def _small_scan_limits(monkeypatch, *, line=256, scan=1024, chunk=64):
+    from keys_keeper import desktop_stats
+    monkeypatch.setattr(desktop_stats, "_MAX_LINE_BYTES", line)
+    monkeypatch.setattr(desktop_stats, "_MAX_SCAN_BYTES", scan)
+    monkeypatch.setattr(desktop_stats, "_READ_CHUNK_BYTES", chunk)
+    return desktop_stats
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_oversized_logical_line_is_bounded_incomplete_and_unchanged_read_free(tmp_path, monkeypatch, compressed):
+    import builtins
+    stats = _small_scan_limits(monkeypatch)
+    paths = Paths(tmp_path)
+    normal = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    private = "SYNTHETIC-PRIVATE-NEVER-RETAINED"
+    oversized = (json.dumps(event("2026-09-07T10:00:00Z", value=private * 20)) + "\n").encode()
+    log = paths.audit_archive("2026-09") if compressed else paths.audit_jsonl
+    if compressed:
+        with gzip.open(log, "wb") as stream:
+            stream.write(normal + oversized + normal)
+    else:
+        log.write_bytes(normal + oversized + normal)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    result = cache.summary(now=now)
+    assert result["total"] == 1 and result["complete"] is False
+    assert result["unreadable_logs"] == 1
+    assert cache._parsed_lines == 1 and cache._full_scans == 1
+    assert private not in repr(cache.__dict__)
+    with monkeypatch.context() as unchanged:
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("unchanged unsupported log was read or parsed again")
+        unchanged.setattr(builtins, "open", forbidden)
+        unchanged.setattr(gzip, "open", forbidden)
+        unchanged.setattr(stats, "_count_line", forbidden)
+        assert cache.summary(now=now + timedelta(minutes=1))["total"] == 1
+    if compressed:
+        with gzip.open(log, "wb") as stream:
+            stream.write(normal * 2)
+    else:
+        log.write_bytes(normal * 2)
+    recovered = cache.summary(now=now + timedelta(minutes=2))
+    assert recovered["total"] == 2 and recovered["complete"] is True
+
+
+def test_gzip_decompression_and_all_profiles_share_one_scan_budget(tmp_path, monkeypatch):
+    import builtins
+    stats = _small_scan_limits(monkeypatch, scan=512)
+    paths = Paths(tmp_path)
+    row = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    archive = paths.audit_archive("2026-09")
+    with gzip.open(archive, "wb") as stream:
+        stream.write(row * 30)
+    profile = paths.for_profile("11111111-1111-4111-8111-111111111111")
+    profile.audit_jsonl.parent.mkdir(parents=True)
+    profile.audit_jsonl.write_bytes(row)
+    original_open = stats._open_log
+    delivered, plain, requests = [], [], []
+    class LimitedReader:
+        def __init__(self, stream): self.stream = stream
+        def __enter__(self): self.reader = self.stream.__enter__(); return self
+        def __exit__(self, *args): return self.stream.__exit__(*args)
+        def read(self, size):
+            assert 0 < size <= 64
+            requests.append(size)
+            data = self.reader.read(size)
+            (delivered if isinstance(self.reader, gzip.GzipFile) else plain).append(len(data))
+            return data
+    monkeypatch.setattr(stats, "_open_log", lambda *args, **kwargs: LimitedReader(original_open(*args, **kwargs)))
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    result = cache.summary(now=now)
+    assert sum(delivered) + sum(plain) + archive.stat().st_size <= 512
+    assert result["total"] == sum(delivered) // len(row)
+    assert result["complete"] is False and result["unreadable_logs"] == 2
+    assert cache._aggregate is not None
+    with monkeypatch.context() as unchanged:
+        unchanged.setattr(builtins, "open", lambda *_a, **_kw: pytest.fail("budget miss reread unchanged logs"))
+        unchanged.setattr(gzip, "open", lambda *_a, **_kw: pytest.fail("budget miss decompressed unchanged archive"))
+        again = cache.summary(now=now + timedelta(minutes=1))
+        assert again["total"] == result["total"] and again["complete"] is False
+    archive.unlink()  # The formerly deferred profile must now be counted.
+    recovered = cache.summary(now=now + timedelta(minutes=2))
+    assert recovered["total"] == 1 and recovered["complete"] is True
+
+
+def test_plain_log_exact_scan_boundary_and_crlf_split_across_chunks_are_complete(tmp_path, monkeypatch):
+    stats = _small_scan_limits(monkeypatch, chunk=1)
+    paths = Paths(tmp_path)
+    row = json.dumps(event("2026-09-07T10:00:00Z"))
+    raw = (row + "\r\n" + row + "\r").encode()
+    monkeypatch.setattr(stats, "_MAX_SCAN_BYTES", len(raw))
+    paths.audit_jsonl.write_bytes(raw)
+    cache = DailySummaryCache(paths)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    result = cache.summary(now=now)
+    assert result["total"] == 2 and result["complete"] is True
+    assert cache._parsed_lines == 2
+
+
+def test_prefix_verification_consumes_the_same_budget_as_append_reads(tmp_path, monkeypatch):
+    import builtins
+    stats = _small_scan_limits(monkeypatch)
+    paths = Paths(tmp_path)
+    row = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    paths.audit_jsonl.write_bytes(row * 3)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    assert cache.summary(now=now)["total"] == 3
+    monkeypatch.setattr(stats, "_MAX_SCAN_BYTES", len(row) * 3 - 1)
+    with paths.audit_jsonl.open("ab") as stream:
+        stream.write(row)
+    result = cache.summary(now=now)
+    assert result["total"] == 0 and result["complete"] is False
+    assert cache._incremental_scans == 0
+    assert cache._aggregate is not None
+    monkeypatch.setattr(builtins, "open", lambda *_a, **_kw: pytest.fail("unchanged budget-bound prefix reread"))
+    assert cache.summary(now=now + timedelta(minutes=1))["complete"] is False
+
+
+def test_deeply_nested_small_json_is_skipped_without_aborting_summary(tmp_path):
+    paths = Paths(tmp_path)
+    nested = b'{"padding":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}\n"
+    row = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    paths.audit_jsonl.write_bytes(nested + row)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    result = DailySummaryCache(paths).summary(now=now)
+    assert result["total"] == 1 and result["skipped_records"] == 1
+    assert result["complete"] is False
+
+
+def test_overflow_budget_bound_and_nonregular_log_have_read_free_aggregate(tmp_path, monkeypatch):
+    import builtins
+    stats = _small_scan_limits(monkeypatch, scan=512)
+    cache, logs, now = _overflow_cache(tmp_path, monkeypatch)
+    logs[-1].unlink()
+    logs[-1].mkdir()
+    first = cache.summary(now=now)
+    assert first["complete"] is False and first["total"] < 129
+    assert cache._aggregate is not None
+    monkeypatch.setattr(builtins, "open", lambda *_a, **_kw: pytest.fail("unchanged overflow limit reread"))
+    monkeypatch.setattr(stats, "_count_line", lambda *_a, **_kw: pytest.fail("unchanged overflow limit reparsed"))
+    second = cache.summary(now=now + timedelta(minutes=1))
+    assert second["total"] == first["total"]
+    assert second["unreadable_logs"] == first["unreadable_logs"]
+
+
+def test_corrupt_gzip_is_cached_as_incomplete_but_rewrite_recovers(tmp_path, monkeypatch):
+    paths = Paths(tmp_path)
+    archive = paths.audit_archive("2026-09")
+    archive.write_bytes(b"not-a-gzip-stream")
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    first = cache.summary(now=now)
+    assert first["total"] == 0 and first["complete"] is False
+    with monkeypatch.context() as unchanged:
+        unchanged.setattr(gzip, "open", lambda *_a, **_kw: pytest.fail("corrupt unchanged archive reopened"))
+        assert cache.summary(now=now + timedelta(minutes=1))["complete"] is False
+    with gzip.open(archive, "wt") as stream:
+        stream.write(json.dumps(event("2026-09-07T10:00:00Z")) + "\n")
+    result = cache.summary(now=now + timedelta(minutes=2))
+    assert result["total"] == 1 and result["complete"] is True
+
+
+def test_incomplete_cache_obeys_future_day_timezone_and_clock_rollback(tmp_path, monkeypatch):
+    _small_scan_limits(monkeypatch)
+    paths = Paths(tmp_path)
+    write_events(paths.audit_jsonl, [event("2026-09-07T13:00:00Z"),
+                                    event("2026-09-07T13:00:00Z", padding="x" * 400)])
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    assert cache.summary(now=now)["total"] == 0
+    assert cache.summary(now=now + timedelta(minutes=30))["total"] == 0
+    assert cache._full_scans == 1
+    future = cache.summary(now=now + timedelta(hours=1))
+    assert future["total"] == 1 and future["complete"] is False
+    assert cache.summary(now=now)["total"] == 0
+    next_day = cache.summary(now=now + timedelta(days=1))
+    assert next_day["total"] == 0 and next_day["complete"] is False
+    moscow = cache.summary(now=datetime(2026, 9, 7, 17, tzinfo=ZoneInfo("Europe/Moscow")))
+    assert moscow["total"] == 1 and moscow["complete"] is False
+
+
+def test_gzip_header_without_output_consumes_scan_budget_and_stays_read_free(tmp_path, monkeypatch):
+    import builtins
+    stats = _small_scan_limits(monkeypatch, scan=512)
+    paths = Paths(tmp_path)
+    archive = paths.audit_archive("2026-09")
+    row = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    packed = gzip.compress(row)
+    archive.write_bytes(packed[:3] + b"\x08" + packed[4:10] + b"x" * 2000 + b"\x00" + packed[10:])
+    reads = []
+    original = stats._ScanBudget.read
+    def track(budget, stream, size):
+        assert 0 < size <= 64
+        data = original(budget, stream, size)
+        reads.append(len(data))
+        return data
+    monkeypatch.setattr(stats._ScanBudget, "read", track)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    cache = DailySummaryCache(paths)
+    result = cache.summary(now=now)
+    assert sum(reads) <= 512
+    assert result["total"] == 0 and result["complete"] is False
+    assert result["unreadable_logs"] == 1 and cache._aggregate is not None
+    monkeypatch.setattr(builtins, "open", lambda *_a, **_kw: pytest.fail("unchanged gzip header reread"))
+    assert cache.summary(now=now + timedelta(minutes=1))["complete"] is False
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX FIFO and no-follow opens")
+@pytest.mark.parametrize("replacement", ["fifo", "symlink", "directory"])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_log_replacement_at_open_is_nonblocking_incomplete_and_recovers(tmp_path, monkeypatch, replacement, compressed):
+    from keys_keeper import desktop_stats as stats
+    paths = Paths(tmp_path)
+    log = paths.audit_archive("2026-09") if compressed else paths.audit_jsonl
+    row = (json.dumps(event("2026-09-07T10:00:00Z")) + "\n").encode()
+    log.write_bytes(gzip.compress(row) if compressed else row)
+    outside = tmp_path / "outside"
+    outside.write_bytes(gzip.compress(row) if compressed else row)
+    original_open = os.open
+    replaced = False
+    flags_seen = []
+    def replace_at_open(path, flags, *args):
+        nonlocal replaced
+        flags_seen.append(flags)
+        assert flags & os.O_NONBLOCK
+        if not replaced:
+            replaced = True
+            log.unlink()
+            if replacement == "fifo":
+                os.mkfifo(log)
+            elif replacement == "symlink":
+                log.symlink_to(outside)
+            else:
+                log.mkdir()
+        return original_open(path, flags, *args)
+    monkeypatch.setattr(stats.os, "open", replace_at_open)
+    cache = DailySummaryCache(paths)
+    now = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
+    first = cache.summary(now=now)
+    assert flags_seen and first["total"] == 0
+    assert first["complete"] is False and first["unreadable_logs"] == 1
+    # The replacement is stable unsupported input; it becomes read-free.
+    second = cache.summary(now=now + timedelta(minutes=1))
+    opens = len(flags_seen)
+    assert second["total"] == 0 and second["complete"] is False
+    assert cache.summary(now=now + timedelta(minutes=2))["complete"] is False
+    assert len(flags_seen) == opens
+    monkeypatch.setattr(stats.os, "open", original_open)
+    if replacement == "directory":
+        log.rmdir()
+    else:
+        log.unlink()
+    log.write_bytes(gzip.compress(row) if compressed else row)
+    recovered = cache.summary(now=now + timedelta(minutes=3))
+    assert recovered["total"] == 1 and recovered["complete"] is True

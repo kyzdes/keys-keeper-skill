@@ -1,15 +1,120 @@
 """Append-only audit log (JSONL) with monthly rotation."""
 from __future__ import annotations
 import gzip
+import errno
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator
 from keys_keeper.paths import Paths, ensure_private_dir
+
+
+MAX_AUDIT_RESULTS = 10_000
+_MAX_LINE_BYTES = 1024 * 1024
+_MAX_SCAN_BYTES = 64 * 1024 * 1024
+_READ_CHUNK_BYTES = 64 * 1024
+_FORWARD_NEWLINE = re.compile(b"\r\n|[\r\n]")
+_BACKWARD_NEWLINE = re.compile(b"\n\r|[\r\n]")
+
+
+class AuditReadLimit(ValueError):
+    """The audit file cannot be safely read within the resource limits."""
+
+    def __init__(self):
+        super().__init__("audit log read limit exceeded")
+
+
+def _validate_limit(limit: int) -> None:
+    if type(limit) is not int or not 0 <= limit <= MAX_AUDIT_RESULTS:
+        raise ValueError(f"audit limit must be an integer from 0 to {MAX_AUDIT_RESULTS}")
+
+
+@contextmanager
+def _open_audit(path):
+    """Reject pipes/devices before reading, including a replacement at open."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise AuditReadLimit()
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        yield None
+        return
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise AuditReadLimit() from None
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise AuditReadLimit()
+        # Unbuffered reads keep the scan cap and newest-first short circuit exact.
+        with os.fdopen(fd, "rb", buffering=0, closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(fd)
+
+
+def _audit_lines(stream, *, newest_first: bool = False) -> Iterator[bytes]:
+    """Read bounded logical lines without loading the rest of the audit file.
+
+    Reversing individual chunks permits one bounded line splitter in both
+    directions. UTF-8 is decoded only after the complete line is reassembled.
+    CRLF is a single delimiter even when it crosses a read boundary.
+    """
+    size = os.fstat(stream.fileno()).st_size
+    position = size if newest_first else 0
+    scanned = 0
+    pending = b""
+    first_segment = True
+    newline = _BACKWARD_NEWLINE if newest_first else _FORWARD_NEWLINE
+    defer = b"\n" if newest_first else b"\r"
+    while position > 0 if newest_first else position < size:
+        available = position if newest_first else size - position
+        amount = min(_READ_CHUNK_BYTES, available, _MAX_SCAN_BYTES - scanned)
+        if amount <= 0:
+            raise AuditReadLimit()
+        if newest_first:
+            position -= amount
+            stream.seek(position)
+        chunk = stream.read(amount)
+        scanned += len(chunk)
+        if not chunk:
+            break
+        if newest_first:
+            chunk = chunk[::-1]
+        else:
+            position += len(chunk)
+        pending += chunk
+        at_end = position == 0 if newest_first else position >= size
+        split_end = len(pending)
+        if not at_end and pending.endswith(defer):
+            split_end -= 1
+        start = 0
+        for match in newline.finditer(pending, 0, split_end):
+            line = pending[start:match.start()]
+            if len(line) > _MAX_LINE_BYTES:
+                raise AuditReadLimit()
+            if not (newest_first and first_segment and not line):
+                yield line[::-1] if newest_first else line
+            first_segment = False
+            start = match.end()
+        pending = pending[start:]
+        # One deferred byte can belong to a CRLF delimiter, not the line.
+        line_size = len(pending) - (1 if pending.endswith(defer) else 0)
+        if line_size > _MAX_LINE_BYTES:
+            raise AuditReadLimit()
+    if pending or (newest_first and size and not first_segment):
+        if len(pending) > _MAX_LINE_BYTES:
+            raise AuditReadLimit()
+        yield pending[::-1] if newest_first else pending
 
 
 def _private_opener(path: str, flags: int) -> int:
@@ -188,12 +293,20 @@ class AuditLog:
             f.write(event.to_json() + "\n")
 
     def tail(self, n: int = 50) -> Iterator[dict]:
-        if not self.paths.audit_jsonl.exists():
+        _validate_limit(n)
+        if n == 0:
             return
-        lines = self.paths.audit_jsonl.read_text().splitlines()
-        for line in lines[-n:]:
-            if line.strip():
-                yield json.loads(line)
+        with _open_audit(self.paths.audit_jsonl) as stream:
+            if stream is None:
+                return
+            lines = []
+            for line in _audit_lines(stream, newest_first=True):
+                lines.append(line)
+                if len(lines) == n:
+                    break
+            for line in reversed(lines):
+                if line.strip():
+                    yield json.loads(line.decode("utf-8"))
 
     def search(
         self,
@@ -204,36 +317,40 @@ class AuditLog:
         limit: int = 1000,
         newest_first: bool = False,
     ) -> Iterator[dict]:
-        if not self.paths.audit_jsonl.exists():
+        _validate_limit(limit)
+        if limit == 0:
             return
-        lines = self.paths.audit_jsonl.read_text().splitlines()
-        for line in reversed(lines) if newest_first else lines:
-            if not line.strip():
-                continue
-            ev = json.loads(line)
-            if op and ev["op"] != op:
-                continue
-            if name and ev["name"] != name:
-                continue
-            if since and ev["ts"] < since.strftime("%Y-%m-%dT%H:%M:%SZ"):
-                continue
-            yield ev
-            limit -= 1
-            if limit <= 0:
-                break
+        since_ts = since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else None
+        with _open_audit(self.paths.audit_jsonl) as stream:
+            if stream is None:
+                return
+            for line in _audit_lines(stream, newest_first=newest_first):
+                if not line.strip():
+                    continue
+                ev = json.loads(line.decode("utf-8"))
+                if op and ev["op"] != op:
+                    continue
+                if name and ev["name"] != name:
+                    continue
+                if since_ts and ev["ts"] < since_ts:
+                    continue
+                yield ev
+                limit -= 1
+                if limit == 0:
+                    break
 
     def rotate_if_needed(self, now: datetime | None = None) -> None:
         """If audit.jsonl contains events from a previous month, archive them."""
-        if not self.paths.audit_jsonl.exists():
-            return
         now = now or datetime.now(timezone.utc)
         cur_ym = now.strftime("%Y-%m")
         # peek at the first event's month
-        with open(self.paths.audit_jsonl) as f:
-            first = f.readline().strip()
+        with _open_audit(self.paths.audit_jsonl) as stream:
+            if stream is None:
+                return
+            first = next(_audit_lines(stream), b"").strip()
         if not first:
             return
-        first_ev = json.loads(first)
+        first_ev = json.loads(first.decode("utf-8"))
         first_ym = first_ev["ts"][:7]
         if first_ym == cur_ym:
             return

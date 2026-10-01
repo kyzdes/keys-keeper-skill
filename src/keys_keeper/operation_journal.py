@@ -8,6 +8,7 @@ complete or close it during recovery.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,8 @@ _PENDING_INDEX_SCHEMA = 1
 _PENDING_INDEX_NAME = "pending-index.json"
 _MAX_JOURNAL_BYTES = 160 * 1024 * 1024
 _MAX_INDEX_BYTES = 1024 * 1024
+_MAX_RECOVERY_RECORDS = 10_000
+_MAX_RECOVERY_BYTES = 512 * 1024 * 1024
 
 
 class JournalError(RuntimeError):
@@ -80,6 +83,10 @@ class OperationJournal:
         # avoid repeated PBKDF2 work. Never serialize, log, or share this cache;
         # every read still loads fresh file bytes and authenticates with GCM.
         self._derived_key_cache: tuple[bytes, bytes] | None = None
+        # One digest of an entirely authenticated terminal directory. It is
+        # only reused after rereading every secure ciphertext byte; neither
+        # pending plaintext nor file metadata can authorize a cache hit.
+        self._terminal_manifest: bytes | None = None
         self._thread_lock = threading.RLock()
         self._lock_depth = 0
 
@@ -216,18 +223,75 @@ class OperationJournal:
 
     def list_unfinished(self) -> list[OperationRecord]:
         with self.locked():
-            if not self.paths.operations_dir.exists():
-                return []
-            records: list[OperationRecord] = []
-            for path in sorted(self.paths.operations_dir.glob("*.enc")):
+            try:
+                snapshot, paths = self._recovery_snapshot()
+                cached = self._terminal_manifest
+                if cached is not None:
+                    digest, _ = self._scan_recovery(paths, authenticate=False)
+                    if self._recovery_snapshot()[0] != snapshot:
+                        raise JournalError("journal directory changed during recovery scan")
+                    if digest == cached:
+                        return []
+                self._terminal_manifest = None
+                digest, records = self._scan_recovery(paths, authenticate=True)
+                if self._recovery_snapshot()[0] != snapshot:
+                    raise JournalError("journal directory changed during recovery scan")
+                if not records:
+                    self._terminal_manifest = digest
+                return records
+            except OSError:
+                self._terminal_manifest = None
+                raise JournalError("journal directory unavailable during recovery scan") from None
+            except BaseException:
+                self._terminal_manifest = None
+                raise
+
+    def _recovery_snapshot(self):
+        try:
+            directory = self.paths.operations_dir.lstat()
+        except FileNotFoundError:
+            return None, ()
+        if not stat.S_ISDIR(directory.st_mode):
+            raise JournalError("journal directory must be a non-symlink directory")
+        if os.name == "posix" and (directory.st_uid != os.getuid() or directory.st_mode & 0o077):
+            raise JournalError("journal directory has unsafe ownership or permissions")
+        entries, total = [], 0
+        with os.scandir(self.paths.operations_dir) as iterator:
+            for item in iterator:
+                if not item.name.endswith(".enc"):
+                    continue
                 try:
-                    op_id = _canonical_uuid(path.stem, field_name="operation_id")
-                except ValueError as ex:
-                    raise JournalError("invalid journal filename") from ex
-                record = self._read_unlocked(op_id)
+                    _canonical_uuid(item.name[:-4], field_name="operation_id")
+                except ValueError:
+                    raise JournalError("invalid journal filename") from None
+                info = item.stat(follow_symlinks=False)
+                total += info.st_size
+                if len(entries) >= _MAX_RECOVERY_RECORDS or total > _MAX_RECOVERY_BYTES:
+                    raise JournalError("journal recovery scan exceeds resource limit")
+                entries.append((item.name, info.st_dev, info.st_ino, info.st_size,
+                                info.st_mtime_ns, info.st_ctime_ns, info.st_mode))
+        entries.sort()
+        stamp = (directory.st_dev, directory.st_ino, directory.st_mtime_ns,
+                 directory.st_ctime_ns, tuple(entries))
+        return stamp, tuple(self.paths.operations_dir / item[0] for item in entries)
+
+    def _scan_recovery(self, paths, *, authenticate):
+        digest = hashlib.sha256(b"keys-keeper/terminal-journal-directory/v1\0")
+        records = []
+        total = 0
+        for path in paths:
+            blob = _secure_read(path, max_bytes=min(_MAX_JOURNAL_BYTES, _MAX_RECOVERY_BYTES - total))
+            total += len(blob)
+            name = path.name.encode("ascii")
+            digest.update(len(name).to_bytes(4, "big"))
+            digest.update(name)
+            digest.update(len(blob).to_bytes(8, "big"))
+            digest.update(blob)
+            if authenticate:
+                record = self._decode_blob_unlocked(UUID(path.stem), blob)
                 if not record.finished:
                     records.append(record)
-            return records
+        return digest.digest(), records
 
     def pending_refs(self, *, kind: str | None = None) -> tuple[dict[str, str], ...]:
         """Read the metadata-only pending index through this reentrant lock."""
@@ -320,8 +384,13 @@ class OperationJournal:
             ).encode("utf-8")
         except (TypeError, ValueError) as ex:
             raise JournalError("journal state is not JSON serializable") from ex
+        # The fixed KK1 header/tag adds 48 bytes. Refuse a state that this
+        # journal could not read back, before spending PBKDF2 or replacing it.
+        if len(plaintext) + 48 > _MAX_JOURNAL_BYTES:
+            raise JournalError("journal record exceeds size limit")
         blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
         _atomic_write_bytes(self._record_path(record.operation_id), blob)
+        self._terminal_manifest = None
         # Only a successful durable local write replaces the previous key.
         self._derived_key_cache = (crypto._blob_salt(blob), key)
 
@@ -331,6 +400,9 @@ class OperationJournal:
             blob = _secure_read(path, max_bytes=_MAX_JOURNAL_BYTES)
         except FileNotFoundError as ex:
             raise JournalNotFound("journal operation not found") from ex
+        return self._decode_blob_unlocked(operation_id, blob)
+
+    def _decode_blob_unlocked(self, operation_id: UUID, blob: bytes) -> OperationRecord:
         try:
             salt = crypto._blob_salt(blob)
             cached = self._derived_key_cache
@@ -353,12 +425,14 @@ class OperationJournal:
 
 
 @contextmanager
-def profile_lock(paths: Paths) -> Iterator[None]:
+def profile_lock(paths: Paths, *, timeout=None) -> Iterator[None]:
     """Acquire the single mutation lock for one explicit profile.
 
     Callers must not nest raw profile locks. Use ``OperationJournal.locked``
     when journal methods participate in the same local mutation. Network I/O
     must happen after releasing it.
+    Automatic metadata callers may supply a finite timeout; journal/storage
+    callers retain the existing blocking behavior by default.
     """
     ensure_private_dir(paths.root)
     ensure_private_dir(paths.locks_dir)
@@ -377,7 +451,7 @@ def profile_lock(paths: Paths) -> Iterator[None]:
             if info.st_uid != os.getuid():
                 raise JournalError("profile lock must be owned by this user")
             os.fchmod(fd, 0o600)
-        lock_exclusive(fd)
+        lock_exclusive(fd, timeout=timeout)
         try:
             yield
         finally:
@@ -443,6 +517,8 @@ def _write_pending_index(paths: Paths, entries: list[dict[str, str]]) -> None:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    if len(encoded) > _MAX_INDEX_BYTES:
+        raise JournalError("pending operation index exceeds size limit")
     _atomic_write_bytes(paths.operations_dir / _PENDING_INDEX_NAME, encoded)
 
 
@@ -523,7 +599,7 @@ def _validate_token(value: object, label: str) -> str:
     return value
 
 
-def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
+def _secure_read(path: Path, *, max_bytes: int | None = None, require_private: bool = True) -> bytes:
     if max_bytes is not None and (
         isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0
     ):
@@ -537,7 +613,7 @@ def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
         raise JournalError("durable state file must be a regular non-symlink file")
     if os.name == "posix":
-        if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077:
+        if before.st_uid != os.getuid() or (require_private and stat.S_IMODE(before.st_mode) & 0o077):
             raise JournalError("durable state file has unsafe ownership or permissions")
     # Windows CRT descriptors default to text mode.  Ciphertext can contain
     # CRLF and CTRL-Z bytes, so os.read() must use an explicitly binary fd.
@@ -546,6 +622,7 @@ def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
         | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
     )
     try:
         fd = os.open(path, flags)

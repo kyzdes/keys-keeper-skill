@@ -583,11 +583,12 @@ def test_reused_runtime_state_reads_external_journal_updates(tmp_path, monkeypat
     for worker in (runtime, other):
         monkeypatch.setattr(worker, "_profile_password", lambda _profile: "synthetic-cache-password")
     state = runtime.state(item)
-    state.save({"revision": 1})
-    assert state.load() == {"revision": 1}
-    other.state(item).save({"revision": 2})
+    identity = {"scope_id": item["scope_id"], "vault_id": item["vault_id"], "mode": "master"}
+    state.save({**identity, "revision": 1})
+    assert state.load() == {**identity, "revision": 1}
+    other.state(item).save({**identity, "revision": 2})
     assert runtime.state(dict(item)) is state
-    assert state.load() == {"revision": 2}
+    assert state.load() == {**identity, "revision": 2}
 
 
 def test_cli_watch_defaults_daily_but_accepts_legacy_interval():

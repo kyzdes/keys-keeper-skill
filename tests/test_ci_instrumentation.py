@@ -1,10 +1,12 @@
 """Synthetic checks for reporting failures/partial coverage accurately."""
 import importlib.util
+import argparse
 import json
 from pathlib import Path
 import sys
 import time
 from types import SimpleNamespace
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +49,7 @@ def test_missing_matrix_job_cannot_be_reported_as_complete(tmp_path, monkeypatch
     (job / "manifest.json").write_text(json.dumps({"jobs": ["linux-py3.12"], "commit": "a" * 40,
                                                    "pytest_exit_status": 0, "coverage_status": "complete"}))
     recorded = {}
-    def save(_out, files, manifest, _metrics):
+    def save(_out, files, manifest, _metrics, **_floors):
         recorded.update(manifest)
         assert files == []
         return 1 if manifest["errors"] else 0
@@ -70,3 +72,51 @@ def test_identical_test_bodies_are_candidates_not_coverage_claims(tmp_path):
     assert data["summary"]["exact_body_duplicate_groups"] == 1
     assert data["modules"][1]["directly_importing_tests"] == []
     assert "not measure" in data["limitations"][-1]
+
+
+def test_coverage_floor_uses_raw_counts_and_preserves_complete_evidence_status():
+    report = load_script("_coverage_floor_contract", ROOT / "scripts/coverage-report.py")
+    manifest = {"errors": [], "coverage_status": "complete", "totals": {
+        "covered_lines": 16_799, "lines": 20_000,
+        "covered_branches": 69, "branches": 100,
+    }}
+    # 83.995 displays as 84.0; rounding must not let it pass the 84% gate.
+    assert report.percentage(16_799, 20_000) == 84.0
+    gate = report.evaluate_gate(manifest, min_line=84, min_branch=69)
+    assert gate["status"] == "failed"
+    assert gate["errors"] == ["line coverage is below the 84% floor"]
+    assert manifest["coverage_status"] == "complete"
+    manifest["totals"]["covered_lines"] = 16_800
+    assert report.evaluate_gate(manifest, min_line=84, min_branch=69)["status"] == "passed"
+
+
+def test_missing_or_partial_measurement_never_passes_coverage_floor():
+    report = load_script("_coverage_partial_floor_contract", ROOT / "scripts/coverage-report.py")
+    for manifest in ({"errors": ["missing matrix job"], "totals": {"covered_lines": 100, "lines": 100}},
+                     {"errors": []}):
+        gate = report.evaluate_gate(manifest, min_line=84)
+        assert gate["status"] == "not-evaluated"
+        assert gate["errors"] == ["coverage evidence is incomplete"]
+    empty = {"errors": [], "totals": {"covered_lines": 0, "lines": 0, "covered_branches": 0, "branches": 0}}
+    assert report.evaluate_gate(empty, min_line=84, min_branch=69)["status"] == "failed"
+
+
+@pytest.mark.parametrize("bad", ["-1", "101", "nan", "inf", "-inf"])
+def test_invalid_coverage_floor_is_rejected(bad):
+    report = load_script("_coverage_invalid_floor_contract", ROOT / "scripts/coverage-report.py")
+    with pytest.raises(argparse.ArgumentTypeError, match="finite percentage"):
+        report.valid_floor(bad)
+
+
+def test_merge_passes_floors_to_reporting_without_hiding_failed_tests(tmp_path, monkeypatch):
+    report = load_script("_coverage_merge_floor_contract", ROOT / "scripts/coverage-report.py")
+    job = tmp_path / "inputs" / "job"
+    job.mkdir(parents=True)
+    (job / "manifest.json").write_text(json.dumps({"jobs": ["linux-py3.12"], "commit": "b" * 40,
+                                                   "pytest_exit_status": 1, "coverage_status": "complete"}))
+    def save(_out, _files, manifest, _metrics, **floors):
+        assert manifest["matrix"][0]["pytest_exit_status"] == 1
+        assert floors == {"min_line": 84, "min_branch": 69}
+        return 1
+    monkeypatch.setattr(report, "save_reports", save)
+    assert report.merge(tmp_path / "inputs", tmp_path / "out", 1, min_line=84, min_branch=69) == 1

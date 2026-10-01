@@ -22,6 +22,15 @@ from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 
 _SECRET_TOOL = "secret-tool"
 _PROBE_ACCOUNT = "kk:__keys-keeper-availability-probe__"
+_COMMAND_TIMEOUT = 10
+
+
+def _run_tool(command, **kwargs):
+    """Bound a native helper; provider error text can contain secret material."""
+    try:
+        return subprocess.run(command, timeout=_COMMAND_TIMEOUT, **kwargs)
+    except (OSError, subprocess.SubprocessError):
+        raise KeychainError("Secret Service helper failed or timed out") from None
 
 
 def _secret_tool_path() -> str | None:
@@ -98,7 +107,7 @@ class SecretToolBackend(KeychainBackend):
         return ["service", self.service, "account", account]
 
     def get(self, account: str) -> Sealed:
-        result = subprocess.run(
+        result = _run_tool(
             [self.executable, "lookup", *self._attrs(account)],
             capture_output=True, text=True,
         )
@@ -109,7 +118,7 @@ class SecretToolBackend(KeychainBackend):
 
     def set(self, account: str, value: str) -> None:
         label = f"keys-keeper: {account}"
-        result = subprocess.run(
+        result = _run_tool(
             [
                 self.executable,
                 "store",
@@ -120,15 +129,13 @@ class SecretToolBackend(KeychainBackend):
             input=value, capture_output=True, text=True,
         )
         if result.returncode != 0:
-            raise KeychainError(
-                f"failed to store secret {account}: {result.stderr.strip()}"
-            )
+            raise KeychainError(f"failed to store secret {account}")
 
     def delete(self, account: str) -> None:
         # `secret-tool clear` removes all items matching the attributes; a
         # missing entry is a no-op with rc 0. Any other non-zero result means
         # the delete did not complete and must block the metadata commit.
-        result = subprocess.run(
+        result = _run_tool(
             [self.executable, "clear", *self._attrs(account)],
             capture_output=True, text=True,
         )
@@ -136,16 +143,14 @@ class SecretToolBackend(KeychainBackend):
             raise KeychainError(f"failed to delete secret {account}")
 
     def list_ids(self) -> list[str]:
-        result = subprocess.run(
+        result = _run_tool(
             [self.executable, "search", "--all", "service", self.service],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
         )
         if result.returncode not in (0, 1):
-            raise KeychainError(
-                f"secret-tool search failed: {result.stderr.strip()}"
-            )
+            raise KeychainError("secret-tool search failed")
         # `secret-tool search` prints attributes to stderr. stdout contains
         # secret material and was never captured by this process.
         return _parse_accounts(result.stderr)

@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 from urllib.parse import parse_qs, urlsplit
 
+from keys_keeper.http_resources import RequestDeadlineMixin
+
 
 # A maximum-size KK2 plaintext expands once inside the encrypted JSON envelope
 # and a second time as the HTTP base64url field.  32 MiB covers that bounded
@@ -995,7 +997,7 @@ class SyncServerApp:
 def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
     """Create a request handler bound to one application instance."""
 
-    class SyncRequestHandler(BaseHTTPRequestHandler):
+    class SyncRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         server_version = "keys-keeper-sync"
         sys_version = ""
 
@@ -1058,6 +1060,19 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 vault_id=vault_id,
                 allow_pending=pending,
             )
+
+        def _v1_post_limit(self, path):
+            app.project_relay._unique_auth(self.headers)
+            if path == "/v1/vaults":
+                app._authenticate_admin(self.headers.get("Authorization"))
+                return 16 * 1024
+            match = re.fullmatch(r"/v1/vaults/([^/]+)/(commits|invites|devices/[^/]+/revoke|invites/[^/]+/approve)", path)
+            if match:
+                self._device(match.group(1))
+                return MAX_REQUEST_BODY if match.group(2) == "commits" else 16 * 1024
+            if re.fullmatch(r"/v1/invites/[^/]+/claim", path):
+                return 16 * 1024
+            raise SyncServerError(404, "not_found", "endpoint not found")
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             try:
@@ -1152,7 +1167,7 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                         status, result = app.project_relay.handle("POST", path, self.headers, payload)
                         self._send_json(status, result)
                     return
-                payload = self._read_json()
+                payload = self._read_json(maximum=self._v1_post_limit(path))
                 if path == "/v1/vaults":
                     result = app.create_vault(payload, self.headers.get("Authorization"))
                     self._send_json(201, result)
@@ -1232,6 +1247,7 @@ def create_http_server(
 
         def __init__(self, address, handler):
             import threading
+            self.request_timeout = app.project_relay.limits.socket_timeout
             self._connections = threading.BoundedSemaphore(app.project_relay.limits.concurrent_connections)
             super().__init__(address, handler)
 

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import WebKit
+import Darwin
 
 struct AgentCount: Decodable, Identifiable {
     let id: String
@@ -55,7 +56,10 @@ final class Bridge {
     private let input = Pipe()
     private let output = Pipe()
     private let queue = DispatchQueue(label: "com.kyzdes.keys-keeper.bridge")
-    private var buffer = Data()
+    private let deliveries = BridgeMessageDeliveryBudget()
+    private let stopLock = NSLock()
+    private var framer = BridgeMessageFramer()
+    private var stopping = false
     var receive: (([String: Any]) -> Void)?
     var stopped: (() -> Void)?
 
@@ -83,14 +87,20 @@ final class Bridge {
             let data = handle.availableData
             guard let self = self else { return }
             if data.isEmpty { handle.readabilityHandler = nil; return }
-            self.queue.async {
-                self.buffer.append(data)
-                while let end = self.buffer.firstIndex(of: 10) {
-                    let line = self.buffer.prefix(upTo: end)
-                    self.buffer.removeSubrange(...end)
-                    if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
-                        DispatchQueue.main.async { self.receive?(message) }
+            // Backpressure prevents an unbounded queue of output chunks.
+            self.queue.sync {
+                do {
+                    try self.framer.append(data) { line in
+                        if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                            try self.deliveries.reserve()
+                            DispatchQueue.main.async {
+                                defer { self.deliveries.complete() }
+                                self.receive?(message)
+                            }
+                        }
                     }
+                } catch {
+                    self.cancel(graceful: false)
                 }
             }
         }
@@ -111,12 +121,24 @@ final class Bridge {
 
     func stop() {
         stopped = nil
+        cancel(graceful: true)
+    }
+
+    private func cancel(graceful: Bool) {
+        stopLock.lock()
+        guard !stopping else { stopLock.unlock(); return }
+        stopping = true
+        stopLock.unlock()
         output.fileHandleForReading.readabilityHandler = nil
-        send("quit")
+        if graceful { send("quit") }
+        else if process.isRunning { process.terminate() }
         try? input.fileHandleForWriting.close()
         let child = process
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             if child.isRunning { child.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 4) {
+            if child.isRunning { Darwin.kill(child.processIdentifier, SIGKILL) }
         }
     }
 }
@@ -591,8 +613,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 }
 
-let application = NSApplication.shared
-let appDelegate = AppDelegate()
-application.delegate = appDelegate
-application.setActivationPolicy(.accessory)
-application.run()
+@main
+struct KeysKeeperApplication {
+    static func main() {
+        let application = NSApplication.shared
+        let appDelegate = AppDelegate()
+        application.delegate = appDelegate
+        application.setActivationPolicy(.accessory)
+        application.run()
+    }
+}
