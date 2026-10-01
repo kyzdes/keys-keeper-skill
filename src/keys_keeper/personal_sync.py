@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from keys_keeper import pairing, project_protocol as wire
 from keys_keeper.backend import Sealed
+from keys_keeper.auto_schedule import DAILY_INTERVAL
 from keys_keeper.composition import AccessContext
 from keys_keeper.models import EntryType, now_iso
 from keys_keeper.operation_journal import _atomic_write_bytes, profile_lock
@@ -393,19 +394,29 @@ class PersonalSync:
         _atomic_write_bytes(self.paths.root / "personal-sync-startup.json", json.dumps(result).encode())
         return result
 
-    def watch(self, *, interval=60, cycles=0, sleep=time.sleep):
-        if not 5 <= interval <= 3600 or cycles < 0:
+    def watch(self, *, interval=DAILY_INTERVAL, cycles=0, sleep=time.sleep, clock=time.time):
+        """Attempt automatic personal sync once per rolling day; manual Sync is immediate."""
+        if type(interval) is not int or not 5 <= interval <= DAILY_INTERVAL or type(cycles) is not int or cycles < 0:
             raise RuntimeErrorSafe("Invalid synchronization interval")
         cycle = 0
         while cycles == 0 or cycle < cycles:
             settings = read_settings(self.paths)
             if settings is None or not settings["auto"]:
                 break
+            next_due = clock() + DAILY_INTERVAL
             try:
-                self.sync()
+                # Settings and registry are routing metadata. Do not use
+                # status() or state.load() merely to check whether work is due.
+                runtime = self.runtime()
+                item = runtime.registry.resolve(settings["scope_id"])
+                if item is None:
+                    raise RuntimeErrorSafe("Personal sync setup is incomplete")
+                claimed, next_due = runtime._claim_auto_sync(item, clock())
+                if claimed:
+                    self.sync()
             except Exception:
-                pass  # sync persists a fixed public error; never print payloads.
+                pass  # Invalid schedules and failures never cause short retries.
             cycle += 1
             if cycles == 0 or cycle < cycles:
-                sleep(interval)
+                sleep(max(interval, next_due - clock()))
         return {"cycles": cycle}

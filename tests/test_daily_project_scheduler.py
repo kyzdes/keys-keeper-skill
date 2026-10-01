@@ -47,7 +47,8 @@ def test_attempt_is_durable_before_child_starts(scheduler, tmp_path, monkeypatch
     assert scheduler.run_daily(tmp_path, JOB, COMMAND, clock=lambda: 1000) == ("synced", 0)
 
 
-@pytest.mark.parametrize("content", ["broken", '{"last_attempt":true}', '{"last_attempt":NaN}', '{}'])
+@pytest.mark.parametrize("content", ["broken", '{"last_attempt":true}', '{"last_attempt":NaN}', '{}',
+                                     '{"last_attempt":1000,"last_attempt":0}'])
 def test_corrupt_timestamp_fails_closed(scheduler, tmp_path, monkeypatch, content):
     stamp = tmp_path / (JOB + ".json")
     stamp.write_text(content)

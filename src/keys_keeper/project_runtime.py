@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from keys_keeper import project_protocol as wire
 from keys_keeper.audit import AuditLog
+from keys_keeper.auto_schedule import AutoScheduleError, claim_auto_sync
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.models import Entry, now_iso
@@ -661,27 +662,11 @@ class ProjectRuntime:
         cannot trigger another expensive attempt that day. Manual ``sync`` does
         not use this guard. An invalid marker fails closed instead of retrying.
         """
-        if not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now) or now < 0:
-            raise RuntimeErrorSafe("invalid automatic synchronization clock")
         schedule = Paths(self.paths.root / "project-watch-schedule" / _uuid(item["id"]))
-        marker = schedule.root / "last-attempt.json"
-        with profile_lock(schedule):
-            try:
-                saved = _json_read(marker, 4096)
-            except FileNotFoundError:
-                pass
-            else:
-                if (not isinstance(saved, dict) or set(saved) != {"schema_version", "last_attempt"}
-                        or type(saved["schema_version"]) is not int or saved["schema_version"] != 1
-                        or type(saved["last_attempt"]) not in {int, float}
-                        or not math.isfinite(saved["last_attempt"]) or saved["last_attempt"] < 0):
-                    raise RuntimeErrorSafe("invalid automatic synchronization schedule")
-                due = saved["last_attempt"] + _AUTO_SYNC_INTERVAL
-                if now < due:
-                    return False, due
-            _atomic_write_bytes(marker, json.dumps({"schema_version": 1, "last_attempt": now},
-                                                   sort_keys=True).encode())
-            return True, now + _AUTO_SYNC_INTERVAL
+        try:
+            return claim_auto_sync(schedule, now)
+        except AutoScheduleError as ex:
+            raise RuntimeErrorSafe(str(ex)) from None
 
     def watch(self, selector, *, interval=_AUTO_SYNC_INTERVAL, cycles=0,
               report=lambda result: None, sleep=time.sleep, clock=time.time):

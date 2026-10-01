@@ -39,7 +39,8 @@ def register(sub):
         item.add_argument("--home", help="explicit local vault directory")
         item.set_defaults(func=command)
         if name == "watch":
-            item.add_argument("--interval", type=int, default=60)
+            item.add_argument("--interval", type=int, default=86400,
+                              help="minimum sleep in seconds; automatic work is limited to once per 24 hours")
             item.add_argument("--cycles", type=int, default=0)
         elif name == "setup":
             item.add_argument("--endpoint", required=True)

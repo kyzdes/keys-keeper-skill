@@ -33,6 +33,15 @@ def _private_directory(root: Path) -> None:
         raise ValueError("scheduler directory must be private")
 
 
+def _unique_fields(items):
+    data = {}
+    for key, value in items:
+        if key in data:
+            raise ValueError("duplicate scheduler timestamp field")
+        data[key] = value
+    return data
+
+
 def _last_attempt(path: Path) -> float | None:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -43,7 +52,7 @@ def _last_attempt(path: Path) -> float | None:
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > 256):
             raise ValueError("invalid scheduler timestamp")
-        data = json.loads(stream.read(257))
+        data = json.loads(stream.read(257), object_pairs_hook=_unique_fields)
     if not isinstance(data, dict) or set(data) != {"last_attempt"}:
         raise ValueError("invalid scheduler timestamp")
     value = data["last_attempt"]

@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
 
 import pytest
 
@@ -277,3 +278,124 @@ def test_parallel_join_reuses_one_local_device(tmp_path, personal):
     assert results[0] == results[1]
     assert len(list((paths.root / "personal-replicas").iterdir())) == 1
     assert len(manager.pending()) == 1
+
+
+def _daily_personal(tmp_path, *, role="master", status="active"):
+    paths = Paths(tmp_path)
+    scope_id, profile_id = str(uuid4()), str(uuid4())
+    replica_id = str(uuid4()) if role == "replica" else None
+    settings = {"version": 1, "role": role, "scope_id": scope_id,
+                "endpoint": "https://relay.example", "auto": True,
+                "name": "Synthetic daily computer", "replica_id": replica_id}
+    from keys_keeper.operation_journal import _atomic_write_bytes
+    _atomic_write_bytes(paths.root / "personal-sync.json", json.dumps(settings).encode())
+    runtime_paths = Paths(paths.root / "personal-replicas" / replica_id) if replica_id else paths
+    runtime = ProjectRuntime(runtime_paths, backend_factory=lambda: pytest.fail("daily check unlocked backend"))
+    item = {"id": profile_id if role == "replica" else scope_id,
+            "kind": "replica" if role == "replica" else "master_scope",
+            "scope_id": scope_id, "vault_id": str(uuid4()), "device_id": str(uuid4()),
+            "project": "daily-personal", "environment": "personal",
+            "endpoint": settings["endpoint"], "status": status}
+    runtime.registry.put(item)
+    return PersonalSync(paths, runtime), runtime, item
+
+
+def test_personal_daily_watch_legacy_interval_sleeps_a_day(tmp_path, monkeypatch):
+    manager, runtime, item = _daily_personal(tmp_path)
+    attempts, sleeps, current = [], [], [1000.0]
+    monkeypatch.setattr(manager, "sync", lambda: attempts.append(current[0]))
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    manager.watch(interval=60, cycles=3, sleep=advance, clock=lambda: current[0])
+    assert attempts == [1000, 87400, 173800]
+    assert sleeps == [86400, 86400]
+
+
+@pytest.mark.parametrize("role", ["master", "replica"])
+def test_personal_daily_watch_restart_and_deferred_checks_use_metadata_only(tmp_path, monkeypatch, role):
+    manager, runtime, item = _daily_personal(tmp_path, role=role)
+    attempts = []
+    monkeypatch.setattr(manager, "sync", lambda: attempts.append("first"))
+    manager.watch(cycles=1, clock=lambda: 1000.5)
+    restarted = PersonalSync(manager.paths)
+    monkeypatch.setattr(restarted, "sync", lambda: attempts.append("second"))
+    monkeypatch.setattr(restarted, "_configured", lambda **_kwargs: pytest.fail("deferred check requested configured state"))
+    monkeypatch.setattr(ProjectRuntime, "state", lambda *_args: pytest.fail("deferred check decrypted state"))
+    marker = runtime.paths.root / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    before = marker.read_bytes()
+    restarted.watch(interval=5, cycles=1, clock=lambda: 87400.4)
+    assert attempts == ["first"]
+    assert marker.read_bytes() == before
+    restarted.watch(interval=5, cycles=1, clock=lambda: 87400.5)
+    assert attempts == ["first", "second"]
+
+
+def test_personal_daily_watch_parallel_workers_claim_once(tmp_path, monkeypatch):
+    manager, runtime, item = _daily_personal(tmp_path)
+    other = PersonalSync(manager.paths)
+    attempts = []
+    for worker in (manager, other):
+        monkeypatch.setattr(worker, "sync", lambda: attempts.append("sync"))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda worker: worker.watch(cycles=1, clock=lambda: 1000), [manager, other]))
+    assert attempts == ["sync"]
+
+
+def test_personal_daily_watch_failures_are_claimed(tmp_path, monkeypatch):
+    manager, runtime, item = _daily_personal(tmp_path, status="pending")
+    attempts, sleeps = [], []
+
+    def fail():
+        attempts.append("sync")
+        raise ConnectionError("synthetic failure")
+
+    monkeypatch.setattr(manager, "sync", fail)
+    manager.watch(interval=60, cycles=2, clock=lambda: 1000, sleep=sleeps.append)
+    assert attempts == ["sync"]
+    assert sleeps == [86400]
+    restarted = PersonalSync(manager.paths)
+    monkeypatch.setattr(restarted, "sync", fail)
+    restarted.watch(cycles=1, clock=lambda: 2000)
+    assert attempts == ["sync"]
+
+
+def test_personal_manual_sync_remains_immediate_after_daily_attempt(personal, monkeypatch):
+    manager, runtime, *_ = personal
+    manager.watch(cycles=1, clock=lambda: 1000)
+    monkeypatch.setattr(runtime, "_claim_auto_sync", lambda *_args: pytest.fail("manual Sync checked daily guard"))
+    for _ in range(2):
+        assert manager.sync()["publish"]["status"] == "unchanged"
+
+
+def test_personal_daily_watch_invalid_marker_never_runs_work(tmp_path, monkeypatch):
+    manager, runtime, item = _daily_personal(tmp_path)
+    runtime._claim_auto_sync(item, 1000)
+    marker = runtime.paths.root / "project-watch-schedule" / item["id"] / "last-attempt.json"
+    marker.write_bytes(b"null")
+    monkeypatch.setattr(manager, "sync", lambda: pytest.fail("corrupt schedule authorized work"))
+    manager.watch(cycles=1, clock=lambda: 999999)
+    assert marker.read_bytes() == b"null"
+
+
+def test_personal_daily_watch_preserves_disabled_auto_and_settings(tmp_path, monkeypatch):
+    manager, runtime, item = _daily_personal(tmp_path)
+    path = manager.paths.root / "personal-sync.json"
+    settings = read_settings(manager.paths)
+    settings["auto"] = False
+    path.write_text(json.dumps(settings))
+    before = path.read_bytes()
+    monkeypatch.setattr(manager, "sync", lambda: pytest.fail("disabled auto ran sync"))
+    assert manager.watch(cycles=1) == {"cycles": 0}
+    assert path.read_bytes() == before
+    assert not (runtime.paths.root / "project-watch-schedule").exists()
+
+
+def test_personal_watch_cli_defaults_daily_and_accepts_legacy_interval():
+    from keys_keeper.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["devices", "watch"]).interval == 86400
+    assert parser.parse_args(["devices", "watch", "--interval", "60"]).interval == 60

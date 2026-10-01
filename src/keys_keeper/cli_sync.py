@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from keys_keeper.audit import AuditLog
+from keys_keeper.auto_schedule import DAILY_INTERVAL, claim_auto_sync
 from keys_keeper.backend import KeychainError
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.config import (
@@ -28,6 +31,8 @@ from keys_keeper.config import (
 from keys_keeper.crypto import BadPassword
 from keys_keeper.models import now_iso
 from keys_keeper.paths import Paths
+from keys_keeper.operation_journal import _atomic_write_bytes, profile_lock
+from keys_keeper.project_runtime import _json_read
 from keys_keeper.service import compensating_secret_update
 from keys_keeper.store import MetadataStore
 from keys_keeper.sync import SyncEngine
@@ -44,7 +49,15 @@ SYNC_ACCESS = "kk:sync-s3-access-key-id"
 SYNC_SECRET = "kk:sync-s3-secret-key"
 SYNC_PASS = "kk:sync-passphrase"
 
-_DEBOUNCE_SEC = int(os.environ.get("KEYS_KEEPER_SYNC_DEBOUNCE_SEC", "600"))
+def _auto_debounce_seconds():
+    try:
+        configured = int(os.environ.get("KEYS_KEEPER_SYNC_DEBOUNCE_SEC", str(DAILY_INTERVAL)))
+    except ValueError:
+        configured = DAILY_INTERVAL
+    return max(DAILY_INTERVAL, configured)
+
+
+_DEBOUNCE_SEC = _auto_debounce_seconds()
 
 # Zero-knowledge sync reduces the security of the whole cloud copy to the
 # entropy of this one passphrase, so we refuse to let a user pick a trivially
@@ -243,13 +256,17 @@ def cmd_sync_rollback(args: argparse.Namespace) -> int:
 # ---------------- auto (SessionStart hook) ----------------
 
 def cmd_sync_auto(args: argparse.Namespace) -> int:
-    """Hook entrypoint. ALWAYS exits 0. Does nothing unless mode == auto."""
+    """Daily hook entrypoint; --force is an explicit manual/worker override."""
     try:
         paths = Paths()
         cfg = load_sync_config(paths)
         if cfg.mode != "auto":
             return 0
         if not args.force and _auto_debounced(paths):
+            return 0
+        claimed, _due = claim_auto_sync(Paths(paths.root / "sync-auto-schedule"), time.time(),
+                                        interval=max(DAILY_INTERVAL, _DEBOUNCE_SEC), force=args.force)
+        if not claimed:
             return 0
         # Stamp at ATTEMPT time (before the work): a per-session-start hook should
         # throttle by attempt, not by success — otherwise a flapping endpoint would
@@ -292,32 +309,34 @@ def _spawn_worker() -> None:
 
 
 def _auto_debounced(paths: Paths) -> bool:
-    import json
     try:
-        state = json.loads(paths.sync_state_json.read_text())
-        last = datetime.strptime(state["last_auto_at"], "%Y-%m-%dT%H:%M:%SZ")
-    except (OSError, ValueError, KeyError):
+        state = _json_read(paths.sync_state_json, 1024 * 1024)
+    except FileNotFoundError:
         return False
+    except Exception:
+        return True  # Corrupt or unsafe timing metadata does not authorize work.
+    if not isinstance(state, dict):
+        return True
+    if "last_auto_at" not in state:
+        return False
+    try:
+        last = datetime.strptime(state["last_auto_at"], "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return True
     age = (datetime.now(timezone.utc) - last.replace(tzinfo=timezone.utc)).total_seconds()
-    return age < _DEBOUNCE_SEC
+    return age < max(DAILY_INTERVAL, _DEBOUNCE_SEC)
 
 
 def _touch_auto_stamp(paths: Paths) -> None:
-    import json
-    paths.ensure()
-    try:
-        state = json.loads(paths.sync_state_json.read_text())
-    except (OSError, ValueError):
-        state = {}
-    state["last_auto_at"] = now_iso()
-    try:
-        paths.sync_state_json.write_text(json.dumps(state))
+    with profile_lock(Paths(paths.root / "sync-auto-status")):
         try:
-            os.chmod(paths.sync_state_json, 0o600)  # S11 (no-op on Windows)
-        except OSError:
-            pass
-    except OSError:
-        pass
+            state = _json_read(paths.sync_state_json, 1024 * 1024)
+        except FileNotFoundError:
+            state = {}
+        if not isinstance(state, dict):
+            raise ValueError("invalid sync timing metadata")
+        state["last_auto_at"] = now_iso()
+        _atomic_write_bytes(paths.sync_state_json, json.dumps(state).encode())
 
 
 def _auto_log(paths: Paths, msg: str) -> None:
@@ -466,5 +485,6 @@ def register_sync(sub) -> None:
 
     auto = ss.add_parser("auto", help="(hook) auto-sync if enabled; always exits 0")
     auto.add_argument("--foreground", action="store_true")
-    auto.add_argument("--force", action="store_true", help="ignore the debounce window")
+    auto.add_argument("--force", action="store_true",
+                      help="explicit manual sync override; also used by the already claimed background worker")
     auto.set_defaults(func=cmd_sync_auto)

@@ -113,7 +113,7 @@
       const result = await api('auto', {enabled: auto.checked});
       await refresh(); startupMessage(result);
     }, auto);
-    actions.append(field('Automatic sync every minute', auto));
+    actions.append(field('Automatic sync once per day', auto));
     if (value.auto && value.background?.autostart !== true) actions.append(button('Retry background sync', async () => {
       const result = await api('auto', {enabled: true}); await refresh(); startupMessage(result);
     }));

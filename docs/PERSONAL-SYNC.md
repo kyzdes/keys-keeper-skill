@@ -35,11 +35,11 @@ Download and run `scripts/install-windows.ps1` in PowerShell. It finds Python
 dedicated virtual environment under `%LOCALAPPDATA%\KeysKeeper`, adds only a
 `keys` wrapper to the user PATH, installs a Start Menu shortcut and opens the
 local app. It does not require Git, SSH, administrator rights or any vault token.
-The default download source is the personal-sync development branch until this
-feature is released; `-Source` accepts a reviewed archive URL or local checkout.
+The default download source is the reviewed `v0.10.0` release;
+`-Source` accepts another reviewed archive URL or local checkout.
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/codex/personal-vps-sync/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
+Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/v0.10.0/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\install-keys-keeper.ps1"
 ```
 
@@ -51,7 +51,9 @@ use **Settings → My computers → Connect this computer**.
 Setup enables a job for the signed-in OS user: LaunchAgent on macOS, Task
 Scheduler with `InteractiveToken` on Windows, or a systemd user unit on Linux.
 The job uses the same installed Python runtime and vault directory and runs
-every minute without authorization dialogs. It works independently of the
+at most once per rolling 24 hours without authorization dialogs. An attempt
+consumes the daily slot even if it fails; restarting the process does not reset
+that limit. **Sync now** and `keys devices sync` run immediately. It works independently of the
 Settings window. If the OS cannot install/start the job, Settings shows the
 failure and **Retry background sync**; the UI never treats that as success.
 

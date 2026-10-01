@@ -31,6 +31,13 @@ attempt counts against the daily limit; invalid timing metadata fails closed.
 Deferred cycles do not decrypt project state. Manual sync bypasses this
 automatic scheduling guard.
 
+Personal-device watchers use the same metadata-only claim without changing
+their configured auto-sync setting or recipients. Legacy S3 SessionStart sync
+uses a separate claim and an interval of at least 24 hours, even if an older
+environment setting requests less. Its explicit `sync auto --force` remains a
+manual override and the handoff for an already claimed detached worker. Manual
+project/device Sync and S3 push/pull remain immediate.
+
 ## macOS one-shot scheduler
 
 `scripts/daily-project-sync.py` is a standard-library launcher usable with an
