@@ -6,9 +6,9 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.10.1 · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.11.0 · macOS + Windows + Linux · local-first · MIT license
 
-v0.10.1 removes idle Settings polling and repeated activity-log parsing,
+v0.11.0 removes idle Settings polling and repeated activity-log parsing,
 shares daily limits across project auto triggers, and bounds automatic workers.
 Manual Sync and refresh remain immediate.
 
@@ -60,7 +60,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.10.1'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.0'
 keys doctor                                            # smoke check
 ```
 

@@ -1,0 +1,19 @@
+[run]
+branch = True
+source = src/keys_keeper
+relative_files = True
+# pytest-cov 7 delegates child-process collection to Coverage.py. Flush normal
+# Python children and explicit os._exit calls; SIGKILL cannot produce coverage.
+patch =
+    subprocess
+    _exit
+
+[paths]
+source =
+    src/keys_keeper
+    */src/keys_keeper
+    *\src\keys_keeper
+
+[report]
+precision = 2
+show_missing = True
