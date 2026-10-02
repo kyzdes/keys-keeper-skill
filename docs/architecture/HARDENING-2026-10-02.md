@@ -34,6 +34,12 @@ flowchart TD
 больше не используют CLI как application layer. Новый framework, dependency,
 сетевой протокол или формат metadata не добавлялся.
 
+`service.py` сокращён с 411 до 177 физических строк, `cli_sync.py` — с 486 до
+221, `secure_io.py` — со 175 до 75. Application-функции синхронизации перенесены
+в `sync_application.py`; общий IO и Windows DACL добавляют необходимые проверки.
+Главное сокращение — один алгоритм обычной mutation и меньше допустимых
+неоднозначных режимов ввода.
+
 Скоуп функций намеренно ограничен:
 
 - `inject` принимает однозначное однострочное literal dotenv значение.
@@ -103,8 +109,28 @@ Focused suites проверяют fake backend, изолированный encry
 resource ceilings и file conflicts. Windows native DACL tests входят в OS CI
 matrix; локальный macOS прогон не доказывает их исполнение на Windows.
 
-Итоговый полный прогон, упаковка и CI точного финального коммита будут записаны
-в verification manifest рядом с этим отчётом после завершения интеграции.
+Полный локальный прогон: **1852 passed, 25 skipped, 4 subtests passed**, ошибок
+нет; 1877 collected cases, 681,22 с. Среда: macOS, Python 3.12.11, pytest 9.1.1,
+cryptography 48.0.1. Пропуски включают Windows-specific checks, четыре live
+Secret Service case и два native clipboard case с выключенным opt-in.
+
+Wheel построен и установлен в чистое временное окружение. Проверены импорт из
+установленного пакета, CLI surface, генерация skill и совпадение payload в
+обеих упаковках. Canonical prose, UI tokens, compileall и diff whitespace
+checks проходят. Отдельный updater прогон: 28 passed.
+
+Project idle benchmark: 6 scopes × 3 cycles, 0 journal writes, 0 изменённых
+encrypted files, 6 cold KDF derivations. Результат характеризует синтетический
+idle workload; физическое энергопотребление не измерялось.
+
+Локальные результаты, версии, SHA исходного кода, fingerprint 285 validation
+files и checksum wheel сохранены в [verification.json](hardening-evidence-2026-10-02/verification.json).
+Платформенное исполнение, native Windows DACL, Linux Secret Service, macOS build
+и combined coverage подтверждаются отдельными
+[GitHub Checks draft PR №21](https://github.com/kyzdes/keys-keeper-skill/pull/21/checks).
+Checks привязаны к SHA PR head; изменение только этого отчёта не меняет
+validation-tree fingerprint. Окончательные результаты CI также фиксируются
+в [описании PR](https://github.com/kyzdes/keys-keeper-skill/pull/21).
 
 При ранних локальных прогонах старые clipboard integration tests записали
 синтетические значения в системный clipboard. Ordinary pytest теперь всегда

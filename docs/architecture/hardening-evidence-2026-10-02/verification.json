@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-02",
+  "baseline_commit": "36df576ba403437d6352add265232bc01601cbae",
+  "validated_code_commit": "26c1cd0245e545f426363648d8c0e91b59a671b9",
+  "branch": "codex/simplify-and-harden",
+  "unreleased": true,
+  "installed_or_deployed": false,
+  "validation_tree": {
+    "sha256": "9bde2f3d08f385c27dceb5fa5bf5223ae72d9008f96ff0318df908b51cc56883",
+    "file_count": 285,
+    "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
+    "selection": [
+      "src",
+      "tests",
+      "scripts",
+      ".github/workflows",
+      "skills",
+      "plugins",
+      "pyproject.toml",
+      "README.md",
+      "CHANGELOG.md",
+      ".claude-plugin"
+    ]
+  },
+  "local_full_suite": {
+    "platform": "darwin",
+    "python": "3.12.11",
+    "pytest": "9.1.1",
+    "cryptography": "48.0.1",
+    "passed": 1852,
+    "skipped": 25,
+    "failed": 0,
+    "errors": 0,
+    "collected": 1877,
+    "subtests_passed": 4,
+    "session_seconds": 681.0679,
+    "exit_status": 0,
+    "skip_reasons": {
+      "real Win32 supervisor Job Object": 3,
+      "no Secret Service daemon available": 4,
+      "Windows-only test": 14,
+      "native clipboard test requires explicit KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=1": 2,
+      "APPDATA path is Windows-only": 1,
+      "requires real Windows DACL APIs": 1
+    },
+    "command": "KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=0 PYTHONPATH=src .venv/bin/python -m pytest -q -o addopts='' --test-metrics=... --junitxml=...",
+    "isolation": "Synthetic fixture roots under project .pytest_cache; temporary test Keychains; fake clipboard; isolated global KEYS_KEEPER_HOME"
+  },
+  "wheel": {
+    "version": "0.11.1",
+    "sha256": "484612a984fd7d1beaa4e0776201c6a38b5fce28df0e3b8744abd202df9850df",
+    "built": true,
+    "installed_artifact_smoke": "passed",
+    "canonical_skill_parity": "passed",
+    "generated_ui_tokens": "passed",
+    "user_installation_modified": false
+  },
+  "updater_standalone": {
+    "passed": 28,
+    "result": "OK"
+  },
+  "project_idle": {
+    "all_results_idle": true,
+    "cpu_seconds": 1.33984,
+    "cycles": 3,
+    "encrypted_files_changed": 0,
+    "journal_record_writes": 0,
+    "kdf_derivations": 6,
+    "retain_state": true,
+    "scope_cycles": 18,
+    "scopes": 6,
+    "wall_seconds": 1.362767
+  },
+  "ci_evidence": {
+    "authority": "GitHub check runs for the pull request head; results are retained separately from this local receipt",
+    "pull_request": "https://github.com/kyzdes/keys-keeper-skill/pull/21",
+    "checks": "https://github.com/kyzdes/keys-keeper-skill/pull/21/checks",
+    "required_jobs": [
+      "macos-latest · py3.12",
+      "windows-latest · py3.12",
+      "ubuntu-latest · py3.10",
+      "ubuntu-latest · py3.12",
+      "ubuntu-latest · py3.14",
+      "coverage · full matrix",
+      "wheel · generated payload",
+      "updater (ubuntu-latest, 3.9)",
+      "updater (macos-latest, 3.12)",
+      "updater (windows-latest, 3.12)"
+    ],
+    "windows_native_acl_cases": 6,
+    "local_windows_execution": false
+  },
+  "limits": [
+    "No installed or production validation",
+    "Local macOS results do not establish Windows ACL or Linux Secret Service execution; use CI evidence",
+    "Hard process kill during S3 credential bootstrap may require explicit setup again",
+    "Early legacy tests replaced the operator clipboard with synthetic values; ordinary tests now isolate clipboard"
+  ]
+}
