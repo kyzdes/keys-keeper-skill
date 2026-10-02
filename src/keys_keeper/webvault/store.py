@@ -23,7 +23,9 @@ from dataclasses import dataclass
 from hashlib import scrypt
 from pathlib import Path
 
-from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
+from keys_keeper.private_files import (
+    PrivateFileError, atomic_write_bytes as _atomic_write_bytes, secure_read as _secure_read,
+)
 
 # scrypt work factors (n*r*128 bytes ≈ 16 MiB at these settings).
 _SCRYPT_N = 16384
@@ -107,7 +109,7 @@ class AccountStore:
             if not self._initialized:
                 return {"accounts": {}}
             raise AccountStoreError("account registry unavailable") from None
-        except (JournalError, OSError):
+        except (PrivateFileError, OSError):
             raise AccountStoreError("account registry unavailable") from None
         try:
             def pairs(items):
@@ -134,7 +136,7 @@ class AccountStore:
             if len(encoded) > _MAX_ACCOUNTS_BYTES:
                 raise AccountStoreError("account registry capacity exceeded")
             _atomic_write_bytes(self.path, encoded)
-        except (JournalError, OSError):
+        except (PrivateFileError, OSError):
             raise AccountStoreError("account registry unavailable") from None
         self._initialized = True
 

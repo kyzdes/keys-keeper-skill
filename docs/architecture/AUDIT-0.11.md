@@ -68,7 +68,11 @@ catalog updater helper remains unchanged.
 10. Metadata, configuration, pointers, generations and legacy S3 anti-rollback
     state had inconsistent read/write limits. Bounds apply before crypto or
     payload writes; malformed existing state is not treated as empty, and
-    failed atomic persistence remains a failure.
+    failed atomic persistence remains a failure. Legacy migration publishes
+    its first exact-byte backup atomically without replacement; symlinks,
+    special files and excessive input fail before migration writes. Durable
+    file IO stays independent of crypto so the WebVault server cannot import
+    client decryption through its registry storage.
 11. Native stdio and main-thread callbacks could queue indefinitely. Commands,
     reply lines and undelivered replies are capped. Protocol failure uses normal
     TERM/KILL escalation. UI clipboard copies share one sleeping worker; native

@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from unittest.mock import Mock
 
 import pytest
 
@@ -49,14 +50,30 @@ def test_v1_preflight_rejects_no_body_requests_immediately(tmp_path, path, heade
 
 @pytest.mark.parametrize("kind", ["sync", "webvault"])
 @pytest.mark.parametrize("part", ["headers", "body"])
-def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, kind, part):
+def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, monkeypatch, kind, part):
+    app_work = Mock(side_effect=AssertionError("incomplete input reached application work"))
     if kind == "sync":
-        server = create_http_server(SyncServerApp(tmp_path / "relay.sqlite3", "synthetic-admin"))
+        app = SyncServerApp(tmp_path / "relay.sqlite3", "synthetic-admin")
+        monkeypatch.setattr(app, "create_vault", app_work)
+        server = create_http_server(app)
         path, auth = "/v1/vaults", b"Authorization: Bearer synthetic-admin\r\n"
     else:
-        server = WebVaultServer(data_dir=tmp_path / "web", port=0).create_http_server()
+        app = WebVaultServer(data_dir=tmp_path / "web", port=0)
+        monkeypatch.setattr(app.accounts, "get", app_work)
+        server = app.create_http_server()
         path, auth = "/auth/params", b""
     server.request_timeout = .2
+    handler_done = threading.Event()
+    process_request_thread = server.process_request_thread
+
+    def track_handler(*args):
+        try:
+            process_request_thread(*args)
+        finally:
+            # The original method has already released its admission slot.
+            handler_done.set()
+
+    monkeypatch.setattr(server, "process_request_thread", track_handler)
     with listener(server), socket.create_connection(server.server_address, timeout=1) as peer:
         prefix = (f"POST {path} HTTP/1.1\r\nHost: synthetic\r\n".encode() + auth)
         if part == "body":
@@ -65,25 +82,29 @@ def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, kind, pa
             prefix += b"X-Drip: "
         peer.sendall(prefix)
         started = time.monotonic()
-        for _ in range(15):
+        # Continue sending faster than the socket timeout until the absolute
+        # deadline ends this handler. An idle-only timeout cannot satisfy this.
+        while not handler_done.is_set() and time.monotonic() - started < .8:
             try:
                 peer.sendall(b"a")
             except OSError:
                 break
             time.sleep(.03)
+        assert handler_done.wait(.1), "handler survived continuously dripping input"
         received = b""
         while True:
             try:
                 chunk = peer.recv(1024)
-            except ConnectionResetError:
-                # An unread request can close with TCP RST; both RST and EOF
-                # prove the admitted handler stopped, unlike a read timeout.
+            except (ConnectionResetError, ConnectionAbortedError):
+                # Unread input can close with RST or Windows WSAECONNABORTED;
+                # both are closure, unlike a read timeout (which still fails).
                 break
             if not chunk:
                 break
             received += chunk
         assert time.monotonic() - started < 1
         assert b"201 Created" not in received and b"200 OK" not in received
+        app_work.assert_not_called()
         connection = http.client.HTTPConnection(*server.server_address, timeout=1)
         try:
             connection.request("GET", "/healthz")

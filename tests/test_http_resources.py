@@ -4,11 +4,13 @@ import threading
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler
+from types import SimpleNamespace
 
 import pytest
 
 from keys_keeper.http_resources import BoundedThreadingHTTPServer, RequestDeadlineMixin
 from keys_keeper.paths import Paths
+from keys_keeper import server as admin_module
 from keys_keeper.server import AdminServer
 
 
@@ -72,6 +74,52 @@ def test_excess_connections_never_create_another_handler_and_capacity_returns():
         finally:
             for peer in peers:
                 peer.close()
+
+
+def test_handler_thread_start_failure_rolls_back_socket_and_slot_before_next_request(monkeypatch):
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler,
+                                       max_workers=1, request_timeout=1)
+    serving = None
+    attempted = []
+    try:
+        # Accept manually so the injected resource failure is asserted directly,
+        # before a serve_forever loop could report/consume its exception.
+        with connect(server) as rejected:
+            accepted, address = server.socket.accept()
+            def cannot_start(thread):
+                attempted.append(thread)
+                assert accepted in server._connections
+                assert not server._capacity.acquire(blocking=False)
+                raise RuntimeError("synthetic thread resource exhaustion")
+            with monkeypatch.context() as failure:
+                failure.setattr(threading.Thread, 'start', cannot_start)
+                with pytest.raises(RuntimeError, match="synthetic thread resource exhaustion"):
+                    server.process_request(accepted, address)
+            assert len(attempted) == 1 and not attempted[0].is_alive()
+            assert accepted.fileno() == -1
+            assert rejected.recv(1) == b''
+            assert not server._connections
+            assert server._capacity.acquire(blocking=False)
+            server._capacity.release()
+
+        candidate = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01})
+        candidate.start()
+        serving = candidate
+        with connect(server) as normal:
+            normal.sendall(b'GET / HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n')
+            response = b''
+            while chunk := normal.recv(1024):
+                response += chunk
+            assert response.startswith(b'HTTP/1.1 200 ')
+            assert response.endswith(b'\r\n\r\nok')
+        wait_for(lambda: not server._connections)
+    finally:
+        if serving is not None:
+            server.shutdown()
+        server.server_close()
+        if serving is not None:
+            serving.join(2)
+            assert not serving.is_alive()
 
 
 @pytest.mark.parametrize('prefix', [b'GET / HTTP/1.1\r\nX-Slow: ',
@@ -138,15 +186,18 @@ def test_admin_rejects_duplicate_length_and_short_body_before_dispatch(admin):
     assert b'200' in raw_request(admin, 'Content-Length: 2', b'{}')
 
 
-def test_unauthenticated_and_public_static_requests_do_not_extend_idle_lifetime(admin):
+def test_unauthenticated_and_public_static_requests_do_not_extend_idle_lifetime(admin, monkeypatch):
     before = admin.last_seen
+    # Assert which requests refresh activity independently of OS timer resolution.
+    # Replace this module's clock, leaving real socket/deadline clocks untouched.
+    monkeypatch.setattr(admin_module, 'time', SimpleNamespace(monotonic=lambda: before + 1))
     for path in ('/api/entries', '/static/bootstrap.js'):
         with socket.create_connection(('127.0.0.1', admin.bound_port), timeout=1) as peer:
             peer.sendall(f'GET {path} HTTP/1.0\r\n\r\n'.encode())
             peer.recv(4096)
     assert admin.last_seen == before
-    raw_request(admin, 'Content-Length: 2', b'{}')
-    assert admin.last_seen > before
+    assert b'200' in raw_request(admin, 'Content-Length: 2', b'{}')
+    assert admin.last_seen == before + 1
 
 
 def test_admin_stop_before_serve_is_prompt_and_closes_listener(tmp_path):

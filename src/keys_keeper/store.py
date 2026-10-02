@@ -14,6 +14,7 @@ from keys_keeper._locking import lock_exclusive, unlock
 from keys_keeper.models import Entry, ValidationError, now_iso, validate_tombstone
 from keys_keeper.project_models import CatalogState, CatalogValidationError, Folder, new_catalog_id
 from keys_keeper.paths import Paths, ensure_private_dir
+from keys_keeper.private_files import PrivateFileError, atomic_write_bytes
 from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
@@ -358,8 +359,22 @@ class MetadataStore:
             if current != SCHEMA_VERSION:
                 raise StoreError("catalog migration requires a supported legacy schema")
             backup = self.paths.root / f"data.v{SCHEMA_VERSION}.json.bak"
-            if self.paths.data_json.exists() and not backup.exists():
-                shutil.copy2(self.paths.data_json, backup)
+            try:
+                try:
+                    _secure_read(backup, max_bytes=_MAX_METADATA_BYTES, require_private=False)
+                except FileNotFoundError:
+                    try:
+                        original = _secure_read(self.paths.data_json, max_bytes=_MAX_METADATA_BYTES,
+                                                require_private=False)
+                    except FileNotFoundError:
+                        original = None
+                    if original is not None:
+                        try:
+                            atomic_write_bytes(backup, original, replace_existing=False)
+                        except FileExistsError:
+                            _secure_read(backup, max_bytes=_MAX_METADATA_BYTES, require_private=False)
+            except (JournalError, PrivateFileError, OSError):
+                raise StoreError("catalog migration backup unavailable or exceeds size limit") from None
             unsorted = Folder(id=new_catalog_id(), name="Unsorted", parent_id=None, position=0)
             for record in data["entries"]:
                 record["folder_id"] = unsorted.id
