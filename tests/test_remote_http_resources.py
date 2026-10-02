@@ -10,6 +10,7 @@ import pytest
 
 from keys_keeper.sync_server import SyncServerApp, create_http_server
 from keys_keeper.webvault.server import WebVaultServer
+from keys_keeper.webvault import server as webvault_module
 
 
 @contextmanager
@@ -126,3 +127,26 @@ def test_webvault_ambiguous_framing_closes_without_body(tmp_path, extra):
         while chunk := peer.recv(1024):
             received += chunk
         assert b"400 Bad Request" in received
+
+
+@pytest.mark.parametrize("phase", ["load_cert_chain", "wrap_socket"])
+def test_webvault_tls_configuration_failure_closes_all_bound_sockets(tmp_path, monkeypatch, phase):
+    owned = []
+    constructor = webvault_module.BoundedThreadingHTTPServer
+    failure = OSError("synthetic TLS configuration failure")
+    def capture_server(*args, **kwargs):
+        server = constructor(*args, **kwargs)
+        owned.append(server)
+        return server
+    context = Mock()
+    getattr(context, phase).side_effect = failure
+    monkeypatch.setattr(webvault_module, "BoundedThreadingHTTPServer", capture_server)
+    monkeypatch.setattr(webvault_module.ssl, "SSLContext", Mock(return_value=context))
+    app = WebVaultServer(data_dir=tmp_path / "web", port=0,
+                         certfile="synthetic.pem", keyfile="synthetic-key.pem")
+    with pytest.raises(OSError) as caught:
+        app.create_http_server()
+    assert caught.value is failure and len(owned) == 1
+    server = owned[0]
+    assert server.socket.fileno() == server._cancel_reader.fileno() == server._cancel_writer.fileno() == -1
+    assert not server._connections

@@ -187,12 +187,16 @@ class WebVaultServer:
         httpd = BoundedThreadingHTTPServer((self.host, self.port), _make_handler(self),
                                           max_workers=16, request_timeout=15)
         if self.certfile and self.keyfile:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(self.certfile, self.keyfile)
-            # Accepted TLS handshakes run in admitted handlers, where the
-            # cumulative input deadline applies, instead of blocking accept().
-            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True,
-                                          do_handshake_on_connect=False)
+            try:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(self.certfile, self.keyfile)
+                # Accepted TLS handshakes run in admitted handlers, where the
+                # cumulative input deadline applies, instead of blocking accept().
+                httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True,
+                                              do_handshake_on_connect=False)
+            except BaseException:
+                httpd.server_close()
+                raise
         return httpd
 
     def serve_forever(self) -> None:
