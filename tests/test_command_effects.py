@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from keys_keeper import cli, cli_devices, project_runtime
+from keys_keeper import cli, cli_devices, cli_sync_vps, project_runtime
 from keys_keeper.backend import SecretAccessDenied
 from keys_keeper.paths import Paths
 from keys_keeper.personal_sync import PersonalSync, _save_settings
@@ -70,6 +70,50 @@ def test_configured_devices_status_reads_unlock_material_and_stops_on_denial(tmp
     captured = capsys.readouterr()
     assert reads == ["kk:project-runtime-key"]
     assert "synthetic-private-provider-detail" not in captured.out + captured.err
+
+
+def test_vps_status_persists_fresh_verified_revocation_but_does_not_rewrite_unchanged_state(
+    tmp_path, monkeypatch, capsys,
+):
+    from test_sync_vps import two_devices
+    from keys_keeper.sync_protocol_v2 import canonical_json_bytes
+    from keys_keeper.sync_vps import make_revocation_statement, sign_revocation
+
+    remote, (engine, paths, store, backend), _peer = two_devices(tmp_path)
+    monkeypatch.setattr(cli_sync_vps, "_engine", lambda _paths: (engine, engine.config, backend))
+    metadata_revision = store.snapshot().revision
+    writes = []
+    original_write = engine._write_state
+
+    def observe_write(*args, **kwargs):
+        writes.append(True)
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_write_state", observe_write)
+    assert cli.main(["sync", "vps", "status"]) == 0
+    assert writes == []
+    state_path = paths.root / "vps-sync-state.json"
+    assert not state_path.exists()
+    statement = make_revocation_statement(
+        vault_id=remote.vault_id, device_id="peer-device",
+        revoked_by_device_id=engine.config.root_device_id,
+        checkpoint_commit_id=None, checkpoint_manifest_hash=None, checkpoint_sequence=0,
+    )
+    remote.devices[1].update(
+        status="revoked", revoked_by_device_id=engine.config.root_device_id,
+        revocation_statement=canonical_json_bytes(statement).decode(),
+        revocation_signature=sign_revocation(statement, engine.signing_private_key),
+    )
+    assert cli.main(["sync", "vps", "status"]) == 0
+    assert writes == [True]
+    published = state_path.read_bytes()
+    assert json.loads(published)["revocations"]["peer-device"]["statement"] == canonical_json_bytes(statement).decode()
+    assert cli.main(["sync", "vps", "status"]) == 0
+    assert writes == [True]
+    assert state_path.read_bytes() == published
+    assert store.snapshot().revision == metadata_revision
+    assert remote.commits == {} and backend.list_ids() == []
+    assert "remote sequence:" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows installer uses native PowerShell paths")

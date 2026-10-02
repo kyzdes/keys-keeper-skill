@@ -15,7 +15,7 @@
 | `keys keychain status` | no | no | no | no |
 | `keys doctor` | presence only | no | no | no |
 | `keys devices status` | local unlock material when configured | no | no | requested configured status |
-| `keys sync vps status` | vault and sync credentials | yes | no | configured KK2 status requested |
+| `keys sync vps status` | vault and sync credentials | yes | persists newly verified revocation evidence | configured KK2 status requested |
 | `keys copy`, `inject`, `resolve`, `ssh` | yes | SSH only | explicit sink/session | request authorizes sink |
 | `keys add`, `edit`, `rm`, `sync vps push/pull` | as required | sync only | yes | explicit task required |
 
