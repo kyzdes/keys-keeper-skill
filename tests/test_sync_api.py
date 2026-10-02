@@ -33,12 +33,12 @@ def sync_web(kk_home, monkeypatch):
     remote = FakeRemote()
     access_calls = []
 
-    def make_backend(*, access=AccessContext.INTERACTIVE):
+    def make_backend(*, access=AccessContext.INTERACTIVE, paths=None):
         access_calls.append(access)
         return backend
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", make_backend)
-    monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
+    monkeypatch.setattr("keys_keeper.sync_application.build_backend", make_backend)
+    monkeypatch.setattr("keys_keeper.sync_application._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote, access_calls=access_calls)
 
 
@@ -103,6 +103,8 @@ def test_push_without_stored_passphrase_is_clean_400(sync_web):
     h = _call("POST", "/api/sync/push")
     assert h.status == 400
     assert "error" in h.body
+    assert h.body["committed"] is None and h.body["audit_status"] == "recorded"
+    assert "recovery" in h.body["error"]
     # the safe error must not contain any secret
     raw = str(h.body)
     for s in (S3SECRET, PW, AKID):
@@ -159,7 +161,7 @@ def test_web_setup_cas_probe_failure_restores_credentials_and_config(
             raise TransportError("CAS capability probe failed")
 
     monkeypatch.setattr(
-        "keys_keeper.cli_sync._build_remote",
+        "keys_keeper.sync_application._build_remote",
         lambda cfg, backend: CasProbeFailure(),
     )
     new_values = (
@@ -196,3 +198,49 @@ def test_web_setup_missing_fields_is_400(sync_web):
     h = _call("POST", "/api/sync/setup",
               body=json.dumps({"endpoint": "https://x", "bucket": "b"}).encode())
     assert h.status == 400 and "error" in h.body
+
+
+@pytest.mark.parametrize("action", ["push", "pull", "mode", "setup"])
+def test_sync_http_commit_survives_broken_audit(sync_web, monkeypatch, action):
+    import json
+    from keys_keeper.audit import AuditLog
+    assert _setup() == 0
+    _add("api-1", "synthetic-entry-secret")
+    def failed(_self, **_kwargs):
+        raise OSError("synthetic-backend-error-must-not-appear")
+    monkeypatch.setattr(AuditLog, "record", failed)
+    bodies = {
+        "push": None, "pull": None, "mode": {"mode": "off"},
+        "setup": {"endpoint": "https://s3.example.com", "bucket": "b",
+                  "access_key_id": AKID, "secret_key": S3SECRET, "passphrase": PW},
+    }
+    data = bodies[action]
+    response = _call("POST", "/api/sync/" + action,
+                     body=json.dumps(data).encode() if data is not None else None)
+    assert response.status == 200
+    assert response.body["committed"] is True
+    assert response.body["audit_status"] == "unavailable"
+    for secret in (AKID, S3SECRET, PW, "synthetic-backend-error-must-not-appear"):
+        assert secret not in json.dumps(response.body)
+
+
+def test_published_setup_failure_is_honest_http_commit_receipt(sync_web, monkeypatch):
+    import json
+    from keys_keeper import config, sync_application
+    assert _setup() == 0
+    def publish_then_fail(cfg, paths):
+        config.save_sync_config(cfg, paths)
+        raise config.SyncConfigCommitError("synthetic-raw-config-failure")
+    monkeypatch.setattr(sync_application, "save_sync_config", publish_then_fail)
+    response = _call("POST", "/api/sync/setup", body=json.dumps({
+        "endpoint": "https://different-s3.example.com", "bucket": "new-bucket",
+        "access_key_id": "synthetic-new-access", "secret_key": "synthetic-new-secret",
+        "passphrase": "synthetic-new-passphrase",
+    }).encode())
+    assert response.status == 503
+    assert response.body["committed"] is True
+    assert response.body["audit_status"] == "recorded"
+    assert "retrying" in response.body["error"]
+    assert load_sync_config(Paths()).bucket == "new-bucket"
+    assert sync_web.backend.get(SYNC_SECRET).unseal() == "synthetic-new-secret"
+    assert "synthetic-raw-config-failure" not in str(response.body)

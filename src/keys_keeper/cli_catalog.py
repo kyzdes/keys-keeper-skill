@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 
+from keys_keeper.audit import AuditLog
 from keys_keeper.paths import Paths
 from keys_keeper.project_service import ProjectCatalogError, ProjectService
 from keys_keeper.store import MetadataStore, NotFound, StoreError
@@ -29,42 +30,61 @@ def _service() -> ProjectService:
     return ProjectService(MetadataStore(Paths()))
 
 
+def _finish_catalog(operation: str, value, *, as_json: bool, mutating: bool) -> int:
+    from keys_keeper.cli import _audit_outcome, _operation_failure
+    status = "unknown"
+    if mutating:
+        status = _audit_outcome(AuditLog(Paths()), op=operation, name="<catalog>",
+                                id_=getattr(value, "id", "-"))
+    try:
+        _emit(value, as_json=as_json)
+    except Exception as ex:
+        return _operation_failure(operation, ex, committed=mutating, audit_status=status)
+    return 0
+
+
+def _catalog_failure(operation: str, error: Exception, *, mutating: bool) -> int:
+    from keys_keeper.cli import _audit_outcome, _operation_failure
+    committed = None if mutating and not isinstance(error, (ProjectCatalogError, ValueError)) else False
+    if getattr(error, "committed", None) is True:
+        committed = True
+    status = _audit_outcome(AuditLog(Paths()), op=operation, name="<catalog>", id_="-",
+                            success=committed is True, committed=committed) if mutating else "unknown"
+    sys.stderr.write("error: catalog request is unavailable or invalid; catalog use requires explicit schema-v3 migration with `keys project-sync migrate`\n")
+    return _operation_failure(operation, error, committed=committed, audit_status=status)
+
+
 def cmd_folders(args: argparse.Namespace) -> int:
+    command = args.folders_command
+    mutating = command != "list"
     try:
         service = _service()
-        if args.folders_command == "list":
+        if command == "list":
             folders = service.list_folders()
-            _emit(folders if args.json else [(item.id, item.parent_id or "-", item.name) for item in folders], as_json=args.json)
-        elif args.folders_command == "create":
-            _emit(service.create_folder(args.name, parent_id=args.parent, position=args.position), as_json=args.json)
-        elif args.folders_command == "move":
-            _emit(service.move_folder(args.folder_id, parent_id=args.parent, position=args.position), as_json=args.json)
-        elif args.folders_command == "rename":
-            _emit(service.rename_folder(args.folder_id, args.name), as_json=args.json)
-        elif args.folders_command == "delete":
-            _emit(service.delete_folder(args.folder_id, destination_id=args.destination), as_json=args.json)
+            value = folders if args.json else [(item.id, item.parent_id or "-", item.name) for item in folders]
+        elif command == "create":
+            value = service.create_folder(args.name, parent_id=args.parent, position=args.position)
+        elif command == "move":
+            value = service.move_folder(args.folder_id, parent_id=args.parent, position=args.position)
+        elif command == "rename":
+            value = service.rename_folder(args.folder_id, args.name)
+        elif command == "delete":
+            value = service.delete_folder(args.folder_id, destination_id=args.destination)
         else:  # assign-entry
-            store = MetadataStore(Paths())
-            with store.transaction() as tx:
-                tx.catalog_state()  # explicit v3 requirement; no automatic migration
-                entry = tx.get_by_id(args.entry_id) or tx.get_by_name(args.entry_id)
-                if entry is None:
-                    raise NotFound(f"no entry with id or name {args.entry_id!r}")
-                if args.folder_id not in {item.id for item in service.list_folders()}:
-                    raise NotFound(f"no folder with id {args.folder_id}")
-                entry.folder_id = args.folder_id
-                tx.update(entry)
-            _emit(entry, as_json=args.json)
-        return 0
-    except (StoreError, ProjectCatalogError, ValueError) as ex:
-        sys.stderr.write(f"error: {ex}\n")
-        return 1
+            entry = service.store.get_by_id(args.entry_id) or service.store.get_by_name(args.entry_id)
+            if entry is None:
+                raise NotFound("entry is unavailable")
+            value = service.set_entry_folder(entry.id, args.folder_id)
+        return _finish_catalog("folders." + command, value, as_json=args.json, mutating=mutating)
+    except Exception as ex:
+        return _catalog_failure("folders." + command, ex, mutating=mutating)
 
 
 def cmd_projects(args: argparse.Namespace) -> int:
+    command = args.projects_command
+    mutating = command not in {"list", "init"} and (command != "scopes" or args.create)
     try:
         service = _service()
-        command = args.projects_command
         if command == "init":
             raise ProjectCatalogError(
                 "catalog migration requires a verified recovery backup; run "
@@ -72,30 +92,29 @@ def cmd_projects(args: argparse.Namespace) -> int:
             )
         elif command == "list":
             projects = service.list_projects()
-            _emit(projects if args.json else [(item.id, item.slug, item.name, item.state) for item in projects], as_json=args.json)
+            value = projects if args.json else [(item.id, item.slug, item.name, item.state) for item in projects]
         elif command == "create":
-            _emit(service.create_project(args.slug, args.name, state=args.state), as_json=args.json)
+            value = service.create_project(args.slug, args.name, state=args.state)
         elif command == "rename":
-            _emit(service.rename_project(args.project_id, args.name, slug=args.slug), as_json=args.json)
+            value = service.rename_project(args.project_id, args.name, slug=args.slug)
         elif command == "archive":
-            _emit(service.archive_project(args.project_id), as_json=args.json)
+            value = service.archive_project(args.project_id)
         elif command == "scopes":
             if args.create:
-                _emit(service.create_scope(args.project_id, args.environment), as_json=args.json)
+                value = service.create_scope(args.project_id, args.environment)
             else:
-                _emit(service.list_scopes(project_id=args.project_id), as_json=args.json)
+                value = service.list_scopes(project_id=args.project_id)
         elif command == "add":
             scope = service.get_scope(args.scope_id, project_slug=args.project, environment=args.environment)
-            _emit(service.assign(scope.id, args.entry_id, local_name=args.local_name), as_json=args.json)
+            value = service.assign(scope.id, args.entry_id, local_name=args.local_name)
         elif command == "remove":
             scope = service.get_scope(args.scope_id, project_slug=args.project, environment=args.environment)
-            _emit(service.unassign(scope.id, args.entry_id), as_json=args.json)
+            value = service.unassign(scope.id, args.entry_id)
         else:  # distribution
-            _emit(service.set_entry_distribution(args.entry_id, args.distribution), as_json=args.json)
-        return 0
-    except (StoreError, ProjectCatalogError, ValueError) as ex:
-        sys.stderr.write(f"error: {ex}\n")
-        return 1
+            value = service.set_entry_distribution(args.entry_id, args.distribution)
+        return _finish_catalog("projects." + command, value, as_json=args.json, mutating=mutating)
+    except Exception as ex:
+        return _catalog_failure("projects." + command, ex, mutating=mutating)
 
 
 def register_catalog(sub: argparse._SubParsersAction) -> None:

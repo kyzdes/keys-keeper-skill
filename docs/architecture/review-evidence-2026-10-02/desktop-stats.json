@@ -1,0 +1,30 @@
+{
+  "append_10_records": {
+    "cpu_seconds": 0.001015,
+    "cycles": 1,
+    "full_scans": 0,
+    "parsed_records": 10,
+    "prefix_digest_verifications": 1,
+    "wall_seconds": 0.001018
+  },
+  "baseline": {
+    "cpu_seconds": 0.054939,
+    "cycles": 3,
+    "wall_seconds": 0.055077
+  },
+  "baseline_ref": "d47fc8787932df912fe196ce81599cfb09dcae1e",
+  "cache_warmup": {
+    "cpu_seconds": 0.032524,
+    "cycles": 1,
+    "wall_seconds": 0.032592
+  },
+  "cached_files": 1,
+  "synthetic_rows": 10000,
+  "unchanged_after_warmup": {
+    "cpu_seconds": 0.005001,
+    "cycles": 100,
+    "full_scans": 0,
+    "parsed_records": 0,
+    "wall_seconds": 0.005005
+  }
+}

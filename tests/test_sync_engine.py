@@ -14,6 +14,9 @@ from _sync_fakes import (
 )
 
 from keys_keeper.backend import KeychainError
+from keys_keeper.master_journal import (
+    MASTER_UNLOCK_ACCOUNT, compose_master_mutations, master_unlock_material,
+)
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.service import VaultService
 from keys_keeper.sync import (
@@ -26,6 +29,25 @@ from keys_keeper.sync import (
 from keys_keeper.sync_remote import TransportError
 
 PW = "correct horse battery staple"
+
+
+def _device_failing_second_entry_write(remote, tmp_path, name, monkeypatch):
+    """Bootstrap authority separately, then arm the entry-write fault budget."""
+    backend = FakeBackend()
+    victim = make_device(remote, tmp_path, name, backend=backend)
+    authority = master_unlock_material(victim.paths, backend, create=True)
+    backend._fail_after = 1
+    backend._sets = 0
+    attempts, present_before = [], []
+    original_set = backend.set
+
+    def tracked_set(account, value):
+        attempts.append(account)
+        present_before.append(set(backend.d))
+        return original_set(account, value)
+
+    monkeypatch.setattr(backend, "set", tracked_set)
+    return victim, authority, attempts, present_before
 
 
 # ---------- push / pull basics ----------
@@ -353,19 +375,26 @@ def test_every_snapshot_upload_is_encrypted(tmp_path):
             assert b"secret-name" not in body
 
 
-def test_merge_keychain_failure_leaves_metadata_untouched(tmp_path):
+def test_merge_keychain_failure_leaves_metadata_untouched(tmp_path, monkeypatch):
     # source device with two secrets
     r = FakeRemote()
     src = make_device(r, tmp_path, "SRC")
-    add_entry(src, "one", "sk-1")
-    add_entry(src, "two", "sk-2")
+    first = add_entry(src, "one", "sk-1")
+    second = add_entry(src, "two", "sk-2")
     src.engine.push(PW)
     # victim pulls with a backend that fails on the 2nd secret write
-    victim = make_device(r, tmp_path, "V", backend=FakeBackend(fail_after=1))
+    victim, _authority, attempts, present_before = _device_failing_second_entry_write(
+        r, tmp_path, "V", monkeypatch,
+    )
+    before_revision = victim.store.snapshot().revision
     with pytest.raises(KeychainError):
         victim.engine.pull(PW)
+    assert len(attempts) == victim.backend._sets == 2
+    assert set(attempts) == {first.id, second.id}
+    assert present_before[1] == {MASTER_UNLOCK_ACCOUNT, attempts[0]}
     # F21: metadata was NOT applied (no partial state)
     assert victim.store.list() == []
+    assert victim.store.snapshot().revision == before_revision
 
 
 # ---------- review-driven regression tests ----------
@@ -416,19 +445,34 @@ def test_empty_first_push_creates_no_version(tmp_path):
     assert all(not k.startswith("versions/") for k in r.objs)   # F42
 
 
-def test_keychain_failure_leaves_no_orphan_secrets(tmp_path):
+def test_keychain_failure_leaves_no_orphan_secrets(tmp_path, monkeypatch):
     # On a mid-merge KeychainError, secrets written this attempt are rolled back
     # so none are orphaned (KI #8).
     r = FakeRemote()
     src = make_device(r, tmp_path, "SRC")
-    add_entry(src, "one", "sk-1")
-    add_entry(src, "two", "sk-2")
+    first = add_entry(src, "one", "sk-1")
+    second = add_entry(src, "two", "sk-2")
     src.engine.push(PW)
-    victim = make_device(r, tmp_path, "V", backend=FakeBackend(fail_after=1))
+    victim, authority, attempts, present_before = _device_failing_second_entry_write(
+        r, tmp_path, "V", monkeypatch,
+    )
     with pytest.raises(KeychainError):
         victim.engine.pull(PW)
+    # This is a real mid-batch fault: the first entry existed when the second
+    # write failed. Authority bootstrap did not consume either entry attempt.
+    assert len(attempts) == victim.backend._sets == 2
+    assert set(attempts) == {first.id, second.id}
+    assert present_before == [{MASTER_UNLOCK_ACCOUNT}, {MASTER_UNLOCK_ACCOUNT, attempts[0]}]
     assert victim.store.list() == []
-    assert victim.backend.d == {}    # no orphan secret left behind
+    entry_accounts = {first.id, second.id, first.id + ":passphrase", second.id + ":passphrase"}
+    assert entry_accounts.isdisjoint(victim.backend.d)
+    assert set(victim.backend.d) == {MASTER_UNLOCK_ACCOUNT}
+    assert victim.backend.d[MASTER_UNLOCK_ACCOUNT] == authority
+    manager = compose_master_mutations(victim.store, victim.backend)
+    assert not manager.has_pending
+    assert manager.journal.list_unfinished() == []
+    assert manager.recover() == []
+    assert len(attempts) == victim.backend._sets == 2
 
 
 def test_pull_retries_when_local_metadata_changes_before_apply(tmp_path, monkeypatch):

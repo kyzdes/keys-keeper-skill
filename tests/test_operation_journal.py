@@ -31,21 +31,20 @@ def _journal(root) -> OperationJournal:
 
 
 def test_secure_read_uses_binary_descriptor_for_ciphertext(tmp_path, monkeypatch):
+    from keys_keeper import private_files
     path = tmp_path / "ciphertext.enc"
     ciphertext = b"header\r\nbody\x1a\r\ntail"
-    path.write_bytes(ciphertext)
-    if os.name == "posix":
-        path.chmod(0o600)
-    real_open = os.open
+    private_files.atomic_write_bytes(path, ciphertext, ensure_parent_private=False)
+    real_open = private_files._open_read
     binary_flag = getattr(os, "O_BINARY", getattr(os, "O_NONBLOCK", 0x4))
     seen = []
     monkeypatch.setattr(journal_module.os, "O_BINARY", binary_flag, raising=False)
 
-    def recording_open(target, flags, mode=0o777):
+    def recording_open(target, flags):
         seen.append(flags)
-        return real_open(target, flags, mode)
+        return real_open(target, flags)
 
-    monkeypatch.setattr(journal_module.os, "open", recording_open)
+    monkeypatch.setattr(private_files, "_open_read", recording_open)
     assert journal_module._secure_read(path) == ciphertext
     assert seen and seen[0] & binary_flag
 
@@ -180,6 +179,46 @@ def test_recovery_completes_or_closes_failed_handlers(tmp_path):
     assert failed.status == "failed"
     assert failed.error_code == "recovery_error"
     assert "secret text" not in repr(failed)
+
+
+def test_recovery_persistence_failure_after_handler_does_not_mark_failed_or_repeat_effect(tmp_path, monkeypatch):
+    journal = _journal(tmp_path / "profile")
+    record = journal.begin("test_effect", state={"secret": "synthetic-recovery-image"})
+    effects = []
+
+    def apply(_record):
+        effects.append("applied")
+        return {"status": "applied"}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(journal, "_write_receipts_unlocked",
+                      lambda _records: (_ for _ in ()).throw(OSError("synthetic receipt failure")))
+        with pytest.raises(OSError, match="synthetic receipt failure"):
+            journal.recover({"test_effect": apply})
+    assert journal.read(record.operation_id).status == "completed"
+    assert journal.pending_refs()[0]["operation_id"] == str(record.operation_id)
+    restarted = _journal(journal.paths.root)
+    assert restarted.recover({"test_effect": apply}) == []
+    assert effects == ["applied"]
+    assert restarted.read(record.operation_id).state == {}
+
+
+def test_begin_postpublication_error_preserves_recovery_marker(tmp_path, monkeypatch):
+    journal = _journal(tmp_path / "profile")
+    operation_id = uuid4()
+    original = journal_module._atomic_write_bytes
+
+    def committed_then_failed(path, data):
+        original(path, data)
+        if path.suffix == ".enc":
+            raise OSError("synthetic parent fsync failure after publish")
+
+    monkeypatch.setattr(journal_module, "_atomic_write_bytes", committed_then_failed)
+    with pytest.raises(OSError, match="after publish"):
+        journal.begin("master_mutation", operation_id=operation_id, state={"prepared": True})
+    assert journal.pending_refs() == ({"operation_id": str(operation_id), "kind": "master_mutation"},)
+    reader = _journal(journal.paths.root)
+    assert [record.operation_id for record in reader.list_unfinished()] == [operation_id]
 
 
 def test_profiles_with_same_operation_id_are_isolated(tmp_path):

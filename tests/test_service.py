@@ -197,7 +197,9 @@ def test_bulk_create_is_all_or_nothing(service_env):
         )
 
     assert store.list() == []
-    assert backend.values == {}
+    # The internal recovery key survives a failed mutation. No entry secret or
+    # metadata from the batch is allowed to survive its complete rollback.
+    assert set(backend.values) == {"kk:project-runtime-key"}
 
 
 def test_bulk_create_rejects_duplicate_ids_without_mutation(service_env):

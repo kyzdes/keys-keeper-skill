@@ -236,7 +236,7 @@ def test_detached_entry_runs_supervisor_and_preserves_explicit_root(tmp_path, mo
 
 
 def test_s3_worker_rechecks_replica_role_before_master_backend(tmp_path, monkeypatch):
-    from keys_keeper import cli_sync
+    from keys_keeper import sync_application
     runtime = ProjectRuntime(Paths(tmp_path))
     item = {"id": "00000000-0000-4000-8000-000000000001", "kind": "replica",
             "scope_id": "00000000-0000-4000-8000-000000000002",
@@ -245,15 +245,15 @@ def test_s3_worker_rechecks_replica_role_before_master_backend(tmp_path, monkeyp
             "project": "synthetic", "environment": "test", "endpoint": "https://relay.example", "status": "active"}
     runtime.registry.put(item)
     runtime.registry.set_default(item["id"])
-    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: pytest.fail("replica opened master sync"))
+    monkeypatch.setattr(sync_application, "_run_auto_worker", lambda _paths: pytest.fail("replica opened master sync"))
     assert worker.main(["s3", "--home", str(tmp_path)]) == 1
 
 
 def test_disabled_auto_is_rechecked_before_expensive_worker_setup(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from keys_keeper import cli_sync, personal_sync
-    monkeypatch.setattr(cli_sync, "load_sync_config", lambda _paths: SimpleNamespace(mode="off"))
-    monkeypatch.setattr(cli_sync, "_build_engine", lambda *_a, **_kw: pytest.fail("disabled S3 opened backend"))
+    from keys_keeper import sync_application, personal_sync
+    monkeypatch.setattr(sync_application, "load_sync_config", lambda _paths: SimpleNamespace(mode="off"))
+    monkeypatch.setattr(sync_application, "_build_engine", lambda *_a, **_kw: pytest.fail("disabled S3 opened backend"))
     assert worker.main(["s3", "--home", str(tmp_path)]) == 0
     monkeypatch.setattr(personal_sync, "read_settings", lambda _paths: {"auto": False})
     monkeypatch.setattr(personal_sync.PersonalSync, "sync", lambda *_a: pytest.fail("disabled personal read state"))

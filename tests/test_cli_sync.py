@@ -23,9 +23,9 @@ def sync_cli(kk_home, monkeypatch):
     remote = FakeRemote()
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
     monkeypatch.setattr(
-        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+        "keys_keeper.sync_application.build_backend", lambda **_kwargs: backend
     )
-    monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
+    monkeypatch.setattr("keys_keeper.sync_application._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote)
 
 
@@ -98,7 +98,7 @@ def test_setup_remote_probe_failure_restores_previous_credentials_and_config(
             raise AuthError("remote rejected credentials")
 
     monkeypatch.setattr(
-        "keys_keeper.cli_sync._build_remote",
+        "keys_keeper.sync_application._build_remote",
         lambda cfg, backend: RejectedRemote(),
     )
     new_values = (
@@ -169,3 +169,41 @@ def test_S2_no_secret_leaks_into_outputs_or_files(sync_cli, capsys):
     blob = "\n".join(haystacks)
     for secret in (AKID, S3SECRET, PASSPHRASE, "sk-AAA"):
         assert secret not in blob, f"secret {secret!r} leaked into output/files"
+
+
+@pytest.mark.parametrize("operation", ["setup", "push", "pull", "mode"])
+def test_cli_sync_commit_receipt_survives_audit_failure(sync_cli, monkeypatch, capsys, operation):
+    import json
+    from keys_keeper.audit import AuditLog
+    assert _setup() == 0
+    _add("synthetic", "synthetic-entry-secret")
+    capsys.readouterr()
+    def failed(_self, **_kwargs):
+        raise OSError("synthetic-raw-audit-failure")
+    monkeypatch.setattr(AuditLog, "record", failed)
+    if operation == "setup":
+        result = _setup()
+    else:
+        result = cli.main(["sync", operation] + (["off"] if operation == "mode" else []))
+    assert result == 0
+    captured = capsys.readouterr()
+    receipt = json.loads(captured.err)
+    assert receipt == {"operation": "sync." + operation,
+                       "committed": True, "audit_status": "unavailable"}
+    assert "synthetic-raw-audit-failure" not in captured.out + captured.err
+
+
+def test_cli_reports_published_config_failure_without_compensating_credentials(sync_cli, monkeypatch, capsys):
+    import json
+    from keys_keeper import config, sync_application
+    def publish_then_fail(cfg, paths):
+        config.save_sync_config(cfg, paths)
+        raise config.SyncConfigCommitError("synthetic-raw-config-failure")
+    monkeypatch.setattr(sync_application, "save_sync_config", publish_then_fail)
+    assert _setup() == 1
+    receipt = json.loads(capsys.readouterr().err)
+    assert receipt["operation"] == "sync.setup" and receipt["committed"] is True
+    assert receipt["audit_status"] == "recorded"
+    assert "synthetic-raw-config-failure" not in json.dumps(receipt)
+    assert sync_cli.backend.get(SYNC_PASS).unseal() == PASSPHRASE
+    assert load_sync_config(Paths()).bucket == "mybucket"

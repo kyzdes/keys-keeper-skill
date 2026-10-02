@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from keys_keeper.backend import KeychainError
-from keys_keeper.models import Entry, EntryType, ValidationError
+from keys_keeper.models import Entry, EntryType, ValidationError, entry_requires_secret
 from keys_keeper.project_models import CatalogState, ScopeEntry
 from keys_keeper import project_protocol as protocol
 
@@ -16,12 +16,6 @@ _ESSENTIAL_FIELDS = {
     EntryType.SERVER: {"host", "user", "auth", "port"},
     EntryType.DOMAIN: {"host"}, EntryType.NOTE: {"secret_body"},
 }
-
-
-def _needs_secret(entry: Entry) -> bool:
-    return entry.type in (EntryType.API_KEY, EntryType.SSH_KEY) or (
-        entry.type == EntryType.NOTE and bool(entry.fields.get("secret_body"))
-    ) or (entry.type == EntryType.SERVER and entry.fields.get("auth") == "password")
 
 
 def _prepare(tx, scope_id: str, *, personal: bool = False):
@@ -113,7 +107,7 @@ def _build_project_payload(store, backend, scope_id: str, *, expected_revision: 
         # never both collapse to a successful null secret.
         accounts = set(backend.list_ids()) if records else set()
         for entry, _ in records:
-            if _needs_secret(entry) and entry.id not in accounts:
+            if entry_requires_secret(entry) and entry.id not in accounts:
                 raise ProjectionError("required project secret is unavailable")
         payload_records = []
         for entry, record in records:

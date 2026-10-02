@@ -10,18 +10,23 @@ passphrase are stored in the OS keychain via `build_backend()` under reserved
 """
 from __future__ import annotations
 
-import os
 import socket
-import stat
+import json
 import uuid
 from dataclasses import dataclass, replace
 from urllib.parse import urlparse
 
 from keys_keeper.paths import Paths
+from keys_keeper.private_files import PrivateFileCommitError, PrivateFileError, atomic_write_bytes, secure_read
 
 
 class SyncConfigError(ValueError):
     """Invalid or unsafe sync configuration."""
+
+
+class SyncConfigCommitError(SyncConfigError):
+    """Configuration was published; its directory durability is uncertain."""
+    committed = True
 
 
 VALID_MODES = ("off", "manual", "auto")
@@ -45,6 +50,10 @@ class SyncConfig:
     proxy: str = "direct"            # direct | system | http(s)://host:port — S3 transport proxy
 
     def validate(self) -> None:
+        for field, annotation in SyncConfig.__annotations__.items():
+            expected = {"str": str, "int": int, "bool": bool}[annotation]
+            if type(getattr(self, field)) is not expected:
+                raise SyncConfigError(f"sync {field} has an invalid scalar type")
         if self.mode not in VALID_MODES:
             raise SyncConfigError(f"mode must be one of {VALID_MODES}, got {self.mode!r}")
         if self.addressing not in VALID_ADDRESSING:
@@ -101,7 +110,12 @@ class SyncConfig:
 
 def _parse_scalar(raw: str) -> object:
     raw = raw.strip()
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        try:
+            return json.loads(raw)
+        except ValueError:
+            raise SyncConfigError("invalid quoted sync configuration value") from None
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
         return raw[1:-1]
     low = raw.lower()
     if low in ("true", "false"):
@@ -114,10 +128,15 @@ def _parse_scalar(raw: str) -> object:
 
 def _strip_comment(line: str) -> str:
     out, in_str, q = [], False, ""
+    escaped = False
     for ch in line:
         if in_str:
             out.append(ch)
-            if ch == q:
+            if escaped:
+                escaped = False
+            elif ch == "\\" and q == '"':
+                escaped = True
+            elif ch == q:
                 in_str = False
         elif ch in ("'", '"'):
             in_str = True
@@ -153,30 +172,19 @@ def _read_sync_table(text: str) -> dict:
 
 
 def _emit(text_key: str, value: object) -> str:
-    if isinstance(value, bool):
-        return f"{text_key} = {'true' if value else 'false'}"
-    if isinstance(value, int):
-        return f"{text_key} = {value}"
-    esc = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'{text_key} = "{esc}"'
+    # This flat scalar subset shares JSON string/bool/int syntax with TOML.
+    return f"{text_key} = {json.dumps(value, ensure_ascii=False)}"
 
 
 def load_sync_config(paths: Paths | None = None) -> SyncConfig:
     paths = paths or Paths()
     try:
-        # SessionStart reads this routing file before the daily claim. Avoid
-        # unbounded parsing and blocking on a pipe even when the vault is idle.
-        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-        fd = os.open(paths.config_toml, flags)
+        blob = secure_read(paths.config_toml, max_bytes=MAX_CONFIG_BYTES,
+                           require_private=False)
     except FileNotFoundError:
         return SyncConfig()
-    with os.fdopen(fd, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_CONFIG_BYTES:
-            raise SyncConfigError("invalid sync configuration file")
-        blob = stream.read(MAX_CONFIG_BYTES + 1)
-        if len(blob) > MAX_CONFIG_BYTES:
-            raise SyncConfigError("sync configuration exceeds size limit")
+    except (PrivateFileError, OSError):
+        raise SyncConfigError("invalid sync configuration file or size limit exceeded") from None
     try:
         text = blob.decode("utf-8")
     except UnicodeError:
@@ -199,13 +207,14 @@ def save_sync_config(cfg: SyncConfig, paths: Paths | None = None) -> None:
     text = "\n".join(lines) + "\n"
     if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
         raise SyncConfigError("sync configuration exceeds size limit")
-    tmp = paths.config_toml.with_suffix(".toml.tmp")
-    tmp.write_text(text, encoding="utf-8")
     try:
-        os.chmod(tmp, 0o600)  # S11: no group/other access (POSIX; no-op on Windows)
-    except OSError:
-        pass
-    os.replace(tmp, paths.config_toml)
+        atomic_write_bytes(paths.config_toml, text.encode("utf-8"))
+    except PrivateFileCommitError:
+        raise SyncConfigCommitError(
+            "sync configuration was published but durability is uncertain; inspect before retrying"
+        ) from None
+    except (PrivateFileError, OSError):
+        raise SyncConfigError("cannot safely publish sync configuration") from None
 
 
 def set_mode(mode: str, paths: Paths | None = None) -> SyncConfig:

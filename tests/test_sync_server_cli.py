@@ -81,6 +81,40 @@ def test_atomic_destination_race_preserves_other_process_file(database, monkeypa
     assert list(directory.iterdir()) == [destination]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory fsync fault")
+@pytest.mark.parametrize("through_cli", [False, True])
+def test_postpublication_fsync_failure_preserves_complete_backup_and_honest_error(
+    database, monkeypatch, capsys, through_cli,
+):
+    source, _writer, directory = database
+    destination = directory / "committed.sqlite3"
+    real_fsync = os.fsync
+
+    def fail_directory_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("synthetic post-link directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(cli.os, "fsync", fail_directory_fsync)
+    if through_cli:
+        assert cli.main(["backup", str(destination), "--database", str(source)]) == 1
+        output = capsys.readouterr()
+        assert "backup was published" in output.err
+        assert "inspect the backup before retrying" in output.err
+        assert output.out == ""
+    else:
+        with pytest.raises(cli.BackupCommitError) as caught:
+            cli.backup_database(source, destination)
+        assert caught.value.committed is True
+
+    assert list(directory.iterdir()) == [destination]
+    with sqlite3.connect(destination) as restored:
+        assert restored.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        assert restored.execute("SELECT revision,ciphertext FROM backup_fixture").fetchall() == [
+            (1, b"synthetic-encrypted-record"),
+        ]
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits; Windows has a separate real DACL rejection test")
 @pytest.mark.parametrize("mode", [0o755, 0o770, 0o777])
 def test_backup_rejects_nonprivate_directory(database, mode):

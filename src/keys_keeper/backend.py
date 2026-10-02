@@ -8,7 +8,19 @@ from keys_keeper.macos_keychain import MacOSNativeKeychain, SecurityFrameworkErr
 
 
 class KeychainError(RuntimeError):
-    """Raised when keychain ops fail (not found, access denied, etc)."""
+    """An operation failed; an unclassified failure must never mean absent."""
+
+
+class SecretNotFound(KeychainError):
+    """The provider positively identified an absent account."""
+
+
+class SecretAccessDenied(KeychainError):
+    """The provider refused access, including a cancelled authorization."""
+
+
+class SecretUnavailable(KeychainError):
+    """The provider is unavailable or cannot safely return the stored value."""
 
 
 class Sealed:
@@ -25,6 +37,8 @@ class Sealed:
     __slots__ = ("_v",)
 
     def __init__(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError("secret value must be a string")
         self._v = value
 
     def unseal(self) -> str:
@@ -162,20 +176,23 @@ class MacOSKeychainBackend(KeychainBackend):
             return Sealed(self._native.get(account))
         except SecurityFrameworkError as ex:
             if ex.status == -25300:
-                raise KeychainError(f"keychain entry not found: {account}") from ex
+                raise SecretNotFound(f"keychain entry not found: {account}") from None
             if not self._native.allow_interaction and ex.status in (-25293, -25308):
-                if (
-                    self.allow_legacy_bridge
-                    and self._native.legacy_security_read_allowed(account)
-                ):
+                try:
+                    legacy_allowed = self.allow_legacy_bridge and self._native.legacy_security_read_allowed(account)
+                except SecurityFrameworkError:
+                    raise SecretUnavailable("Keychain access metadata is unavailable") from None
+                if legacy_allowed:
                     return self._read_legacy_security_bridge(account)
-                raise KeychainError(
+                raise SecretAccessDenied(
                     f"keychain entry {account} does not trust this Keys Keeper runtime; "
                     "Keychain UI is disabled for this operation. Use "
                     "`keys keychain prompt` only for an explicit interactive command "
                     "where you want macOS to ask once."
-                ) from ex
-            raise KeychainError(f"failed to read keychain entry {account}: {ex}") from ex
+                ) from None
+            if ex.status in (-128, -25293, -25308):
+                raise SecretAccessDenied("Keychain secret access denied") from None
+            raise SecretUnavailable("Keychain secret read failed") from None
 
     def _read_legacy_security_bridge(self, account: str) -> Sealed:
         """Read one security-CLI-only legacy item without changing the item.
@@ -213,13 +230,13 @@ class MacOSKeychainBackend(KeychainBackend):
             pass
         if result is None or result.returncode != 0:
             result = None
-            raise KeychainError(
+            raise SecretUnavailable(
                 f"trusted legacy Keychain bridge failed for {account}"
             )
         value = _decode_legacy_security_password(result.stderr)
         result = None
         if value is None:
-            raise KeychainError(
+            raise SecretUnavailable(
                 f"failed to decode keychain entry {account}"
             )
         return Sealed(value)

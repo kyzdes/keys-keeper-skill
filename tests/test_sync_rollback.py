@@ -199,9 +199,9 @@ def sync_cli(kk_home, monkeypatch):
     remote = FakeRemote()
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
     monkeypatch.setattr(
-        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+        "keys_keeper.sync_application.build_backend", lambda **_kwargs: backend
     )
-    monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
+    monkeypatch.setattr("keys_keeper.sync_application._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote)
 
 
@@ -252,9 +252,9 @@ def test_web_setup_accepts_strong_passphrase(monkeypatch, kk_home):
     backend = FakeBackend()
     remote = FakeRemote()
     monkeypatch.setattr(
-        "keys_keeper.cli_sync.build_backend", lambda **_kwargs: backend
+        "keys_keeper.sync_application.build_backend", lambda **_kwargs: backend
     )
-    monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
+    monkeypatch.setattr("keys_keeper.sync_application._build_remote", lambda cfg, b: remote)
     data = {"endpoint": "https://s3.example.com", "bucket": "b",
             "access_key_id": "AKID", "secret_key": "s3secret",
             "passphrase": "a-strong-enough-passphrase", "region": "auto",

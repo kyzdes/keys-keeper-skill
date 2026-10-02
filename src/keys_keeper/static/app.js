@@ -55,7 +55,16 @@
       } catch {}
       throw new Error(`${requestPath}: ${r.status}${detail}`);
     }
-    return r.json();
+    const body = await r.json();
+    if (body.audit_status === 'unavailable') toast('Operation completed, but the audit receipt could not be recorded. Do not repeat the operation.', 'error');
+    if (body.clear_status === 'unavailable') toast('Copied, but automatic clipboard clearing is unavailable.', 'error');
+    return body;
+  }
+
+  function hasSecret(entry) {
+    return ['api_key', 'ssh_key'].includes(entry.type)
+      || (entry.type === 'note' && entry.fields?.secret_body === true)
+      || (entry.type === 'server' && entry.fields?.auth === 'password');
   }
 
   const TYPE_META = {
@@ -228,7 +237,8 @@
           onclick: ev => { ev.stopPropagation(); requestDelete([e]); },
         }, svgIcon('trash'));
         if (canMutate) a.append(deleteBtn);
-        a.append(copyBtn, editBtn);
+        if (hasSecret(e)) a.append(copyBtn);
+        a.append(editBtn);
         return a;
       })(),
     );
@@ -361,6 +371,10 @@
           const body = await response.json().catch(() => ({}));
           throw new Error(body.error || `Request failed (${response.status}).`);
         }
+        if (response.ok) {
+          const receipt = await response.json().catch(() => ({}));
+          if (receipt.audit_status === 'unavailable') toast('Entry removed, but the audit receipt could not be recorded. Do not repeat the operation.', 'error');
+        }
         deletion.pending.shift();
         deletion.completed += 1;
         state.selected.delete(entry.id);
@@ -368,7 +382,7 @@
         state.entries.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
         deletion.pending.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
       } catch (err) {
-        deletionMessage('delete-error', `Could not finish deleting ${entry.name}. ${err.message} You can retry the remaining entries or cancel.`);
+        deletionMessage('delete-error', `Could not finish deleting ${entry.name}. ${err.message} Check the vault state before trying again.`);
         break;
       }
     }
@@ -748,6 +762,8 @@
         audit.append(row);
       });
       document.getElementById('copy-btn').onclick = () => copy(e.id, e.name);
+      document.getElementById('copy-btn').hidden = !hasSecret(e);
+      document.getElementById('replace-secret-btn').hidden = !canMutate || !hasSecret(e);
       document.getElementById('delete-btn').onclick = () => requestDelete([e]);
       document.getElementById('replace-secret-btn').onclick = () => {
         document.getElementById('replace-modal').hidden = false;
@@ -825,11 +841,47 @@
         c.append(formRow('user', 'user', e?.fields?.user || '', true));
         c.append(formRow('auth', 'auth', e?.fields?.auth || 'ssh_key', true));
         c.append(formRow('ssh_key_ref', 'ssh_key ref', e?.refs?.find(r => r.role === 'ssh_key')?.name || '', false));
+        const secretFields = document.createElement('div');
+        c.append(secretFields);
+        const auth = document.getElementById('f-auth');
+        const renderPassword = () => {
+          secretFields.replaceChildren();
+          if (auth.value.trim() === 'password' && (!editId || e?.fields?.auth !== 'password')) {
+            secretFields.append(secretRow('value', 'password · stored as a secret', false));
+          }
+        };
+        auth.addEventListener('input', renderPassword);
+        renderPassword();
       } else if (selectedType === 'domain') {
         c.append(formRow('host', 'host', e?.fields?.host || '', true));
         c.append(formRow('registrar', 'registrar', e?.fields?.registrar || '', false));
       } else if (selectedType === 'note') {
-        c.append(formRow('body', 'body', e?.fields?.body || '', false));
+        const row = document.createElement('div'); row.className = 'form-row';
+        const label = document.createElement('label'); label.className = 'label';
+        label.textContent = 'body storage'; label.htmlFor = 'f-note-storage';
+        const storage = document.createElement('select'); storage.className = 'text-input';
+        storage.id = 'f-note-storage';
+        for (const [value, text] of [['secret', 'Secret — protected body'], ['public', 'Public — readable metadata']]) {
+          const option = document.createElement('option'); option.value = value; option.textContent = text;
+          storage.append(option);
+        }
+        storage.value = e ? (e.fields.secret_body ? 'secret' : 'public') : 'secret';
+        storage.disabled = Boolean(editId);
+        row.append(label, storage); c.append(row);
+        const bodyFields = document.createElement('div'); c.append(bodyFields);
+        const renderBody = () => {
+          bodyFields.replaceChildren();
+          if (storage.value === 'secret' && editId) {
+            const help = document.createElement('p');
+            help.textContent = 'The body is protected. Use Replace secret on the entry page to change it.';
+            bodyFields.append(help);
+          } else {
+            const body = secretRow('body', storage.value === 'secret' ? 'protected note body' : 'public note body · readable metadata', true);
+            bodyFields.append(body);
+            document.getElementById('f-body').value = e?.fields?.body || '';
+          }
+        };
+        storage.addEventListener('change', renderBody); renderBody();
       }
     }
 
@@ -861,7 +913,7 @@
         fields: {},
         refs: [],
       };
-      ['service', 'public_key', 'comment', 'host', 'port', 'user', 'auth', 'registrar', 'body'].forEach(k => {
+      ['service', 'public_key', 'comment', 'host', 'port', 'user', 'auth', 'registrar'].forEach(k => {
         const el = document.getElementById(`f-${k}`);
         if (el) {
           let v = el.value.trim();
@@ -872,7 +924,15 @@
       const refEl = document.getElementById('f-ssh_key_ref');
       if (refEl?.value.trim()) payload.refs.push({ role: 'ssh_key', name: refEl.value.trim() });
       const valueEl = document.getElementById('f-value') || document.getElementById('f-private_key');
-      if (valueEl) payload.value = valueEl.value;
+      if (valueEl) { payload.value = valueEl.value; valueEl.value = ''; }
+      if (selectedType === 'note') {
+        const secret = document.getElementById('f-note-storage').value === 'secret';
+        payload.fields.secret_body = secret;
+        const body = document.getElementById('f-body');
+        if (secret && !editId) { payload.value = body.value; body.value = ''; }
+        else if (!secret) payload.fields.body = body.value;
+      }
+      if (editId) { delete payload.name; delete payload.type; }
 
       try {
         if (editId) {
@@ -904,7 +964,6 @@
   if (document.getElementById('bulk-shell')) {
     const input = document.getElementById('bulk-input');
     const rowsEl = document.getElementById('preview-rows');
-    let lastParse = [];
 
     document.getElementById('format-toggle').onclick = () => {
       const h = document.getElementById('format-help');
@@ -925,7 +984,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: text }),
       });
-      lastParse = r.rows;
       renderPreview(r.rows);
       const errs = r.rows.filter(r => r.error).length;
       document.getElementById('preview-count').textContent = `${r.rows.length} entries · ${errs} errors`;
@@ -944,18 +1002,7 @@
           el('span', { class: 'status-dot' }),
           el('span', { class: 'row-num' }, String(r.line)),
           el('span', { class: 'name' }, r.name),
-          (() => {
-            const sel = document.createElement('select');
-            sel.className = 'type-dropdown';
-            ['api_key', 'ssh_key', 'server', 'domain', 'note'].forEach(t => {
-              const opt = document.createElement('option');
-              opt.value = t; opt.textContent = t;
-              if (t === r.type) opt.selected = true;
-              sel.append(opt);
-            });
-            sel.onchange = () => { r.type = sel.value; };
-            return sel;
-          })(),
+          el('span', { class: 'type-label-mono' }, r.type),
           el('span', { class: 'summary' },
             el('span', { class: 'muted' }, r.has_value ? 'value present' : 'no value'),
             ' ',
@@ -980,7 +1027,7 @@
         const r = await api('/api/bulk-import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ source: input.value, rows: lastParse }),
+          body: JSON.stringify({ source: input.value }),
         });
         if (r.ok) {
           location.href = '/';

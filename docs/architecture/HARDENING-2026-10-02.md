@@ -1,0 +1,116 @@
+# Keys Keeper: исправления и сокращение архитектурного скоупа
+
+Дата: 2 октября 2026 года. Исходная версия: `0.11.1`, коммит
+`36df576ba403437d6352add265232bc01601cbae`. Изменения подготовлены в ветке
+`codex/simplify-and-harden`; они не являются установленным или выпущенным релизом.
+
+## Принятые границы
+
+Реализован один путь обычной записи master vault для schema 2 и schema 3:
+`VaultService → MasterMutationManager → OperationJournal + MetadataStore + backend`.
+Автоматической миграции schema 2 в schema 3 нет. Проектный импорт сохраняет
+свою существующую координацию и постоянный dedup ledger; replica остаётся
+отдельным проверяемым контуром.
+
+```mermaid
+flowchart TD
+    CLI[CLI: аргументы и explicit sinks] --> App[Application / выбор профиля]
+    HTTP[HTTP: авторизация и strict JSON] --> App
+    Worker[Автоматические workers] --> App
+    App --> Service[VaultService]
+    Service --> Mutation[MasterMutationManager: schema 2 и 3]
+    Mutation --> Journal[Активный encrypted journal]
+    Mutation --> Metadata[MetadataStore]
+    Mutation --> Backend[Native / encrypted-file backend]
+    Journal --> IO[Единый private_files IO]
+    Metadata --> IO
+    App --> Replica[Проверенное replica generation]
+    App --> Legacy[Legacy full-vault compatibility]
+    App --> Audit[Необязательная запись audit receipt]
+```
+
+Убраны отдельные legacy CRUD/bulk/snapshot алгоритмы из `service.py`, дубли
+приватного файлового IO и копии предиката обязательного секрета. HTTP и S3 worker
+больше не используют CLI как application layer. Новый framework, dependency,
+сетевой протокол или формат metadata не добавлялся.
+
+Скоуп функций намеренно ограничен:
+
+- `inject` принимает однозначное однострочное literal dotenv значение.
+  Неоднозначное экранирование, интерполяция и duplicate assignments отклоняются.
+- Bulk import в локальном интерфейсе поддерживает API keys и защищённые notes.
+  Структурные записи создаются отдельной формой или CLI; поля не угадываются.
+- Имя referenced entry нельзя изменить до удаления входящих ссылок.
+  Reference-ID migration и автоматического переписывания графа нет.
+- Backup output не заменяет существующий файл молча. Legacy export имеет
+  явный `--replace`; project recovery bundle требует нового пути.
+- Завершённые операции — ограниченная диагностика: до 64 encrypted receipts
+  в контейнере до 1 MiB. Это не вечный журнал истории и не dedup authority.
+
+## Закрытие исходных замечаний
+
+| Пункт исходного ревью | Исправление и проверяемое поведение |
+|---|---|
+| F01, неполные snapshots | Общая полная snapshot preparation. Required primary secrets обязаны существовать; любое failed read присутствующего account прекращает export/sync до публикации. Optional absent passphrase допустима. |
+| F02, перепривязка после rename | Service и direct store update отвергают rename при входящих refs. Метаданные, секрет и revision остаются прежними в schema 2/3. |
+| F03, Windows private files | Protected DACL задаётся при создании, до payload. TokenUser определяет owner; opened handle проверяется на type/reparse/owner/ACL. Допустимые principals: текущий пользователь, SYSTEM, Administrators. Внешние каталоги не перенастраиваются. |
+| F04, бесконечная secret history | Completed before/after images удаляются после durable receipt; pending state сохраняется. Bounded legacy compaction и cleanup только известных crash-temp имён. Все ciphertext reads продолжают GCM authentication, cache не заменяет проверку. |
+| F05, schema 2 crash window | Обычные CRUD, batch и snapshot replacement проходят общий durable manager. Secret/metadata crash points восстанавливаются без миграции схемы. |
+| F06, backup IO | Bounded binary no-follow reads, atomic private publication, explicit overwrite policy, read-back legacy export и committed uncertainty receipt. Project backup сохраняет необходимый journal authority key и в schema 2. |
+| F07, dotenv injection | ENV-name, duplicate assignment и literal serializer проверяются до credential write. Неоднозначные значения не преобразуются молча. |
+| F08, resolve после denial | Metadata preflight, один read на unique key, stop на первом failed read, failed audit outcome. Один replica backend instance использует одно authenticated generation на операцию. |
+| F09, HTTP contracts | Один bounded parser: object/type/allowed keys, duplicate members, depth/node limits. Auth выполняется до domain work; safe outer error boundary удерживает соединение и не выводит provider exception text. |
+| F10, notes | Public body хранится в fields; sensitive body — только в credential storage. Exact boolean `secret_body`; sensitive fields.body запрещён. Реальная JS-форма проверяется против изолированного HTTP API. |
+| F11, ложный audit failure | Audit failure не отменяет committed action. JSON/CLI receipts сообщают committed/audit status. Activity newest first; history привязана к stable entry ID и batch affected IDs. |
+| F12, filesystem races | Nonblocking FIFO rejection, bounded inputs, descriptor validation, bytes/timestamps/inode conflict checks, create-only publication для ранее отсутствовавшего target. |
+| F13, empty metadata | Существующий пустой или whitespace-only файл — ошибка восстановления. Он не становится новым пустым vault и не перезаписывается. |
+
+Дополнительно независимое ревью нового общего manager проверило неправильный
+`Entry`/`SecretInput`, отсутствие обязательного секрета и race после metadata
+commit. Входные данные валидируются до pending marker. Expected after revision
+сохраняется под metadata lock; перед закрытием journal снова проверяются after
+images и revision. Дивергенция не выдаётся за успешный commit.
+
+## Восстановление и эксплуатационные пределы
+
+Обычная следующая mutation сначала завершает известное pending восстановление.
+`keys doctor` показывает состояние без чтения entry values; `keys doctor
+--recover` явно запускает тот же manager для master profile. Дивергировавшая
+metadata, потерянный journal key или повреждённый ciphertext останавливают
+автоматическое восстановление. Не повторяйте такую mutation вслепую.
+
+Resource limits применяются до дорогой recovery работы: migration preflight —
+10 064 файлов и 672 MiB; активные pending records — 10 000 / 512 MiB. Завершённая
+история не расходует активный лимит после compaction. Существующие backup,
+копии на диске и физические блоки носителя этим механизмом не стираются.
+
+Private-file conflict checks остаются optimistic: процесс, не использующий
+общий lock, может вмешаться после последней проверки перед rename. Windows
+DACL не изолирует от SYSTEM или администратора. CLI sink discipline уменьшает
+попадание plaintext в транскрипт, но не изолирует от кода под тем же OS user.
+
+S3 setup остаётся ручным bootstrap compatibility-функции: обычные ошибки
+компенсируются, config publication uncertainty сохраняет парные новые
+credentials/config, но hard kill между несколькими reserved-account writes
+может потребовать повторного setup. Новый journal для всех transport settings
+не добавлялся. Broker mode, новые sync transports и дополнительные UI features
+не входят в эту работу.
+
+## Проверка
+
+Focused suites проверяют fake backend, изолированный encrypted-file vault,
+реальный loopback HTTP, JS serializer, process termination, receipt corruption,
+resource ceilings и file conflicts. Windows native DACL tests входят в OS CI
+matrix; локальный macOS прогон не доказывает их исполнение на Windows.
+
+Итоговый полный прогон, упаковка и CI точного финального коммита будут записаны
+в verification manifest рядом с этим отчётом после завершения интеграции.
+
+При ранних локальных прогонах старые clipboard integration tests записали
+синтетические значения в системный clipboard. Ordinary pytest теперь всегда
+использует fake clipboard, timer и clear helper. Native clipboard tests
+требуют отдельного `KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=1`; CI может выполнить их
+на одноразовом runner. Пользовательский vault и login keychain не использовались.
+
+Историческое исходное ревью: [ARCHITECTURE-REVIEW-2026-10-02.md](ARCHITECTURE-REVIEW-2026-10-02.md).
+Публичные CLI contracts: [CLI-SINK-CONTRACT.md](../CLI-SINK-CONTRACT.md).

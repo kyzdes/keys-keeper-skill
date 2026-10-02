@@ -108,6 +108,10 @@ jobs:
 
       - name: Test
         if: matrix.live_keyring == false
+        env:
+          # Native clipboard integration is allowed only on the disposable
+          # macOS CI runner. Ordinary local pytest always uses the fake sink.
+          KEYS_KEEPER_TEST_NATIVE_CLIPBOARD: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: python -m pytest -q --cov --cov-config=.coveragerc --cov-report= --junitxml="${{ runner.temp }}/keys-test-reports/junit.xml" --test-metrics="${{ runner.temp }}/keys-test-reports/test-metrics.json" --durations=40 --durations-min=0.05
 
       - name: Report coverage and test durations

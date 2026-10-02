@@ -8,16 +8,22 @@ either persistent mode with a stricter UI-forbidden access context.
 from __future__ import annotations
 
 import os
-import tempfile
 from dataclasses import dataclass
 
 from keys_keeper.backend import KeychainError
 from keys_keeper.paths import Paths
+from keys_keeper.private_files import PrivateFileCommitError, PrivateFileError, atomic_write_bytes, secure_read
 
 PROMPT = "prompt"
 BYPASS = "bypass"
 _VALID_MODES = {PROMPT, BYPASS}
 _ENV = "KEYS_KEEPER_KEYCHAIN_MODE"
+MAX_KEYCHAIN_CONFIG_BYTES = 64 * 1024
+
+
+class KeychainConfigCommitError(KeychainError):
+    """The policy was published; its directory durability is uncertain."""
+    committed = True
 
 
 @dataclass(frozen=True)
@@ -34,47 +40,36 @@ def load_keychain_config(paths: Paths | None = None) -> KeychainConfig:
                 f"invalid {_ENV}={override!r}; expected '{PROMPT}' or '{BYPASS}'"
             )
         return KeychainConfig(mode=override)
-    if not paths.keychain_toml.exists():
-        return KeychainConfig()
     try:
-        text = paths.keychain_toml.read_text(encoding="utf-8")
+        # This is legacy policy metadata, so public owner-readable mode is
+        # accepted; type, ownership, size and final-component links are checked.
+        text = secure_read(paths.keychain_toml, max_bytes=MAX_KEYCHAIN_CONFIG_BYTES,
+                           require_private=False).decode("utf-8")
         mode = _parse_mode(text)
-    except (OSError, UnicodeDecodeError, ValueError) as ex:
+    except FileNotFoundError:
+        return KeychainConfig()
+    except (PrivateFileError, OSError, UnicodeError, ValueError):
         # Fail closed: a damaged policy must never silently re-enable dialogs.
-        raise KeychainError(f"cannot read {paths.keychain_toml.name}: {ex}") from ex
+        raise KeychainError("cannot read keychain policy safely; verify keychain.toml") from None
     if mode not in _VALID_MODES:
         raise KeychainError(
-            f"invalid keychain mode {mode!r}; expected '{PROMPT}' or '{BYPASS}'"
+            f"invalid keychain mode; expected '{PROMPT}' or '{BYPASS}'"
         )
     return KeychainConfig(mode=mode)
 
 
 def save_keychain_config(config: KeychainConfig, paths: Paths | None = None) -> None:
-    if config.mode not in _VALID_MODES:
-        raise ValueError(f"unsupported keychain mode: {config.mode!r}")
+    if not isinstance(config.mode, str) or config.mode not in _VALID_MODES:
+        raise ValueError("unsupported keychain mode")
     paths = paths or Paths()
-    paths.ensure()
-    fd, tmp_name = tempfile.mkstemp(
-        dir=paths.root,
-        prefix=".keychain.",
-        suffix=".tmp",
-    )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(f'mode = "{config.mode}"\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-        if os.name == "posix":
-            os.chmod(tmp_name, 0o600)
-        os.replace(tmp_name, paths.keychain_toml)
-        if os.name == "posix":
-            os.chmod(paths.keychain_toml, 0o600)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+        atomic_write_bytes(paths.keychain_toml, f'mode = "{config.mode}"\n'.encode("utf-8"))
+    except PrivateFileCommitError:
+        raise KeychainConfigCommitError(
+            "keychain policy was published but durability is uncertain; inspect before retrying"
+        ) from None
+    except (PrivateFileError, OSError):
+        raise KeychainError("cannot safely publish keychain policy") from None
 
 
 def interaction_allowed(paths: Paths | None = None) -> bool:

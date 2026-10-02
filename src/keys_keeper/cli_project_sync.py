@@ -157,9 +157,8 @@ def command(args):
     except Exception as ex:
         # Lower layers process hostile encrypted entry fields. Do not print
         # arbitrary exception strings or reprs into an agent transcript.
-        detail = str(ex) if isinstance(ex, RuntimeErrorSafe) else type(ex).__name__
-        sys.stderr.write("project operation failed: " + detail + "\n")
-        return 1
+        from keys_keeper.cli import _operation_failure
+        return _operation_failure("project-sync." + args.project_action, ex)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

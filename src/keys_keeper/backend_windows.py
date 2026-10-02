@@ -45,7 +45,10 @@ import json
 import sys
 from ctypes import wintypes
 
-from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
+from keys_keeper.backend import (
+    KeychainBackend, KeychainError, Sealed,
+    SecretAccessDenied, SecretNotFound, SecretUnavailable,
+)
 
 
 # ---------- Win32 constants ----------
@@ -60,6 +63,7 @@ _ERROR_BAD_LENGTH = 24
 _ERROR_NOT_ENOUGH_MEMORY = 8
 
 _CHUNK_THRESHOLD = 2000  # UTF-8 bytes
+_MAX_CHUNK_COUNT = (64 * 1024 * 1024) // _CHUNK_THRESHOLD
 _FMT_RAW = 0x01
 _FMT_CHUNKED = 0x02
 
@@ -199,8 +203,10 @@ def _read_blob(target_name: str) -> bytes:
     if not _CredReadW(target_name, _CRED_TYPE_GENERIC, 0, ctypes.byref(cred_ptr)):
         err = ctypes.get_last_error()
         if err == _ERROR_NOT_FOUND:
-            raise KeychainError(f"keychain entry not found: {target_name}")
-        raise KeychainError(f"CredReadW failed for {target_name!r}: WinError {err}")
+            raise SecretNotFound(f"keychain entry not found: {target_name}")
+        if err == 5:  # ERROR_ACCESS_DENIED
+            raise SecretAccessDenied("Credential Manager secret access denied")
+        raise SecretUnavailable("Credential Manager secret read failed")
     try:
         size = cred_ptr.contents.CredentialBlobSize
         if size == 0:
@@ -267,28 +273,31 @@ class WindowsCredentialBackend(KeychainBackend):
         if fmt == _FMT_RAW:
             try:
                 return Sealed(payload.decode("utf-8"))
-            except UnicodeDecodeError as e:
-                raise KeychainError(f"failed to decode {target}: {e}")
+            except UnicodeDecodeError:
+                raise SecretUnavailable("invalid Credential Manager value") from None
         if fmt == _FMT_CHUNKED:
             try:
                 header = json.loads(payload.decode("utf-8"))
-                n = int(header["chunks"])
-            except (json.JSONDecodeError, KeyError, ValueError, UnicodeDecodeError) as e:
-                raise KeychainError(f"corrupt chunked header for {target}: {e}")
+                n = header["chunks"]
+                if type(n) is not int or not 1 <= n <= _MAX_CHUNK_COUNT:
+                    raise ValueError("invalid chunk count")
+            except (json.JSONDecodeError, KeyError, ValueError, UnicodeDecodeError, TypeError):
+                raise SecretUnavailable("invalid Credential Manager chunk header") from None
             parts: list[bytes] = []
             for i in range(n):
                 chunk_target = f"{self._prefix_chunk}{account}#{i}"
-                chunk_blob = _read_blob(chunk_target)
+                try:
+                    chunk_blob = _read_blob(chunk_target)
+                except SecretNotFound:
+                    raise SecretUnavailable("incomplete Credential Manager value") from None
                 if not chunk_blob or chunk_blob[0] != _FMT_RAW:
-                    raise KeychainError(
-                        f"chunk {i} missing or malformed for {target}"
-                    )
+                    raise SecretUnavailable("invalid Credential Manager chunk")
                 parts.append(chunk_blob[1:])
             try:
                 return Sealed(b"".join(parts).decode("utf-8"))
-            except UnicodeDecodeError as e:
-                raise KeychainError(f"failed to decode chunks for {target}: {e}")
-        raise KeychainError(f"unknown format byte {fmt:#x} for {target}")
+            except UnicodeDecodeError:
+                raise SecretUnavailable("invalid Credential Manager value") from None
+        raise SecretUnavailable("unknown Credential Manager value format")
 
     def set(self, account: str, value: str) -> None:
         main_target = self._prefix_main + account

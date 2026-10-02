@@ -11,14 +11,14 @@ import pytest
 from keys_keeper import cli
 from keys_keeper.paths import Paths
 from keys_keeper.cli_sync import SYNC_PASS
-from keys_keeper import cli_sync
+from keys_keeper import cli_sync, sync_application
 from keys_keeper.composition import AccessContext
 from _sync_fakes import FakeRemote, FakeBackend
 
 
 @pytest.fixture(autouse=True)
 def isolated_automatic_worker_boundary(monkeypatch):
-    monkeypatch.setattr(cli_sync, "run_auto_worker", lambda mode, paths: cli_sync._run_auto_worker(paths))
+    monkeypatch.setattr(cli_sync, "run_auto_worker", lambda mode, paths: sync_application._run_auto_worker(paths))
 
 AKID, S3SECRET, PW = "AKID", "s3secret", "passphrase-X"
 
@@ -28,12 +28,12 @@ def sync_cli(kk_home, monkeypatch):
     backend = FakeBackend()
     remote = FakeRemote()
     access_calls = []
-    def make_backend(*, access=AccessContext.INTERACTIVE):
+    def make_backend(*, access=AccessContext.INTERACTIVE, paths=None):
         access_calls.append(access)
         return backend
     monkeypatch.setattr("keys_keeper.cli.build_backend", lambda: backend)
-    monkeypatch.setattr("keys_keeper.cli_sync.build_backend", make_backend)
-    monkeypatch.setattr("keys_keeper.cli_sync._build_remote", lambda cfg, b: remote)
+    monkeypatch.setattr("keys_keeper.sync_application.build_backend", make_backend)
+    monkeypatch.setattr("keys_keeper.sync_application._build_remote", lambda cfg, b: remote)
     return SimpleNamespace(backend=backend, remote=remote, access_calls=access_calls)
 
 
@@ -94,7 +94,7 @@ def test_default_path_spawns_detached_worker(sync_cli, monkeypatch):
         calls["kwargs"] = kwargs
         return object()
 
-    monkeypatch.setattr("keys_keeper.cli_sync.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("keys_keeper.auto_worker.subprocess.Popen", fake_popen)
     rc = cli.main(["sync", "auto", "--force"])   # no --foreground
     assert rc == 0
     assert calls["argv"][1:4] == ["-m", "keys_keeper.auto_worker", "s3"]
@@ -123,8 +123,8 @@ def test_automatic_debounce_environment_never_lowers_daily_floor(monkeypatch, co
 def test_normal_automatic_work_is_claimed_once_across_concurrent_hooks(sync_cli, monkeypatch):
     _setup_auto()
     calls = []
-    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
-    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: calls.append("work"))
+    monkeypatch.setattr(sync_application, "_auto_debounced", lambda _paths: False)
+    monkeypatch.setattr(sync_application, "_run_auto_worker", lambda _paths: calls.append("work"))
     args = SimpleNamespace(force=False, foreground=True)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: cli_sync.cmd_sync_auto(args), range(2)))
@@ -140,8 +140,8 @@ def test_daily_failure_claim_survives_new_hook_and_explicit_force_is_manual(sync
         calls.append("attempt")
         raise ConnectionError("SYNTHETIC-ERROR-MUST-NOT-APPEAR")
 
-    monkeypatch.setattr(cli_sync, "_run_auto_worker", fail)
-    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
+    monkeypatch.setattr(sync_application, "_run_auto_worker", fail)
+    monkeypatch.setattr(sync_application, "_auto_debounced", lambda _paths: False)
     # A failed attempt still blocks a later hook, even if public sync status is
     # overwritten by some other operation after the first hook.
     for _ in range(2):
@@ -153,8 +153,8 @@ def test_daily_failure_claim_survives_new_hook_and_explicit_force_is_manual(sync
 
 def test_s3_daily_marker_corruption_and_stamp_failure_do_not_run_work(sync_cli, monkeypatch):
     _setup_auto()
-    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: pytest.fail("invalid timing metadata ran work"))
-    monkeypatch.setattr(cli_sync, "_auto_debounced", lambda _paths: False)
+    monkeypatch.setattr(sync_application, "_run_auto_worker", lambda _paths: pytest.fail("invalid timing metadata ran work"))
+    monkeypatch.setattr(sync_application, "_auto_debounced", lambda _paths: False)
     from keys_keeper.auto_schedule import claim_auto_sync
     schedule = Paths(Paths().root / "sync-auto-schedule")
     claim_auto_sync(schedule, 1000)
@@ -163,7 +163,7 @@ def test_s3_daily_marker_corruption_and_stamp_failure_do_not_run_work(sync_cli, 
     assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
     assert marker.read_bytes() == b"null"
     marker.unlink()
-    monkeypatch.setattr(cli_sync, "_touch_auto_stamp", lambda _paths: (_ for _ in ()).throw(OSError("synthetic failure")))
+    monkeypatch.setattr(sync_application, "_touch_auto_stamp", lambda _paths: (_ for _ in ()).throw(OSError("synthetic failure")))
     assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
     assert marker.exists()  # Claim was durable before stamping or launching failed.
 
@@ -174,11 +174,11 @@ def test_legacy_s3_timestamp_remains_debounced_for_a_full_day(sync_cli, monkeypa
     paths.sync_state_json.write_text(json.dumps({"last_auto_at":
         (datetime.now(timezone.utc) - timedelta(hours=23)).strftime("%Y-%m-%dT%H:%M:%SZ")}))
     paths.sync_state_json.chmod(0o600)
-    monkeypatch.setattr(cli_sync, "_DEBOUNCE_SEC", 60)
-    assert cli_sync._auto_debounced(paths) is True
+    monkeypatch.setattr(sync_application, "_DEBOUNCE_SEC", 60)
+    assert sync_application._auto_debounced(paths) is True
     paths.sync_state_json.write_text(json.dumps({"last_auto_at":
         (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")}))
-    assert cli_sync._auto_debounced(paths) is False
+    assert sync_application._auto_debounced(paths) is False
 
 
 def test_manual_s3_push_remains_immediate_after_daily_automatic_pass(sync_cli):

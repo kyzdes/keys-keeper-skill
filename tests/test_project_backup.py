@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -14,13 +15,18 @@ import pytest
 
 from keys_keeper import crypto
 from keys_keeper import project_backup as backup_module
+from keys_keeper import private_files
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
-from keys_keeper.master_journal import MASTER_MUTATION_KIND, MasterMutationManager
+from keys_keeper.master_journal import (
+    MASTER_MUTATION_KIND, MASTER_UNLOCK_ACCOUNT, MasterMutationManager,
+    compose_master_mutations,
+)
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.operation_journal import OperationJournal
 from keys_keeper.paths import Paths
 from keys_keeper.project_backup import (
     BACKUP_SCHEMA_VERSION,
+    ProjectBackupCommitError,
     ProjectBackupError,
     create_master_backup,
     create_replica_backup,
@@ -65,16 +71,16 @@ def test_backup_reader_uses_binary_descriptor(tmp_path, monkeypatch):
     path.write_bytes(ciphertext)
     if os.name == "posix":
         path.chmod(0o600)
-    real_open = os.open
+    real_open = private_files._open_read
     binary_flag = getattr(os, "O_BINARY", getattr(os, "O_NONBLOCK", 0x4))
     seen = []
     monkeypatch.setattr(backup_module.os, "O_BINARY", binary_flag, raising=False)
 
-    def recording_open(target, flags, mode=0o777):
+    def recording_open(target, flags):
         seen.append(flags)
-        return real_open(target, flags, mode)
+        return real_open(target, flags)
 
-    monkeypatch.setattr(backup_module.os, "open", recording_open)
+    monkeypatch.setattr(private_files, "_open_read", recording_open)
     assert backup_module._secure_read(path) == ciphertext
     assert seen and seen[0] & binary_flag
 
@@ -226,6 +232,200 @@ def test_schema2_pre_migration_backup_round_trip(tmp_path):
     )
     assert recovered.metadata_store().get_by_id(entry.id).name == entry.name
     assert recovered.open_master_backend("recovery-password").get(entry.id).unseal() == "SYNTHETIC-LEGACY-SECRET"
+
+
+@pytest.mark.parametrize("service_accounts", [None, ()])
+def test_schema2_durable_backup_restores_journal_key_and_accepts_new_mutation(
+    tmp_path, service_accounts,
+):
+    store, backend = MetadataStore(Paths(tmp_path / "source")), MemoryBackend()
+    service = VaultService(store, backend)
+    original = Entry.new(name="durable-original", type=EntryType.API_KEY)
+    service.create_entry(original, secrets=SecretInput(value="SYNTHETIC-ORIGINAL"))
+    manager = service.master_mutations
+    assert manager is not None
+    source_key = backend.get(MASTER_UNLOCK_ACCOUNT).unseal()
+    assert manager.journal.paths.operations_dir.joinpath("terminal-receipts.kk1").exists()
+    assert store._read()["schema_version"] == 2
+
+    destination = tmp_path / "durable-master.kk3"
+    create_master_backup(store, backend, journal=manager.journal,
+                         destination=destination, password="backup-password",
+                         service_accounts=service_accounts)
+    recovered = restore_backup(destination, password="backup-password",
+                               recovery_root=tmp_path / "recovered",
+                               recovery_password="recovery-password")
+    marker_path = recovered.paths.root / "recovery-only"
+    marker = marker_path.read_bytes()
+    restored_store = recovered.metadata_store()
+    restored_backend = recovered.open_master_backend("recovery-password")
+    assert restored_backend.get(MASTER_UNLOCK_ACCOUNT).unseal() == source_key
+    restored_manager = compose_master_mutations(restored_store, restored_backend)
+    # Recovery authenticates the restored encrypted receipt ledger. A missing
+    # runtime key would otherwise create a new key and strand these receipts.
+    assert restored_manager.recover() == []
+    assert not restored_manager.has_pending
+    assert restored_backend.get(original.id).unseal() == "SYNTHETIC-ORIGINAL"
+    new_entry = Entry.new(name="durable-after-restore", type=EntryType.API_KEY)
+    VaultService(restored_store, restored_backend, master_mutations=restored_manager).create_entry(
+        new_entry, secrets=SecretInput(value="SYNTHETIC-AFTER-RESTORE"),
+    )
+    assert restored_store.get_by_id(new_entry.id).name == new_entry.name
+    assert restored_backend.get(new_entry.id).unseal() == "SYNTHETIC-AFTER-RESTORE"
+    assert restored_manager.recover() == []
+    # Exercising the isolated manager is not activation of a recovery profile.
+    assert marker_path.read_bytes() == marker
+    assert json.loads(marker)["mode"] == "recovery_only"
+
+
+def test_backup_directory_fsync_failure_reports_committed_publication(tmp_path, monkeypatch):
+    store, backend = MetadataStore(Paths(tmp_path / "source")), MemoryBackend()
+    entry = Entry.new(name="committed-backup", type=EntryType.API_KEY)
+    service = VaultService(store, backend)
+    service.create_entry(entry, secrets=SecretInput(value="SYNTHETIC-SECRET"))
+    destination = tmp_path / "published.kk3"
+
+    def failed_parent_sync(_parent):
+        raise OSError("SYNTHETIC-UNTRUSTED-DIAGNOSTIC")
+
+    monkeypatch.setattr(backup_module, "_fsync_parent", failed_parent_sync)
+    with pytest.raises(ProjectBackupCommitError) as failed:
+        create_master_backup(store, backend, journal=service.master_mutations.journal,
+                             destination=destination, password="backup-password")
+    assert failed.value.committed is True
+    assert "SYNTHETIC" not in str(failed.value)
+    assert b"SYNTHETIC-SECRET" not in destination.read_bytes()
+    assert inspect_backup(destination, password="backup-password").entry_count == 1
+
+
+def test_backup_existing_destination_fails_before_secret_access(tmp_path, monkeypatch):
+    paths = Paths(tmp_path / "source")
+    store, backend = MetadataStore(paths), MemoryBackend()
+    destination = tmp_path / "existing.kk3"
+    destination.write_bytes(b"previous-backup")
+
+    def forbidden_access(*_args):
+        raise AssertionError("existing destination must be rejected before provider access")
+
+    monkeypatch.setattr(backend, "get", forbidden_access)
+    monkeypatch.setattr(backend, "list_ids", forbidden_access)
+    with pytest.raises(ProjectBackupError, match="destination already exists"):
+        create_master_backup(store, backend, journal=_journal(paths),
+                             destination=destination, password="backup-password")
+    assert destination.read_bytes() == b"previous-backup"
+
+
+def test_backup_competing_destination_is_preserved(tmp_path, monkeypatch):
+    paths = Paths(tmp_path / "source")
+    store, backend = MetadataStore(paths), MemoryBackend()
+    destination = tmp_path / "raced.kk3"
+    encrypt = backup_module.crypto.encrypt_blob
+
+    def competing_backup(plaintext, *, password):
+        blob = encrypt(plaintext, password=password)
+        destination.write_bytes(b"competing-backup")
+        return blob
+
+    monkeypatch.setattr(backup_module.crypto, "encrypt_blob", competing_backup)
+    with pytest.raises(ProjectBackupError, match="destination already exists"):
+        create_master_backup(store, backend, journal=_journal(paths),
+                             destination=destination, password="backup-password")
+    assert destination.read_bytes() == b"competing-backup"
+
+
+@pytest.mark.parametrize("fault", ["required-absent", "authority-missing", "authority-absent", "service-collision", "manifest-revision"])
+def test_restore_rejects_authenticated_incomplete_secret_maps_before_writing(tmp_path, fault):
+    paths = Paths(tmp_path / "source")
+    store, backend = MetadataStore(paths), MemoryBackend()
+    service = VaultService(store, backend)
+    entry = Entry.new(name="complete-backup", type=EntryType.API_KEY)
+    service.create_entry(entry, secrets=SecretInput(value="SYNTHETIC-SECRET"))
+    destination = tmp_path / "tampered.kk3"
+    create_master_backup(store, backend, journal=service.master_mutations.journal,
+                         destination=destination, password="backup-password")
+    bundle = json.loads(crypto.decrypt_blob(destination.read_bytes(), password="backup-password"))
+    payload = bundle["payload"]
+    if fault == "required-absent":
+        payload["entry_secrets"][entry.id] = {"present": False}
+    elif fault == "authority-missing":
+        payload["service_secrets"].pop(MASTER_UNLOCK_ACCOUNT)
+    elif fault == "authority-absent":
+        payload["service_secrets"][MASTER_UNLOCK_ACCOUNT] = {"present": False}
+    elif fault == "service-collision":
+        payload["service_secrets"][entry.id] = {"present": True, "value": "SYNTHETIC-OVERRIDE"}
+    else:
+        bundle["manifest"]["metadata_revision"] = "0" * 64
+    # Keep authentication and the content hash valid: this tests the actual
+    # backup contract, not detection of a damaged encrypted byte stream.
+    bundle["manifest"]["content_hash"] = hashlib.sha256(backup_module._canonical_bytes(payload)).hexdigest()
+    destination.write_bytes(crypto.encrypt_blob(backup_module._canonical_bytes(bundle), password="backup-password"))
+    target = tmp_path / "must-not-be-created"
+    with pytest.raises(ProjectBackupError):
+        restore_backup(destination, password="backup-password", recovery_root=target,
+                       recovery_password="recovery-password")
+    assert not target.exists()
+
+
+def test_backup_validates_legacy_metadata_before_encrypting_or_publishing(tmp_path, monkeypatch):
+    paths = Paths(tmp_path / "legacy")
+    store, backend = MetadataStore(paths), MemoryBackend()
+    entry = Entry.new(name="legacy-invalid-note", type=EntryType.NOTE,
+                      fields={"secret_body": False, "body": "synthetic body"})
+    store.add(entry)
+    data = json.loads(paths.data_json.read_text(encoding="utf-8"))
+    data["entries"][0]["fields"]["secret_body"] = "False"
+    paths.data_json.write_text(json.dumps(data), encoding="utf-8")
+    backend.set(entry.id, "SYNTHETIC-SECRET")
+    monkeypatch.setattr(backup_module.crypto, "encrypt_blob",
+                        lambda *_a, **_kw: pytest.fail("invalid metadata was encrypted"))
+    destination = tmp_path / "must-not-exist.kk3"
+    with pytest.raises(ProjectBackupError, match="invalid master backup metadata"):
+        create_master_backup(store, backend, journal=_journal(paths),
+                             destination=destination, password="backup-password")
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "fifo", "symlink-parent"])
+def test_backup_refuses_unsafe_targets_without_following_or_replacing(tmp_path, kind):
+    store, backend = MetadataStore(Paths(tmp_path / "source")), MemoryBackend()
+    entry = Entry.new(name="unsafe-target", type=EntryType.API_KEY)
+    service = VaultService(store, backend)
+    service.create_entry(entry, secrets=SecretInput(value="SYNTHETIC-SECRET"))
+    destination = tmp_path / "unsafe.kk3"
+    preserved = tmp_path / "preserved"
+    preserved.write_bytes(b"previous-file")
+    if kind == "symlink":
+        try:
+            destination.symlink_to(preserved)
+        except OSError:
+            pytest.skip("symlinks require platform support")
+    elif kind == "directory":
+        destination.mkdir()
+    elif kind == "fifo":
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("FIFO requires POSIX")
+        os.mkfifo(destination)
+    else:
+        actual_parent = tmp_path / "actual-parent"
+        actual_parent.mkdir()
+        linked_parent = tmp_path / "linked-parent"
+        try:
+            linked_parent.symlink_to(actual_parent, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks require platform support")
+        destination = linked_parent / "unsafe.kk3"
+    with pytest.raises(ProjectBackupError):
+        create_master_backup(store, backend, journal=service.master_mutations.journal,
+                             destination=destination, password="backup-password")
+    assert preserved.read_bytes() == b"previous-file"
+    if kind == "symlink":
+        assert destination.is_symlink()
+    elif kind == "directory":
+        assert destination.is_dir()
+    elif kind == "fifo":
+        assert stat.S_ISFIFO(destination.lstat().st_mode)
+    else:
+        assert not (actual_parent / "unsafe.kk3").exists()
 
 
 def test_master_backup_refuses_pending_mutation(tmp_path):

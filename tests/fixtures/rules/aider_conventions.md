@@ -19,7 +19,7 @@ must be treated as exposed to other processes with access to that destination:
 - `keys inject NAME --file PATH --as ENV` — value goes directly to file (`--replace` only when that exact variable may be overwritten)
 - `keys resolve PATH` — placeholder substitution in file (writes back to the same path)
 - `keys add NAME --from-clipboard` / `--from-file PATH` / `--stdin` (when the user already piped); repeat `--tag TAG` for each tag
-- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS/Linux, icacls user-restricted ACL on Windows)
+- `keys ssh NAME` — opens ssh session with resolved key (CLI creates the tempfile with private permissions before writing: POSIX 0600 on macOS/Linux, protected current-user DACL on Windows)
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
@@ -92,7 +92,7 @@ migrate existing secrets or restructure their setup unprompted.
 2. Preferred path: `keys add NAME --type TYPE --from-clipboard --tag TAG_A --tag TAG_B --note "..."`.
    `--tag` is repeatable: a comma-joined value such as `--tag llm,prod` creates one literal tag, not two. Keep each tag concise (64 characters maximum).
 3. For multi-line secrets (SSH keys, PEM blobs): tell the user to either save to a file (`--from-file path`) or open `keys serve` and use the web form (clipboard truncation can corrupt long PEMs).
-4. For mass import from a notes file: `keys serve` → Bulk import page (the parser handles `key=value` lines, multi-line PEMs, tags, and type override per-line).
+4. `keys serve` → Bulk import accepts API keys and protected notes. Use the single-entry form or `keys add` for SSH keys, servers, domains and other structured types; bulk import does not infer their fields.
 
 ### User wants to put a secret into a file
 
@@ -111,7 +111,7 @@ Examples:
 Use a narrowly scoped temporary directory and an explicit file path. On POSIX:
 
 1. Create it with `mktemp -d`, keep the returned path in a task-specific variable, and create only the exact file you need. Never target `$HOME`, `~`, a repository root, a glob, or an unresolved variable for cleanup.
-2. Run `keys inject NAME --file "$exact_file" --as ENV_NAME`; the CLI creates/rewrites the sink with owner-only permissions. Do not `cat`, `sed`, `grep`, `source`, interpolate, or otherwise round-trip its contents into shell output. A dotenv assignment is not shell-escaped data.
+2. Run `keys inject NAME --file "$exact_file" --as ENV_NAME`; the CLI creates/rewrites the sink with owner-only permissions. Injection supports single-line literal dotenv values and rejects ambiguous quoting, interpolation and duplicate assignments. Do not `cat`, `sed`, `grep`, `source`, interpolate, or otherwise round-trip its contents into shell output. A dotenv assignment is not shell-escaped data.
 3. Pass the file directly to the intended local tool, transfer it to one exact protected remote path, or use a fixed helper whose output contains status only. Verify path, owner/mode, non-empty status, and the downstream result — never the value.
 4. Remove the exact file with `/bin/unlink "$exact_file"`, then remove the now-empty temporary directory with `rmdir`. Avoid broad `rm -f` / `rm -rf` cleanup patterns; agent policies often reject them and a loose variable makes them dangerous.
 

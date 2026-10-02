@@ -1,0 +1,151 @@
+{
+  "source_commit": "36df576ba403437d6352add265232bc01601cbae",
+  "synthetic_data_only": true,
+  "probes": [
+    {
+      "probe": "legacy_snapshot_silently_omits_denied_secret",
+      "accepted": true,
+      "required_secret_is_null": true
+    },
+    {
+      "probe": "legacy_export_reports_success_with_denied_secret",
+      "exit_code": 0,
+      "required_secret_is_null": true,
+      "success_receipt": true
+    },
+    {
+      "probe": "legacy_export_follows_symlink_and_overwrites_target",
+      "exit_code": 0,
+      "target_overwritten": true,
+      "target_mode": "0o644"
+    },
+    {
+      "probe": "rename_leaves_dangling_reference",
+      "schema": 2,
+      "rename_committed": true,
+      "dependent_uses_old_name": true,
+      "resolution_failed": true
+    },
+    {
+      "probe": "reusing_old_name_silently_rebinds_reference",
+      "schema": 2,
+      "dependent_unchanged": true,
+      "resolved_to_different_entry": true
+    },
+    {
+      "probe": "rename_leaves_dangling_reference",
+      "schema": 3,
+      "rename_committed": true,
+      "dependent_uses_old_name": true,
+      "resolution_failed": true
+    },
+    {
+      "probe": "reusing_old_name_silently_rebinds_reference",
+      "schema": 3,
+      "dependent_unchanged": true,
+      "resolved_to_different_entry": true
+    },
+    {
+      "probe": "resolve_continues_after_authorization_failure",
+      "exit_code": 1,
+      "denied_read_attempts": 2,
+      "later_secret_read": true,
+      "audit_events": 0
+    },
+    {
+      "probe": "inject_replace_only_updates_first_duplicate",
+      "exit_code": 0,
+      "duplicate_assignments": 2,
+      "last_assignment_still_old": true
+    },
+    {
+      "probe": "inject_accepts_newline_in_env_name",
+      "exit_code": 0,
+      "assignments_written": 2
+    },
+    {
+      "probe": "inject_multiline_value_creates_second_assignment",
+      "exit_code": 0,
+      "assignments_written": 2
+    },
+    {
+      "probe": "secure_sink_accepts_in_place_concurrent_edit",
+      "same_inode": true,
+      "concurrent_edit_lost": true
+    },
+    {
+      "probe": "audit_failure_escapes_after_successful_sink",
+      "sink_committed": true,
+      "command_raises": true,
+      "receipt_missing": true
+    },
+    {
+      "probe": "entry_recent_events_returns_oldest_five",
+      "returned_indices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected_indices": [
+        6,
+        5,
+        4,
+        3,
+        2
+      ]
+    },
+    {
+      "probe": "ui_note_payload_is_rejected_by_domain_model",
+      "status": 400,
+      "missing_required_secret_body": true
+    },
+    {
+      "probe": "api_patch_accepts_unsupported_name_field",
+      "status": 200,
+      "name_unchanged": true,
+      "edit_form_is_readonly": true
+    },
+    {
+      "probe": "existing_empty_metadata_is_treated_as_fresh_vault",
+      "metadata_entries": 0,
+      "backend_entry_still_present": true,
+      "read_error": false
+    },
+    {
+      "probe": "completed_history_counts_towards_recovery_limit",
+      "completed_records": 4,
+      "pending_records": 0,
+      "modeled_record_limit": 3,
+      "recovery_rejected": true,
+      "production_record_limit": 10000
+    },
+    {
+      "probe": "completed_history_reauthenticated_after_every_mutation",
+      "completed_records_before": 8,
+      "completed_records_after": 9,
+      "cold_kdf_count": 8,
+      "warm_unchanged_kdf_count": 0,
+      "after_mutation_kdf_count": 8,
+      "cold_wall_seconds": 1.31039,
+      "after_mutation_wall_seconds": 1.313289
+    },
+    {
+      "probe": "authenticated_admin_malformed_json_closes_connection",
+      "disconnected": true,
+      "structured_400": false
+    },
+    {
+      "probe": "secure_sink_blocks_on_fifo_open_race",
+      "child_exceeded_seconds": 1,
+      "child_killed_by_probe": true
+    },
+    {
+      "probe": "legacy_mutation_crash_leaves_mismatched_state",
+      "child_exit": 77,
+      "backend_has_new_value": true,
+      "metadata_has_old_note": true
+    }
+  ]
+}

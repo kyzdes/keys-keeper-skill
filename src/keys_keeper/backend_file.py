@@ -20,14 +20,16 @@ from __future__ import annotations
 import json
 import os
 import stat
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from keys_keeper import crypto
-from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
+from keys_keeper.backend import KeychainBackend, KeychainError, Sealed, SecretNotFound, SecretUnavailable
 from keys_keeper.paths import Paths, ensure_private_dir
+from keys_keeper.private_files import (
+    PrivateFileError, atomic_write_bytes, open_private_file, secure_read,
+)
 from keys_keeper._locking import lock_exclusive, unlock
 
 _MASTER_ENV = "KEYS_KEEPER_MASTER_KEY"
@@ -101,8 +103,8 @@ class EncryptedFileBackend(KeychainBackend):
             raise KeychainError(f"{source} is missing or empty")
         try:
             value = raw.decode("utf-8")
-        except UnicodeDecodeError as ex:
-            raise KeychainError("file backend unlock source is not valid UTF-8") from ex
+        except UnicodeDecodeError:
+            raise SecretUnavailable("file backend unlock source is not valid UTF-8") from None
         self._password_cache = Sealed(value)
         return value
 
@@ -121,27 +123,12 @@ class EncryptedFileBackend(KeychainBackend):
     @classmethod
     def _read_password_file(cls, path: Path) -> bytes:
         try:
-            before = path.lstat()
-        except OSError as ex:
-            raise KeychainError("cannot open file backend unlock source") from ex
-        if stat.S_ISLNK(before.st_mode):
-            raise KeychainError("file backend unlock source must not be a symlink")
-        cls._validate_password_stat(before)
-        flags = os.O_RDONLY
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        try:
-            fd = os.open(path, flags)
-        except OSError as ex:
-            raise KeychainError("cannot open file backend unlock source") from ex
-        try:
-            opened = os.fstat(fd)
-            cls._validate_password_stat(opened)
-            if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-                raise KeychainError("file backend unlock source changed while opening")
-            return cls._bounded_read(fd)
-        finally:
-            os.close(fd)
+            return secure_read(path, max_bytes=_MAX_PASSWORD_BYTES)
+        except (PrivateFileError, OSError):
+            raise SecretUnavailable(
+                "file backend unlock source must be a bounded private regular non-symlink file; "
+                "safe ownership and permissions are required"
+            ) from None
 
     @classmethod
     def _read_password_fd(cls, source_fd: int) -> bytes:
@@ -153,6 +140,12 @@ class EncryptedFileBackend(KeychainBackend):
             info = os.fstat(fd)
             if stat.S_ISREG(info.st_mode):
                 cls._validate_password_stat(info)
+                if os.name == "nt":
+                    from keys_keeper.windows_file_security import validate_fd
+                    try:
+                        validate_fd(fd)
+                    except OSError:
+                        raise SecretUnavailable("file backend unlock descriptor is not private") from None
             return cls._bounded_read(fd)
         finally:
             os.close(fd)
@@ -197,7 +190,7 @@ class EncryptedFileBackend(KeychainBackend):
             return {}
         except (crypto.BadPassword, ValueError, UnicodeError, RecursionError):
             self._derived_key_cache = None
-            raise KeychainError(
+            raise SecretUnavailable(
                 f"cannot decrypt {path.name}: password incorrect or file corrupted"
             ) from None
         except Exception:
@@ -209,41 +202,14 @@ class EncryptedFileBackend(KeychainBackend):
     @staticmethod
     def _secure_read_blob(path: Path) -> bytes:
         try:
-            before = path.lstat()
+            return secure_read(path, max_bytes=_MAX_BLOB_BYTES)
         except FileNotFoundError:
             raise
-        except OSError as ex:
-            raise KeychainError("cannot inspect encrypted secrets file") from ex
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-            raise KeychainError("encrypted secrets file must be a regular non-symlink file")
-        if os.name == "posix":
-            if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077:
-                raise KeychainError("encrypted secrets file has unsafe ownership or permissions")
-        if before.st_size > _MAX_BLOB_BYTES:
-            raise KeychainError("encrypted secrets file exceeds size limit")
-        flags = (os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                 | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-        try:
-            fd = os.open(path, flags)
-        except FileNotFoundError:
-            raise
-        except OSError as ex:
-            raise KeychainError("cannot open encrypted secrets file") from ex
-        try:
-            opened = os.fstat(fd)
-            if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-                raise KeychainError("encrypted secrets file changed while opening")
-            if not stat.S_ISREG(opened.st_mode) or opened.st_size > _MAX_BLOB_BYTES:
-                raise KeychainError("invalid encrypted secrets file")
-            if os.name == "posix" and (opened.st_uid != os.getuid() or stat.S_IMODE(opened.st_mode) & 0o077):
-                raise KeychainError("encrypted secrets file has unsafe ownership or permissions")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
-                blob = stream.read(_MAX_BLOB_BYTES + 1)
-            if len(blob) > _MAX_BLOB_BYTES:
-                raise KeychainError("encrypted secrets file exceeds size limit")
-            return blob
-        finally:
-            os.close(fd)
+        except PrivateFileError as ex:
+            # Shared file errors contain only fixed metadata diagnostics.
+            raise SecretUnavailable(str(ex)) from None
+        except OSError:
+            raise SecretUnavailable("cannot open encrypted secrets file") from None
 
     def _load(self) -> dict[str, str]:
         return self._decrypt_file()
@@ -261,20 +227,11 @@ class EncryptedFileBackend(KeychainBackend):
         # encrypted store's parent dir is never created world-readable.
         ensure_private_dir(self.paths.root)
         lock_path = self.paths.root / "secrets.lock"
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
-            lock_fd = os.open(lock_path, flags, 0o600)
-        except OSError as ex:
-            raise KeychainError("cannot open encrypted secrets lock") from ex
+            lock_fd = open_private_file(lock_path, os.O_RDWR | os.O_CREAT)
+        except (PrivateFileError, OSError):
+            raise SecretUnavailable("cannot open encrypted secrets lock") from None
         try:
-            info = os.fstat(lock_fd)
-            if not stat.S_ISREG(info.st_mode):
-                raise KeychainError("encrypted secrets lock must be a regular file")
-            if os.name == "posix":
-                if info.st_uid != os.getuid():
-                    raise KeychainError("encrypted secrets lock must be owned by this user")
-                os.fchmod(lock_fd, 0o600)
             lock_exclusive(lock_fd)
             try:
                 original = self._decrypt_file()
@@ -296,32 +253,19 @@ class EncryptedFileBackend(KeychainBackend):
             os.close(lock_fd)
 
     def _atomic_write_bytes(self, blob: bytes) -> None:
-        # temp file in the same dir -> fsync -> os.replace (atomic on POSIX/NTFS).
-        target = self.paths.secrets_enc
-        fd, tmp_path = tempfile.mkstemp(dir=self.paths.root, prefix=".secrets.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(blob)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, target)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except FileNotFoundError:
-                pass
-            raise
-        try:
-            os.chmod(target, 0o600)
-        except OSError:
-            pass
+        atomic_write_bytes(self.paths.secrets_enc, blob)
 
     # ---- KeychainBackend interface ----
 
     def get(self, account: str) -> Sealed:
-        data = self._load()
+        try:
+            data = self._load()
+        except SecretUnavailable:
+            raise
+        except KeychainError:
+            raise SecretUnavailable("encrypted secrets provider unavailable") from None
         if account not in data:
-            raise KeychainError(f"secret not found: {account}")
+            raise SecretNotFound(f"secret not found: {account}")
         return Sealed(data[account])
 
     def set(self, account: str, value: str) -> None:

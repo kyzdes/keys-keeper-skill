@@ -12,12 +12,15 @@ from keys_keeper.keychain_config import (
     BYPASS,
     PROMPT,
     KeychainConfig,
+    KeychainConfigCommitError,
+    MAX_KEYCHAIN_CONFIG_BYTES,
     interaction_allowed,
     load_keychain_config,
     save_keychain_config,
 )
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.paths import Paths
+from keys_keeper.private_files import atomic_write_bytes
 from keys_keeper.store import MetadataStore
 
 
@@ -235,3 +238,84 @@ def test_cli_prepare_refuses_to_weaken_partition_policy(
     err = capsys.readouterr().err
     assert "will not weaken" in err
     assert "signed Keys Keeper broker" in err
+
+
+def _policy_paths(tmp_path, monkeypatch):
+    monkeypatch.delenv("KEYS_KEEPER_KEYCHAIN_MODE", raising=False)
+    return Paths(tmp_path / "policy")
+
+
+def _symlink_or_skip(link, target):
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this platform")
+
+
+def test_policy_final_symlink_is_rejected_on_read_and_write(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+    paths.ensure()
+    target = tmp_path / "unrelated-policy"
+    original = b'mode = "bypass"\n'
+    atomic_write_bytes(target, original)
+    _symlink_or_skip(paths.keychain_toml, target)
+
+    with pytest.raises(KeychainError, match="safely"):
+        load_keychain_config(paths)
+    with pytest.raises(KeychainError, match="safely"):
+        save_keychain_config(KeychainConfig(mode=PROMPT), paths)
+
+    assert paths.keychain_toml.is_symlink()
+    assert target.read_bytes() == original
+
+
+def test_dangling_policy_link_does_not_silently_restore_prompt(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+    paths.ensure()
+    _symlink_or_skip(paths.keychain_toml, tmp_path / "absent-policy")
+    with pytest.raises(KeychainError):
+        load_keychain_config(paths)
+
+
+def test_policy_size_cap_is_checked_before_open(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+    atomic_write_bytes(paths.keychain_toml, b"x" * (MAX_KEYCHAIN_CONFIG_BYTES + 1))
+
+    def forbidden_open(*_args, **_kwargs):
+        pytest.fail("oversized policy reached an opened descriptor")
+
+    monkeypatch.setattr("keys_keeper.private_files._open_read", forbidden_open)
+    with pytest.raises(KeychainError, match="safely"):
+        load_keychain_config(paths)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX FIFO")
+def test_policy_fifo_fails_without_blocking(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+    paths.ensure()
+    os.mkfifo(paths.keychain_toml, 0o600)
+    with pytest.raises(KeychainError, match="safely"):
+        load_keychain_config(paths)
+
+
+def test_invalid_policy_encoding_has_fixed_error(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+    atomic_write_bytes(paths.keychain_toml, b'mode = "\xff"\n')
+    with pytest.raises(KeychainError) as caught:
+        load_keychain_config(paths)
+    assert str(caught.value) == "cannot read keychain policy safely; verify keychain.toml"
+    assert "\\xff" not in str(caught.value)
+
+
+def test_policy_postpublication_fsync_failure_keeps_committed_error(tmp_path, monkeypatch):
+    paths = _policy_paths(tmp_path, monkeypatch)
+
+    def failed_fsync(_path):
+        raise OSError("synthetic parent fsync failure")
+
+    monkeypatch.setattr("keys_keeper.private_files.fsync_parent", failed_fsync)
+    with pytest.raises(KeychainConfigCommitError) as caught:
+        save_keychain_config(KeychainConfig(mode=BYPASS), paths)
+
+    assert caught.value.committed is True
+    assert paths.keychain_toml.read_bytes() == b'mode = "bypass"\n'

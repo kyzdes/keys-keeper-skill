@@ -32,6 +32,14 @@ def test_F2_roundtrip_types(kk_home):
     assert isinstance(got.retain_snapshots, int)
 
 
+def test_quoted_config_literals_roundtrip_without_comment_or_escape_loss(kk_home):
+    paths = Paths()
+    cfg = SyncConfig(mode="off", bucket='quoted"bucket#suffix',
+                     region="single'quote", prefix="back\\slash#suffix")
+    save_sync_config(cfg, paths)
+    assert load_sync_config(paths) == cfg
+
+
 def test_F2_unknown_mode_and_addressing_rejected(kk_home):
     with pytest.raises(SyncConfigError):
         SyncConfig(mode="sideways").validate()

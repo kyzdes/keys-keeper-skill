@@ -18,7 +18,7 @@ import os
 import shutil
 import subprocess
 
-from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
+from keys_keeper.backend import KeychainBackend, KeychainError, Sealed, SecretUnavailable
 
 _SECRET_TOOL = "secret-tool"
 _PROBE_ACCOUNT = "kk:__keys-keeper-availability-probe__"
@@ -30,7 +30,7 @@ def _run_tool(command, **kwargs):
     try:
         return subprocess.run(command, timeout=_COMMAND_TIMEOUT, **kwargs)
     except (OSError, subprocess.SubprocessError):
-        raise KeychainError("Secret Service helper failed or timed out") from None
+        raise SecretUnavailable("Secret Service helper failed or timed out") from None
 
 
 def _secret_tool_path() -> str | None:
@@ -112,7 +112,11 @@ class SecretToolBackend(KeychainBackend):
             capture_output=True, text=True,
         )
         if result.returncode != 0:
-            raise KeychainError(f"secret not found: {account}")
+            # `lookup` has no reliable error taxonomy: a locked collection,
+            # cancelled unlock and an absent item can share the same status.
+            # Callers needing optional-account presence use list_ids first.
+            # Never turn this ambiguous failure into a successful null secret.
+            raise SecretUnavailable("Secret Service secret read failed")
         # `secret-tool lookup` prints the value with no trailing newline.
         return Sealed(result.stdout)
 

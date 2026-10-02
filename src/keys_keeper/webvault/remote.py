@@ -33,7 +33,7 @@ def load_s3_base() -> S3Base:
             access_key_id=os.environ["WEBVAULT_S3_ACCESS_KEY_ID"],
             secret_key=Sealed(os.environ["WEBVAULT_S3_SECRET_KEY"]),
         )
-    from keys_keeper.cli_sync import SYNC_ACCESS, SYNC_SECRET
+    from keys_keeper.sync_application import SYNC_ACCESS, SYNC_SECRET
     from keys_keeper.composition import AccessContext, build_backend
     from keys_keeper.config import load_sync_config
     from keys_keeper.paths import Paths

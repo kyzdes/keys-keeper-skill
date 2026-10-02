@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from keys_keeper.backend import KeychainBackend
 from keys_keeper.models import EntryType, validate_ssh_target
+from keys_keeper.private_files import create_private_temp
 from keys_keeper.refs import resolve_chain, RefMissingError
 from keys_keeper.store import MetadataStore
 
@@ -61,31 +62,6 @@ def _resolve_ssh_executable() -> str:
     return _validated_executable(discovered, "ssh")
 
 
-def _lock_down_key_file(path: str) -> None:
-    """Restrict a tempfile holding an SSH private key to the current user only.
-
-    POSIX: chmod 0600. Windows: use icacls to strip inheritance and grant
-    read access to the current user only — modern OpenSSH on Windows
-    refuses keys with looser ACLs.
-    """
-    if sys.platform == "win32":
-        user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
-        if not user:
-            raise SSHRunnerError("cannot determine the current Windows user")
-        icacls = _validated_executable(
-            str(_windows_system_directory() / "icacls.exe"),
-            "icacls",
-        )
-        result = subprocess.run(
-            [icacls, path, "/inheritance:r", "/grant:r", f"{user}:(R)"],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            raise SSHRunnerError("failed to restrict the SSH key tempfile ACL")
-    else:
-        os.chmod(path, 0o600)
-
-
 def _ssh_tempdir() -> str | None:
     """Prefer ~/.ssh if it exists, else let tempfile pick the system tempdir."""
     candidate = Path.home() / ".ssh"
@@ -117,20 +93,21 @@ def run_ssh(
             raise ValueError(f"server {server_name} requires ssh_key ref: {e}")
         # ACL-restricted tempfile sink (controlled, not transcript-visible).
         private_key = backend.get(ssh_entry.id).unseal()
-        tmp_path: str | None = None
+        tmp_path: Path | None = None
+        fd = -1
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".key", delete=False, dir=_ssh_tempdir(),
-            ) as tmp:
-                tmp_path = tmp.name
+            fd, tmp_path = create_private_temp(
+                Path(_ssh_tempdir() or tempfile.gettempdir()), suffix=".key",
+            )
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as tmp:
+                fd = -1
                 tmp.write(private_key)
                 if not private_key.endswith("\n"):
                     tmp.write("\n")
-            _lock_down_key_file(tmp_path)
             cmd = [
                 ssh_executable,
                 "-i",
-                tmp_path,
+                str(tmp_path),
                 "-p",
                 str(port),
                 f"{user}@{host}",
@@ -140,6 +117,8 @@ def run_ssh(
             result = subprocess.run(cmd)
             return result.returncode
         finally:
+            if fd >= 0:
+                os.close(fd)
             if tmp_path is not None:
                 try:
                     os.unlink(tmp_path)

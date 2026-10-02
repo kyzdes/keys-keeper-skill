@@ -1,0 +1,12 @@
+{
+  "all_results_idle": true,
+  "cpu_seconds": 1.256481,
+  "cycles": 3,
+  "encrypted_files_changed": 0,
+  "journal_record_writes": 0,
+  "kdf_derivations": 6,
+  "retain_state": true,
+  "scope_cycles": 18,
+  "scopes": 6,
+  "wall_seconds": 1.276221
+}

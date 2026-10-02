@@ -148,6 +148,18 @@ def test_duplicate_json_keys_never_reach_auto_action(boundary, raw):
     assert len(boundary.calls) == 1
 
 
+@pytest.mark.parametrize("action,data", [
+    ("auto", {"enabled": 1}),
+    ("auto", {"enabled": "false"}),
+    ("revoke", {"device_id": []}),
+    ("setup", {"endpoint": "https://synthetic.invalid", "admin_token_entry": "synthetic-entry",
+               "name": "Synthetic computer", "all_keys": "true"}),
+])
+def test_wrong_json_types_rejected_before_manager_mutation(boundary, action, data):
+    assert boundary.invoke(action, data=data) == (400, {"error": "Invalid personal sync request"})
+    assert len(boundary.calls) == 1
+
+
 def test_unknown_post_rejected_before_constructor_or_json_parse(boundary):
     boundary.failures["construct"] = OSError("synthetic-private-value")
     assert boundary.invoke("missing", raw=b"{", method="POST") == (404, {"error": "Unknown personal sync operation"})

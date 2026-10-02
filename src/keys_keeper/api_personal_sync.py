@@ -1,20 +1,19 @@
 """Local authenticated UI actions. Connection codes are never GET metadata."""
 from __future__ import annotations
 
-import json
-
 from keys_keeper.personal_sync import PersonalSync
 from keys_keeper.pairing import PairingError
 from keys_keeper.project_runtime import RuntimeErrorSafe
+from keys_keeper.request_json import request_object
 
 
-def _unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
+_POST_FIELDS = {
+    "setup": {"endpoint": str, "admin_token_entry": str, "name": str, "all_keys": bool},
+    "join": {"code": str, "name": str},
+    "approve": {"pair_id": str, "fingerprint": str},
+    "auto": {"enabled": bool},
+    "revoke": {"device_id": str},
+}
 
 
 def handle_personal_api(handler, *, paths, method, parsed, body, runtime=None, server_selector=None):
@@ -36,35 +35,40 @@ def handle_personal_api(handler, *, paths, method, parsed, body, runtime=None, s
         elif method == "GET" and action == "pending":
             result = {"requests": manager.pending()}
         else:
-            data = json.loads(body or b"{}", object_pairs_hook=_unique_object)
-            if not isinstance(data, dict):
-                raise ValueError()
-            if action == "setup" and set(data) == {"endpoint", "admin_token_entry", "name", "all_keys"}:
+            fields = _POST_FIELDS.get(action, {})
+            data = request_object(body, fields, required=set(fields))
+            if action == "setup":
                 result = manager.setup(**data)
                 result.update(manager.set_auto(True))
-            elif action == "invite" and not data:
+            elif action == "invite":
                 result = manager.invite()
-            elif action == "join" and set(data) == {"code", "name"}:
+            elif action == "join":
                 result = manager.join(**data)
                 result.update(manager.set_auto(True))
-            elif action == "approve" and set(data) == {"pair_id", "fingerprint"}:
+            elif action == "approve":
                 result = manager.approve(**data)
-            elif action == "sync" and not data:
+            elif action == "sync":
                 result = manager.sync()
-            elif action == "poll" and not data:
+            elif action == "poll":
                 result = manager.poll_worker()
-            elif action == "cancel" and not data:
+            elif action == "cancel":
                 result = manager.cancel_pending()
-            elif action == "auto" and set(data) == {"enabled"}:
+            elif action == "auto":
                 result = manager.set_auto(data["enabled"])
-            elif action == "revoke" and set(data) == {"device_id"}:
+            elif action == "revoke":
                 result = manager.revoke(data["device_id"])
             else:
                 raise ValueError()
         handler._send_json(200, result)
     except (RuntimeErrorSafe, PairingError) as ex:
+        if getattr(ex, "committed", None) is True:
+            raise
         handler._send_json(400, {"error": str(ex)})
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError) as ex:
+        if getattr(ex, "committed", None) is True:
+            raise
         handler._send_json(400, {"error": "Invalid personal sync request"})
-    except Exception:
+    except Exception as ex:
+        if getattr(ex, "committed", None) is True:
+            raise
         handler._send_json(503, {"error": "Could not complete this operation. Check the VPS connection and retry."})

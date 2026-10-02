@@ -4,17 +4,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 from keys_keeper._locking import lock_exclusive, unlock
-from keys_keeper.models import Entry, ValidationError, now_iso, validate_tombstone
+from keys_keeper.models import Entry, ValidationError, now_iso, validate_entry_id, validate_name, validate_tombstone
 from keys_keeper.project_models import CatalogState, CatalogValidationError, Folder, new_catalog_id
 from keys_keeper.paths import Paths, ensure_private_dir
-from keys_keeper.private_files import PrivateFileError, atomic_write_bytes
+from keys_keeper.private_files import PrivateFileError, atomic_write_bytes, open_private_file
 from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
@@ -36,6 +35,24 @@ class NotFound(StoreError):
     pass
 
 
+def _validate_record_identities(records: list[dict]) -> None:
+    """Reject ambiguous routing while preserving legacy optional field shapes."""
+    ids, names = set(), set()
+    try:
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValidationError("entry must be an object")
+            identifier, name = record.get("id"), record.get("name")
+            validate_entry_id(identifier)
+            validate_name(name)
+            if identifier in ids or name in names:
+                raise ValidationError("duplicate entry identity")
+            ids.add(identifier)
+            names.add(name)
+    except (ValidationError, TypeError, ValueError):
+        raise StoreError("metadata contains invalid or duplicate entry identities") from None
+
+
 def _normalize_v3_entries(records: list[dict]) -> None:
     """Give legacy-style Entry writers safe, explicit v3 catalog defaults."""
     for record in records:
@@ -54,6 +71,7 @@ def _validate_v3_data(data: dict) -> None:
     records = data.get("entries")
     if not isinstance(records, list):
         raise StoreError("schema-v3 entries must be a list")
+    _validate_record_identities(records)
     try:
         entries = [
             Entry.from_untrusted_dict(record, allow_project_fields=True)
@@ -124,6 +142,10 @@ class MetadataTransaction:
             if slot in self._records_by_slot
         ]
 
+    def records(self) -> list[dict]:
+        """Detached persisted images, preserving legacy omitted defaults."""
+        return json.loads(json.dumps(self._materialize_entries(), ensure_ascii=False))
+
     def get_by_name(self, name: str) -> Entry | None:
         slot = self._slot_by_name.get(name)
         if slot is None:
@@ -154,12 +176,36 @@ class MetadataTransaction:
         if conflict_slot is not None and conflict_slot != slot:
             raise NameConflict(f"entry with name {entry.name!r} already exists")
 
+        self.assert_rename_safe(entry)
+
         previous = self._records_by_slot[slot]
         previous_name = previous["name"]
         self._records_by_slot[slot] = entry.to_dict()
         if previous_name != entry.name:
             del self._slot_by_name[previous_name]
             self._slot_by_name[entry.name] = slot
+
+    def assert_rename_safe(self, entry: Entry) -> None:
+        """Names used by references cannot change until references are removed.
+
+        References remain name-based for wire compatibility. Explicitly
+        refusing this operation keeps its identity stable without introducing
+        another graph-rewriting/migration mechanism.
+        """
+        slot = self._slot_by_id.get(entry.id)
+        if slot is None or self._records_by_slot[slot]["name"] == entry.name:
+            return
+        old_name = self._records_by_slot[slot]["name"]
+        if any(ref.get("name") == old_name for record in self._records_by_slot.values()
+               for ref in record.get("refs", [])):
+            raise StoreError("cannot rename a referenced entry; remove its references first")
+
+    @property
+    def schema_version(self) -> int:
+        return self._schema_version
+
+    def tombstones(self) -> list[dict]:
+        return json.loads(json.dumps(self._data.get("tombstones", [])))
 
     def replace_by_name(self, entry: Entry) -> None:
         slot = self._slot_by_name.get(entry.name)
@@ -294,12 +340,8 @@ class MetadataStore:
             data["entries"].append(entry.to_dict())
 
     def update(self, entry: Entry) -> None:
-        with self._locked_write() as data:
-            for i, d in enumerate(data["entries"]):
-                if d["id"] == entry.id:
-                    data["entries"][i] = entry.to_dict()
-                    return
-            raise NotFound(f"no entry with id {entry.id}")
+        with self.transaction() as tx:
+            tx.update(entry)
 
     def replace_by_name(self, entry: Entry) -> None:
         """Used for --replace: overwrites by name even if id differs."""
@@ -388,19 +430,16 @@ class MetadataStore:
 
     def snapshot(self) -> MetadataSnapshot:
         """Read entries, tombstones, and their revision under one lock."""
-        ensure_private_dir(self.paths.root)
-        lock_fd = os.open(self._lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
-        try:
-            lock_exclusive(lock_fd)
-            data = self._read()
+        with self.read_transaction() as tx:
             return MetadataSnapshot(
-                entries=[Entry.from_dict(record) for record in data["entries"]],
-                tombstones=list(data.get("tombstones", [])),
-                revision=_metadata_revision(data),
+                entries=tx.list(), tombstones=tx.tombstones(), revision=tx.revision(),
             )
-        finally:
-            unlock(lock_fd)
-            os.close(lock_fd)
+
+    @contextmanager
+    def read_transaction(self) -> Iterator[MetadataTransaction]:
+        """Hold one consistent metadata view without rewriting the file."""
+        with self._locked_data() as data:
+            yield MetadataTransaction(data)
 
     def apply_merge(self, entries: list[Entry], tombstones: list[dict]) -> None:
         """Atomically replace the whole metadata set (entries + tombstones).
@@ -445,7 +484,7 @@ class MetadataStore:
         except (JournalError, OSError):
             raise StoreError("metadata file unavailable or exceeds size limit") from None
         if not raw.strip():
-            return {"schema_version": SCHEMA_VERSION, "entries": [], "tombstones": []}
+            raise StoreError("existing metadata file is empty; verified recovery is required")
         try:
             def pairs(items):
                 result = {}
@@ -470,6 +509,7 @@ class MetadataStore:
         if sv < SCHEMA_VERSION:
             data = self._migrate(data, sv)
         data.setdefault("tombstones", [])
+        _validate_record_identities(data.get("entries", []))
         if data.get("schema_version") == CATALOG_SCHEMA_VERSION:
             _validate_v3_data(data)
         return data
@@ -493,26 +533,27 @@ class MetadataStore:
         return data
 
     @contextmanager
-    def _locked_write(self) -> Iterator[dict]:
-        """Acquire exclusive lock, read, yield mutable dict, write atomically."""
-        # 0700 even when a store write is the process's first filesystem touch
-        # (before paths.ensure()), so data.json's parent is never world-readable.
+    def _locked_data(self) -> Iterator[dict]:
+        """Acquire the shared metadata boundary for a consistent read or write."""
         ensure_private_dir(self.paths.root)
-        # Lock on a separate file so we can rename data.json atomically without
-        # invalidating the lock fd. On Windows the mode bits are ignored; the
-        # lock file holds no secrets so this is acceptable.
-        lock_fd = os.open(self._lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+        lock_fd = open_private_file(self._lock_path, os.O_WRONLY | os.O_CREAT)
         try:
             lock_exclusive(lock_fd)
-            data = self._read()
+            yield self._read()
+        finally:
+            unlock(lock_fd)
+            os.close(lock_fd)
+
+    @contextmanager
+    def _locked_write(self) -> Iterator[dict]:
+        """Read and commit under the same metadata boundary."""
+        with self._locked_data() as data:
             yield data
+            _validate_record_identities(data["entries"])
             if data.get("schema_version", SCHEMA_VERSION) >= CATALOG_SCHEMA_VERSION:
                 _normalize_v3_entries(data["entries"])
                 _validate_v3_data(data)
             self._atomic_write(data)
-        finally:
-            unlock(lock_fd)
-            os.close(lock_fd)
 
     def _atomic_write(self, data: dict) -> None:
         # Backup the current good file (if any) before overwriting.
@@ -528,26 +569,10 @@ class MetadataStore:
                 _atomic_write_bytes(self.paths.data_json_bak, previous)
             except (JournalError, OSError):
                 raise StoreError("cannot persist metadata backup") from None
-        # Write to temp file in same dir, then rename.
-        fd, tmp_path = tempfile.mkstemp(
-            dir=self.paths.root, prefix=".data.", suffix=".tmp"
-        )
+        payload = json.dumps(data, indent=2, sort_keys=False).encode("utf-8")
+        if len(payload) > _MAX_METADATA_BYTES:
+            raise StoreError("metadata file exceeds size limit")
         try:
-            with os.fdopen(fd, "w") as f:
-                class BoundedWriter:
-                    size = 0
-                    def write(self, text):
-                        self.size += len(text.encode("utf-8"))
-                        if self.size > _MAX_METADATA_BYTES:
-                            raise StoreError("metadata file exceeds size limit")
-                        return f.write(text)
-                json.dump(data, BoundedWriter(), indent=2, sort_keys=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, self.paths.data_json)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except FileNotFoundError:
-                pass
-            raise
+            atomic_write_bytes(self.paths.data_json, payload)
+        except (PrivateFileError, OSError):
+            raise StoreError("metadata publication could not be confirmed; run `keys doctor`") from None

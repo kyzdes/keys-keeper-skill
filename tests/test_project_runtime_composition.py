@@ -150,7 +150,7 @@ def test_replica_allows_create_only_and_never_reads_master_catalog():
     context = Context()
     runtime = Runtime(context)
 
-    status, body = call(runtime, "POST", "/api/entries", b'{"name":"draft","type":"api_key"}')
+    status, body = call(runtime, "POST", "/api/entries", b'{"name":"draft","type":"api_key","value":"synthetic-draft-secret"}')
     assert status == 201
     assert body["name"] == "draft"
     assert len(context.service.created) == 1
@@ -169,12 +169,12 @@ def test_unknown_or_conflicting_selector_fails_before_runtime_backend_access():
 
     status, body = call(runtime, "GET", "/api/entries?profile=")
     assert status == 400
-    assert "empty" in body["error"]
+    assert body["error"] == "Invalid request"
     assert runtime.selectors == []
 
     status, body = call(runtime, "GET", "/api/entries?profile=one", selector="two")
     assert status == 400
-    assert "fixed" in body["error"]
+    assert body["error"] == "Invalid request"
     assert runtime.selectors == []
 
 

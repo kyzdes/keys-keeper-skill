@@ -27,6 +27,7 @@ from keys_keeper.crypto import BadPassword, decrypt_blob, encrypt_blob
 from keys_keeper.models import (
     Entry,
     ValidationError,
+    entry_requires_secret,
     now_iso,
     validate_snapshot_payload,
 )
@@ -38,6 +39,7 @@ from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _se
 _MAGIC = b"KK1\x00"
 HEAD_KEY = "HEAD"
 _MAX_SYNC_STATE_BYTES = 64 * 1024
+MAX_SNAPSHOT_BLOB_BYTES = 64 * 1024 * 1024
 
 
 class LegacyCatalogSyncError(RuntimeError):
@@ -74,14 +76,17 @@ def _dedupe_tombstones(tombs: list[dict]) -> list[dict]:
 
 # ---------------- snapshots ----------------
 
-def _safe_secret(backend: KeychainBackend, account: str) -> str | None:
-    try:
-        return backend.get(account).unseal()
-    except KeychainError:
-        return None
+class SnapshotReadError(KeychainError):
+    """A complete snapshot could not be read; no partial backup is publishable."""
 
 
 def build_snapshot_payload(store: MetadataStore, backend: KeychainBackend) -> dict:
+    from keys_keeper.master_journal import projection_guard
+    with projection_guard(store.paths):
+        return _build_snapshot_payload(store, backend)
+
+
+def _build_snapshot_payload(store: MetadataStore, backend: KeychainBackend) -> dict:
     """Full vault as a plaintext payload (entries + secrets + tombstones).
 
     Reserved kk:sync-* accounts are never entries, so they're never included.
@@ -99,26 +104,61 @@ def build_snapshot_payload(store: MetadataStore, backend: KeychainBackend) -> di
         raise LegacyCatalogSyncError(
             "legacy full-vault sync is disabled for catalog schema v3; use the project sync protocol"
         )
+    snapshot = store.snapshot()
+    try:
+        # Presence is metadata. Enumerate once before any credential read so
+        # optional absence stays distinct from denied/unavailable access.
+        accounts = set(backend.list_ids()) if snapshot.entries else set()
+    except Exception:
+        raise SnapshotReadError("cannot verify snapshot secret accounts") from None
+    if any(entry_requires_secret(e) and e.id not in accounts for e in snapshot.entries):
+        raise SnapshotReadError("required snapshot secret is missing")
     entries = []
-    for e in store.list():
+    for e in snapshot.entries:
         rec = e.to_dict()
-        rec["_secret"] = _safe_secret(backend, e.id)
-        rec["_secret_passphrase"] = _safe_secret(backend, e.id + ":passphrase")
+        passphrase_id = e.id + ":passphrase"
+        try:
+            rec["_secret"] = backend.get(e.id).unseal() if e.id in accounts else None
+            rec["_secret_passphrase"] = (
+                backend.get(passphrase_id).unseal() if passphrase_id in accounts else None
+            )
+        except Exception:
+            # Include optional accounts when present, but never treat a
+            # failed read (including a concurrent disappearance) as absence.
+            raise SnapshotReadError("snapshot secret access failed") from None
         entries.append(rec)
     return {"schema_version": SCHEMA_VERSION, "entries": entries,
-            "tombstones": store.tombstones()}
+            "tombstones": snapshot.tombstones}
 
 
 def encrypt_snapshot(payload: dict, *, passphrase: str) -> bytes:
-    blob = encrypt_blob(json.dumps(payload).encode("utf-8"), password=passphrase)
+    raw = bytearray()
+    for part in json.JSONEncoder().iterencode(payload):
+        encoded = part.encode("utf-8")
+        if len(raw) + len(encoded) > MAX_SNAPSHOT_BLOB_BYTES - 48:
+            raise SnapshotReadError("snapshot exceeds the supported backup size limit")
+        raw.extend(encoded)
+    blob = encrypt_blob(bytes(raw), password=passphrase)
     if blob[:4] != _MAGIC:  # S1: never ship a non-encrypted blob to the remote
         raise RuntimeError("refusing to upload a blob without the KK1 magic header")
     return blob
 
 
 def decrypt_snapshot(blob: bytes, *, passphrase: str) -> dict:
+    if len(blob) > MAX_SNAPSHOT_BLOB_BYTES:
+        raise BadPassword("snapshot exceeds the supported backup size limit")
     raw = decrypt_blob(blob, password=passphrase)  # raises BadPassword (S9)
-    payload = json.loads(raw)
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("duplicate member")
+            result[key] = value
+        return result
+    try:
+        payload = json.loads(raw, object_pairs_hook=pairs)
+    except (ValueError, UnicodeError, RecursionError):
+        raise BadPassword("snapshot payload malformed") from None
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise BadPassword("snapshot payload malformed")
     payload.setdefault("tombstones", [])

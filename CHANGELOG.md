@@ -4,6 +4,28 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [Unreleased]
+
+### Fixed
+
+- Complete legacy snapshots fail before publication on missing required
+  secrets or denied reads. Encrypted export/import use bounded private IO and
+  explicit replacement, with honest receipts after publication uncertainty.
+- Standalone and project master writes share encrypted durable recovery.
+  Referenced names cannot be renamed; empty existing metadata is a recovery
+  error. Completed operations retain bounded receipts without secret images.
+- Private files use one IO policy. Windows creates protected current-user
+  DACLs before writing, validates opened objects and leaves existing external
+  directory permissions unchanged.
+- CLI injection accepts only an unambiguous literal dotenv subset. Resolution
+  preflights metadata and reads each unique secret once, stopping on denial.
+- Local JSON routes share strict bounded validation and safe error handling.
+  Sensitive notes use credential storage; bulk import supports API keys and
+  protected notes. Committed actions remain successful when audit fails, and
+  activity displays recent events with stable entry identities.
+- HTTP and automatic S3 adapters call the application layer directly.
+  Ordinary tests use an isolated clipboard; native integration is explicit.
+
 ## [0.11.1] — 2026-10-02
 
 ### Fixed

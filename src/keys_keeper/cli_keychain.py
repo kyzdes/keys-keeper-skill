@@ -7,7 +7,6 @@ import stat
 import sys
 
 from keys_keeper.audit import AuditLog
-from keys_keeper.backend import KeychainError
 from keys_keeper.keychain_config import (
     BYPASS,
     PROMPT,
@@ -32,8 +31,8 @@ def cmd_keychain_status(args: argparse.Namespace) -> int:
     paths = Paths()
     try:
         config = load_keychain_config(paths)
-    except KeychainError as ex:
-        sys.stderr.write(f"error: {ex}\n")
+    except Exception:
+        sys.stderr.write("error: Keychain interaction policy is unavailable or invalid\n")
         return 1
     print("storage: macOS Keychain (original items, no migration)")
     print(f"interaction mode: {config.mode}")
@@ -51,8 +50,8 @@ def cmd_keychain_status(args: argparse.Namespace) -> int:
         try:
             backend = build_backend(access=AccessContext.UI_FORBIDDEN)
             readiness = backend.readiness()
-        except KeychainError as ex:
-            sys.stderr.write(f"error: no-UI metadata probe failed: {ex}\n")
+        except Exception:
+            sys.stderr.write("error: no-UI metadata probe failed\n")
             return 1
         print(f"no-UI metadata probe: {readiness.state}")
         print("secret values: not read")
@@ -72,10 +71,14 @@ def _set_mode(mode: str) -> int:
         return 1
     try:
         save_keychain_config(KeychainConfig(mode=mode), paths)
-    except (OSError, ValueError) as ex:
-        sys.stderr.write(f"error: {ex}\n")
-        return 1
-    AuditLog(paths).record(op=f"keychain.{mode}", name="<all>", id_="-", success=True)
+    except Exception as ex:
+        from keys_keeper.cli import _audit_outcome, _operation_failure
+        committed = True if getattr(ex, "committed", None) is True else None
+        status = _audit_outcome(AuditLog(paths), op=f"keychain.{mode}", name="<all>", id_="-",
+                                success=committed is True, committed=committed)
+        return _operation_failure(f"keychain.{mode}", ex, audit_status=status)
+    from keys_keeper.cli import _audit_outcome
+    _audit_outcome(AuditLog(paths), op=f"keychain.{mode}", name="<all>", id_="-", success=True)
     if mode == BYPASS:
         print("Keychain bypass enabled — authorization dialogs are disabled")
         print("original macOS Keychain items remain in place; no secrets were moved or copied")
@@ -107,6 +110,7 @@ def cmd_keychain_prepare(args: argparse.Namespace) -> int:
     from keys_keeper.composition import AccessContext, build_backend
 
     audit = AuditLog(paths)
+    preparation_started = False
     try:
         # The preflight is strict and metadata-only: an already prepared item
         # never causes an authorization dialog.
@@ -131,19 +135,21 @@ def cmd_keychain_prepare(args: argparse.Namespace) -> int:
         # One command targets one item and performs one protected ACL commit.
         # macOS may show an authorization dialog for this explicit setup step.
         setup_backend = build_backend(access=AccessContext.ACL_PREPARATION)
+        preparation_started = True
         changed = setup_backend.prepare_native_access(entry.id)
-    except KeychainError as ex:
-        audit.record(
+    except Exception as ex:
+        from keys_keeper.cli import _audit_outcome, _operation_failure
+        committed = True if getattr(ex, "committed", None) is True else None if preparation_started else False
+        status = _audit_outcome(audit,
             op="keychain.prepare",
             name=entry.name,
             id_=entry.id,
-            success=False,
-            error=str(ex),
+            success=committed is True, committed=committed,
         )
-        sys.stderr.write(f"error: {ex}\n")
-        return 1
+        return _operation_failure("keychain.prepare", ex, committed=committed, audit_status=status)
 
-    audit.record(
+    from keys_keeper.cli import _audit_outcome
+    _audit_outcome(audit,
         op="keychain.prepare",
         name=entry.name,
         id_=entry.id,

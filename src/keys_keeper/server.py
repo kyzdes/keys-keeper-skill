@@ -244,7 +244,10 @@ class _AdminRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         # Static assets (CSS / JS) are public — they hold no secrets and the
         # browser cannot attach our session header to <link>/<script> requests.
         if path.startswith("/static/"):
-            self._serve_static(path)
+            try:
+                self._serve_static(path)
+            except Exception:
+                self._send(503, b"Asset unavailable", "text/plain")
             return
         if not self._verify_token():
             self._send(403, b"forbidden")
@@ -253,21 +256,25 @@ class _AdminRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         self._dispatch_authenticated_get(path)
 
     def _dispatch_authenticated_get(self, path: str) -> None:
-        page_handler = _GET_PAGE_HANDLERS.get(path)
-        if page_handler is not None:
-            try:
-                getattr(self, page_handler)()
-            except (ValueError, RuntimeError) as ex:
-                # Profile resolution is metadata-only, but an unknown selector
-                # must still be a normal client error rather than a handler
-                # crash (and never reach a backend).
-                self._send(400, f"bad profile selection: {ex}".encode("utf-8"))
-            return
+        from keys_keeper.project_runtime import RuntimeErrorSafe
+
         if path.startswith("/api/"):
             self._handle_api("GET", body=None)
             return
-        if path.startswith("/entry/"):
-            self._serve_entry_path(path)
+        page_handler = _GET_PAGE_HANDLERS.get(path)
+        if page_handler is not None or path.startswith("/entry/"):
+            try:
+                if page_handler is not None:
+                    getattr(self, page_handler)()
+                else:
+                    self._serve_entry_path(path)
+            except Exception as ex:
+                if getattr(ex, "committed", None) is True:
+                    self._send(503, b"Change was published; confirm state before retrying", "text/plain")
+                elif isinstance(ex, (ValueError, RuntimeErrorSafe)):
+                    self._send(400, b"Invalid page request", "text/plain")
+                else:
+                    self._send(503, b"Page unavailable", "text/plain")
             return
         self._send(404, b"not found")
 
@@ -361,7 +368,7 @@ class _AdminRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         if edit:
             self._serve_entry_edit(entry, context)
             return
-        self._serve_entry_detail(entry)
+        self._serve_entry_detail(entry, context)
 
     def _context_for_page(self):
         from keys_keeper.composition import AccessContext

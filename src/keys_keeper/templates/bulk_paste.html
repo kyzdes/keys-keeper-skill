@@ -5,7 +5,7 @@
     <span class="h1"><span class="crumb">/paste</span> Bulk import</span>
     <a class="format-link" id="format-toggle">format reference ↓</a>
   </div>
-  <div id="format-help" class="format-help" hidden><strong>Grammar:</strong> <code>name [(type)] = value [tags]</code> · separators <code>=</code> or <code>:</code> · multi-line via <code>"""...."""</code> · <code>#</code> = comment.</div>
+  <div id="format-help" class="format-help" hidden><strong>Grammar:</strong> <code>name [(type)] = value [tags]</code> · API keys and secret notes · separators <code>=</code> or <code>:</code> · multi-line via <code>"""...."""</code> · <code>#</code> = comment. Use New entry for SSH keys, servers and domains.</div>
   <div class="bulk-split horizontal">
     <div class="bulk-pane">
       <div class="bulk-pane-header"><span>SOURCE</span><span id="line-count">0 lines</span></div>
@@ -13,11 +13,9 @@
 openrouter-cline = sk-or-v1-...
 openrouter-roo: sk-or-v1-... [llm,personal]
 
-# Multi-line SSH key
-my-key (ssh_key) = &quot;&quot;&quot;
------BEGIN OPENSSH PRIVATE KEY-----
-...
------END OPENSSH PRIVATE KEY-----
+# Protected note
+private-note (note) = &quot;&quot;&quot;
+protected note body
 &quot;&quot;&quot; [personal,do]"></textarea>
     </div>
     <div class="bulk-pane">

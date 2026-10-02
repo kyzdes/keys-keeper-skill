@@ -1,0 +1,110 @@
+{
+  "source_commit": "36df576ba403437d6352add265232bc01601cbae",
+  "tracked_files": 314,
+  "python_modules": 81,
+  "python_physical_lines": 28214,
+  "largest_modules": [
+    {
+      "module": "sync_server",
+      "physical_lines": 1296,
+      "static_internal_dependencies": 3
+    },
+    {
+      "module": "cli",
+      "physical_lines": 1212,
+      "static_internal_dependencies": 23
+    },
+    {
+      "module": "project_runtime",
+      "physical_lines": 1114,
+      "static_internal_dependencies": 21
+    },
+    {
+      "module": "macos_keychain",
+      "physical_lines": 1045,
+      "static_internal_dependencies": 2
+    },
+    {
+      "module": "sync_vps",
+      "physical_lines": 941,
+      "static_internal_dependencies": 9
+    },
+    {
+      "module": "sync_protocol_v2",
+      "physical_lines": 906,
+      "static_internal_dependencies": 0
+    },
+    {
+      "module": "api",
+      "physical_lines": 851,
+      "static_internal_dependencies": 19
+    },
+    {
+      "module": "sync",
+      "physical_lines": 807,
+      "static_internal_dependencies": 7
+    },
+    {
+      "module": "project_protocol",
+      "physical_lines": 782,
+      "static_internal_dependencies": 0
+    },
+    {
+      "module": "project_backup",
+      "physical_lines": 746,
+      "static_internal_dependencies": 10
+    },
+    {
+      "module": "project_recovery",
+      "physical_lines": 701,
+      "static_internal_dependencies": 11
+    },
+    {
+      "module": "sync_vps_client",
+      "physical_lines": 701,
+      "static_internal_dependencies": 2
+    },
+    {
+      "module": "cli_sync_vps",
+      "physical_lines": 698,
+      "static_internal_dependencies": 10
+    },
+    {
+      "module": "project_importer",
+      "physical_lines": 665,
+      "static_internal_dependencies": 7
+    },
+    {
+      "module": "master_journal",
+      "physical_lines": 631,
+      "static_internal_dependencies": 6
+    },
+    {
+      "module": "project_sync",
+      "physical_lines": 624,
+      "static_internal_dependencies": 10
+    }
+  ],
+  "static_import_cycles_including_function_local_and_type_checking_imports": [
+    [
+      "master_journal",
+      "service"
+    ],
+    [
+      "auto_worker",
+      "cli_sync",
+      "personal_sync",
+      "project_runtime"
+    ],
+    [
+      "cli",
+      "cli_project_sync"
+    ],
+    [
+      "pairing_server",
+      "project_server",
+      "sync_server"
+    ]
+  ],
+  "method": "AST inventory; source imports include function-local and TYPE_CHECKING statements. Cycles are coupling evidence, not proof of import-time failure."
+}

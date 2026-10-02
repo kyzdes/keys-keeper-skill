@@ -8,6 +8,11 @@ Stores API keys, SSH keys, server credentials, and domain info in the OS-native 
 
 **Status:** v0.11.1 · macOS + Windows + Linux · local-first · MIT license
 
+The current development branch consolidates durable vault mutations, private
+file IO and JSON request validation. Its compatibility limits and verification
+status are recorded in the [architecture hardening report](docs/architecture/HARDENING-2026-10-02.md)
+and [CLI sink contract](docs/CLI-SINK-CONTRACT.md). These changes are unreleased.
+
 v0.11.1 fixes byte-faithful macOS legacy Keychain reads, including SSH private
 keys and Unicode/multiline values. Saved values and Keychain access policies
 stay in place; local diagnostics may continue after a failed authorization.
