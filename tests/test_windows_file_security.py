@@ -26,7 +26,7 @@ def _set_dacl(path, sddl):
         kernel.LocalFree(descriptor)
 
 
-def _dacl_snapshot(path):
+def _security_snapshot(path):
     api, kernel = security._bindings()
     handle = security._open_handle(path, directory=path.is_dir())
     owner, dacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
@@ -38,12 +38,16 @@ def _dacl_snapshot(path):
         assert api.GetSecurityInfo(handle, 1, 0x5, ctypes.byref(owner), None,
                                     ctypes.byref(dacl), None, ctypes.byref(descriptor)) == 0
         assert convert(descriptor, 1, 0x5, ctypes.byref(text), None)
-        return text.value
+        return security._sid_string(owner), text.value
     finally:
         if text:
             kernel.LocalFree(ctypes.cast(text, ctypes.c_void_p))
         kernel.LocalFree(descriptor)
         kernel.CloseHandle(handle)
+
+
+def _dacl_snapshot(path):
+    return _security_snapshot(path)[1]
 
 
 @pytest.fixture
@@ -66,7 +70,8 @@ def test_windows_private_creation_is_protected_before_payload_in_broad_parent(br
         # and every effective grant while the file is still empty.
         security.validate_fd(fd, require_protected=True)
         assert "D:P" in _dacl_snapshot(path)
-        assert f"O:{security.current_user_sid()}" in _dacl_snapshot(path)
+        # SDDL may serialize the same SID as a well-known alias (e.g. LA).
+        assert _security_snapshot(path)[0] == security.current_user_sid()
         os.write(fd, b"SYNTHETIC-SECRET-CANARY")
     finally:
         os.close(fd)
@@ -111,14 +116,23 @@ def test_windows_new_nested_state_and_unlock_file_share_private_policy(broad_par
     assert private_files.secure_read(password, max_bytes=128) == b"synthetic-unlock-source"
 
 
-def test_windows_existing_safe_inherited_directory_is_not_rewritten(tmp_path):
+def test_windows_existing_safe_inherited_directory_is_not_rewritten(tmp_path, monkeypatch):
     directory = tmp_path / "protected-parent"
     ensure_private_dir(directory)
     inherited = directory / "inherited-child"
     inherited.mkdir()
     before = _dacl_snapshot(inherited)
+    assert _security_snapshot(inherited)[0] == security.current_token_owner_sid()
     assert "D:P" not in before
     ensure_private_dir(inherited)
+    assert _dacl_snapshot(inherited) == before
+    # Read the same real descriptor under a simulated foreign policy context.
+    # An untrusted token default never makes someone else's object acceptable.
+    with monkeypatch.context() as foreign:
+        foreign.setattr(security, "current_user_sid", lambda: "S-1-5-21-0-0-0-1234")
+        foreign.setattr(security, "current_token_owner_sid", lambda: "S-1-5-32-545")
+        with pytest.raises(OSError, match="unexpected owner"):
+            ensure_private_dir(inherited)
     assert _dacl_snapshot(inherited) == before
 
 

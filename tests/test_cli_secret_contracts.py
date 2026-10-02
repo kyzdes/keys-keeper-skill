@@ -255,7 +255,7 @@ def test_inject_supported_literals_round_trip_without_interpolation(context, tmp
     assert cli.main(["inject", "test-key", "--file", str(target), "--as", "MY_KEY"]) == 0
     # Standard shell lexical parsing verifies the literal subset independently
     # of the serializer (no shell process or environment evaluation is run).
-    assert shlex.split(target.read_text(), comments=True) == ["MY_KEY=" + value]
+    assert shlex.split(target.read_text(encoding="utf-8"), comments=True) == ["MY_KEY=" + value]
 
 
 def test_inject_success_with_audit_failure_reports_committed(context, tmp_path, capsys):

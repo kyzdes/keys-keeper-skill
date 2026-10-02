@@ -20,6 +20,7 @@ class WindowsFileSecurityError(OSError):
 
 _pointer = ctypes.c_void_p
 _libraries = None
+_PRIVILEGED_SIDS = {"S-1-5-18", "S-1-5-32-544"}
 
 
 class _SecurityAttributes(ctypes.Structure):
@@ -84,20 +85,36 @@ def _sid_string(sid) -> str:
         kernel.LocalFree(ctypes.cast(value, _pointer))
 
 
-def current_user_sid() -> str:
-    """Resolve TokenUser, so localized/non-ASCII/environment names are irrelevant."""
+def _current_token_sid(information_class: int) -> str:
     api, kernel = _bindings()
     token = w.HANDLE()
     _checked(api.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(token)))
     try:
         required = w.DWORD()
-        api.GetTokenInformation(token, 1, None, 0, ctypes.byref(required))
+        api.GetTokenInformation(token, information_class, None, 0, ctypes.byref(required))
         _checked(0 < required.value <= 65536)
         data = ctypes.create_string_buffer(required.value)
-        _checked(api.GetTokenInformation(token, 1, data, len(data), ctypes.byref(required)))
+        _checked(api.GetTokenInformation(token, information_class, data, len(data), ctypes.byref(required)))
         return _sid_string(_pointer.from_buffer(data).value)
     finally:
         kernel.CloseHandle(token)
+
+
+def current_user_sid() -> str:
+    """Resolve TokenUser, so localized/non-ASCII/environment names are irrelevant."""
+    return _current_token_sid(1)
+
+
+def current_token_owner_sid() -> str:
+    """TokenOwner may be Administrators for ordinary elevated-process objects."""
+    return _current_token_sid(4)
+
+
+def _owner_is_current_token(owner: str, user: str, *, allow_default_owner: bool) -> bool:
+    if owner == user:
+        return True
+    return (allow_default_owner and owner in _PRIVILEGED_SIDS
+            and owner == current_token_owner_sid())
 
 
 @contextmanager
@@ -126,11 +143,13 @@ def _check_handle_type(handle, *, directory: bool):
 
 
 def validate_handle(handle, *, directory: bool = False, require_private: bool = True,
-                    require_protected: bool = False, require_current_owner: bool = True):
+                    require_protected: bool = False, require_current_owner: bool = True,
+                    allow_default_owner: bool = True):
     """Validate owner and effective allow ACEs on an already opened object.
 
     Safe inherited ACLs remain compatible with existing private directories.
-    Newly created private files are also checked for DACL protection.
+    Existing ownership may match the current token's trusted default owner;
+    newly created objects require TokenUser ownership and protected DACLs.
     """
     api, kernel = _bindings()
     _check_handle_type(handle, directory=directory)
@@ -139,9 +158,11 @@ def validate_handle(handle, *, directory: bool = False, require_private: bool = 
                                 ctypes.byref(dacl), None, ctypes.byref(descriptor)) == 0)
     try:
         user = current_user_sid()
-        allowed = {user, "S-1-5-18", "S-1-5-32-544"}
+        allowed = {user, *_PRIVILEGED_SIDS}
         actual_owner = _sid_string(owner)
-        if actual_owner not in ({user} if require_current_owner else allowed):
+        owned = (_owner_is_current_token(actual_owner, user, allow_default_owner=allow_default_owner)
+                 if require_current_owner else actual_owner in allowed)
+        if not owned:
             raise WindowsFileSecurityError("Windows private file has an unexpected owner")
         if not require_private:
             return
@@ -216,7 +237,7 @@ def open_private_file(path: Path, flags: int) -> int:
         raise ctypes.WinError(error)
     created = create and (disposition == 1 or error != 183)  # ERROR_ALREADY_EXISTS
     try:
-        validate_handle(handle, require_protected=created)
+        validate_handle(handle, require_protected=created, allow_default_owner=not created)
         fd = msvcrt.open_osfhandle(handle, (flags & (os.O_APPEND | os.O_RDONLY | os.O_WRONLY | os.O_RDWR))
                                    | os.O_BINARY | os.O_NOINHERIT)
     except BaseException:
@@ -240,16 +261,17 @@ def create_private_directory(path: Path) -> None:
     with _attributes(directory=True) as attributes:
         if not kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)):
             raise ctypes.WinError(ctypes.get_last_error())
-    validate_path(path, directory=True, require_protected=True)
+    validate_path(path, directory=True, require_protected=True, allow_default_owner=False)
 
 
 def validate_path(path: Path, *, directory=False, require_protected=False,
-                  require_current_owner=True, require_private=True) -> None:
+                  require_current_owner=True, require_private=True, allow_default_owner=True) -> None:
     _, kernel = _bindings()
     handle = _open_handle(path, directory=directory)
     try:
         validate_handle(handle, directory=directory, require_protected=require_protected,
-                        require_current_owner=require_current_owner, require_private=require_private)
+                        require_current_owner=require_current_owner, require_private=require_private,
+                        allow_default_owner=allow_default_owner)
     finally:
         kernel.CloseHandle(handle)
 
