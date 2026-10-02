@@ -59,7 +59,7 @@ flowchart TD
 |---|---|
 | F01, неполные snapshots | Общая полная snapshot preparation. Required primary secrets обязаны существовать; любое failed read присутствующего account прекращает export/sync до публикации. Optional absent passphrase допустима. |
 | F02, перепривязка после rename | Service и direct store update отвергают rename при входящих refs. Метаданные, секрет и revision остаются прежними в schema 2/3. |
-| F03, Windows private files | Protected DACL и TokenUser owner задаются при создании, до payload. Для существующего объекта также допустим exact текущий TokenOwner, если он уже входит в доверенные SYSTEM/Administrators. Opened handle проверяется на type/reparse/owner/ACL. Внешние каталоги не перенастраиваются. |
+| F03, Windows private files | Protected DACL и TokenUser owner задаются при создании, до payload. Для существующего объекта также допустим exact текущий TokenOwner, если он уже входит в доверенные SYSTEM/Administrators. OWNER RIGHTS ACE допускается только после проверки владельца; он не является допустимым owner SID. Opened handle проверяется на type/reparse/owner/ACL. Внешние каталоги не перенастраиваются. |
 | F04, бесконечная secret history | Completed before/after images удаляются после durable receipt; pending state сохраняется. Bounded legacy compaction и cleanup только известных crash-temp имён. Все ciphertext reads продолжают GCM authentication, cache не заменяет проверку. |
 | F05, schema 2 crash window | Обычные CRUD, batch и snapshot replacement проходят общий durable manager. Secret/metadata crash points восстанавливаются без миграции схемы. |
 | F06, backup IO | Bounded binary no-follow reads, atomic private publication, explicit overwrite policy, read-back legacy export и committed uncertainty receipt. Project backup сохраняет необходимый journal authority key и в schema 2. |
@@ -124,14 +124,31 @@ new private creation сохраняет строгий TokenUser owner. Native a
 CLI/fixtures. Окончательное исполнение native cases проверяется по новому SHA
 платформенного CI.
 
-Следующий Windows прогон подтвердил все шесть native ACL cases без пропусков.
-Его оставшиеся 47 failures выявили старую подготовку fixtures: обычный pytest
-tmp root наследовал публичные Windows grants. Теперь Windows-only fixture
-задаёт protected DACL пустому синтетическому каталогу до тестовых payload.
-Production allowlist не расширена; unsafe native cases явно добавляют foreign
-grants и продолжают проверять отказ без ACL repair. Focused проверка после
-этой правки: 73 passed / 8 platform skips, включая clipboard isolation и
-Keychain mode. Финальная полная матрица проверяется по PR head.
+Следующий Windows прогон подтвердил все шесть исходных native ACL cases без
+пропусков. Из оставшихся 47 failures 46 сняла подготовка private fixtures:
+обычный pytest tmp root наследовал публичные Windows grants. Windows-only
+fixture задаёт protected DACL пустому синтетическому каталогу до payload.
+Unsafe native cases явно добавляют foreign grants и проверяют отказ без repair.
+Focused проверка этой правки: 73 passed / 8 platform skips, включая clipboard
+isolation и Keychain mode.
+
+Последний failure выявил отдельную совместимость со стандартным
+`os.mkdir(mode=0o700)` CPython: его Windows DACL использует OWNER RIGHTS.
+Этот ACE обозначает текущего владельца объекта, а не отдельного пользователя.
+Теперь exact SID `S-1-3-4` допускается в ACE только после успешной проверки
+владельца. Owner/TokenOwner whitelist не расширен; foreign owner и Everyone
+по-прежнему отвергаются. Причина проверена по
+[CPython 3.12.10](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c),
+[описанию os.mkdir](https://docs.python.org/3.12/library/os.html#os.mkdir) и
+[семантике OWNER RIGHTS Microsoft](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-special-identities-groups#owner-rights).
+
+Добавлен седьмой native case: стандартный private каталог и inherited file
+принимаются без изменения ACL; foreign owner отвергается до обхода ACE;
+OWNER RIGHTS вместе с Everyone остаётся ошибкой. Старые Python проверяют
+эквивалентный OWNER RIGHTS descriptor на пустом синтетическом каталоге.
+Итоговый локальный focused прогон: 100 passed / 9 platform skips. Windows
+preflight исполняет native/private IO cases до длинного полного прогона.
+Финальная полная матрица проверяется по PR head.
 
 Wheel построен и установлен в чистое временное окружение. Проверены импорт из
 установленного пакета, CLI surface, генерация skill и совпадение payload в
