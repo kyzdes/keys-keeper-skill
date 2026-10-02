@@ -2,13 +2,13 @@
   "schema_version": 1,
   "date": "2026-10-02",
   "baseline_commit": "36df576ba403437d6352add265232bc01601cbae",
-  "validated_code_commit": "26c1cd0245e545f426363648d8c0e91b59a671b9",
+  "validated_code_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
   "branch": "codex/simplify-and-harden",
   "unreleased": true,
   "installed_or_deployed": false,
   "validation_tree": {
-    "sha256": "9bde2f3d08f385c27dceb5fa5bf5223ae72d9008f96ff0318df908b51cc56883",
-    "file_count": 285,
+    "sha256": "0b73888ddf60c4078b892a0c12228c2200e2c2cf802e99d2e07f0b2a6cf0e3b2",
+    "file_count": 286,
     "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
     "selection": [
       "src",
@@ -45,16 +45,35 @@
       "requires real Windows DACL APIs": 1
     },
     "command": "KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=0 PYTHONPATH=src .venv/bin/python -m pytest -q -o addopts='' --test-metrics=... --junitxml=...",
-    "isolation": "Synthetic fixture roots under project .pytest_cache; temporary test Keychains; fake clipboard; isolated global KEYS_KEEPER_HOME"
+    "isolation": "Synthetic fixture roots under project .pytest_cache; temporary test Keychains; fake clipboard; isolated global KEYS_KEEPER_HOME",
+    "source_commit": "26c1cd0245e545f426363648d8c0e91b59a671b9",
+    "validation_tree": {
+      "sha256": "9bde2f3d08f385c27dceb5fa5bf5223ae72d9008f96ff0318df908b51cc56883",
+      "file_count": 285,
+      "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
+      "selection": [
+        "src",
+        "tests",
+        "scripts",
+        ".github/workflows",
+        "skills",
+        "plugins",
+        "pyproject.toml",
+        "README.md",
+        "CHANGELOG.md",
+        ".claude-plugin"
+      ]
+    }
   },
   "wheel": {
     "version": "0.11.1",
-    "sha256": "484612a984fd7d1beaa4e0776201c6a38b5fce28df0e3b8744abd202df9850df",
+    "sha256": "887d7120a1d7e42c7a232bf71a81d1d8025abdcb5a9a5a42fdc6866a83c0dc76",
     "built": true,
     "installed_artifact_smoke": "passed",
     "canonical_skill_parity": "passed",
     "generated_ui_tokens": "passed",
-    "user_installation_modified": false
+    "user_installation_modified": false,
+    "source_commit": "92bea74c9872e2916dd54f360adf5a14062cc286"
   },
   "updater_standalone": {
     "passed": 28,
@@ -89,12 +108,37 @@
       "updater (windows-latest, 3.12)"
     ],
     "windows_native_acl_cases": 6,
-    "local_windows_execution": false
+    "local_windows_execution": false,
+    "source_commit_policy": "Final PR-head checks are authoritative for the Windows owner correction and full OS matrix; the local full-suite record retains its original source commit."
   },
   "limits": [
     "No installed or production validation",
     "Local macOS results do not establish Windows ACL or Linux Secret Service execution; use CI evidence",
     "Hard process kill during S3 credential bootstrap may require explicit setup again",
     "Early legacy tests replaced the operator clipboard with synthetic values; ordinary tests now isolate clipboard"
+  ],
+  "post_windows_ci_focused_suites": [
+    {
+      "scope": "Private IO and Windows owner policy",
+      "source_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
+      "platform": "darwin",
+      "passed": 47,
+      "skipped": 8,
+      "failed": 0,
+      "errors": 0,
+      "native_windows_execution": false,
+      "command": "PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_windows_owner_policy.py tests/test_windows_file_security.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py tests/test_sync_server_cli.py",
+      "log": ".pytest_cache/windows-owner-focused-92bea74.log"
+    },
+    {
+      "scope": "CLI secret contracts, clipboard fixture isolation and copy/inject",
+      "source_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
+      "platform": "darwin",
+      "passed": 62,
+      "skipped": 1,
+      "failed": 0,
+      "errors": 0,
+      "log": ".pytest_cache/hardening-cli-utf8-portability.log"
+    }
   ]
 }

@@ -59,7 +59,7 @@ flowchart TD
 |---|---|
 | F01, неполные snapshots | Общая полная snapshot preparation. Required primary secrets обязаны существовать; любое failed read присутствующего account прекращает export/sync до публикации. Optional absent passphrase допустима. |
 | F02, перепривязка после rename | Service и direct store update отвергают rename при входящих refs. Метаданные, секрет и revision остаются прежними в schema 2/3. |
-| F03, Windows private files | Protected DACL задаётся при создании, до payload. TokenUser определяет owner; opened handle проверяется на type/reparse/owner/ACL. Допустимые principals: текущий пользователь, SYSTEM, Administrators. Внешние каталоги не перенастраиваются. |
+| F03, Windows private files | Protected DACL и TokenUser owner задаются при создании, до payload. Для существующего объекта также допустим exact текущий TokenOwner, если он уже входит в доверенные SYSTEM/Administrators. Opened handle проверяется на type/reparse/owner/ACL. Внешние каталоги не перенастраиваются. |
 | F04, бесконечная secret history | Completed before/after images удаляются после durable receipt; pending state сохраняется. Bounded legacy compaction и cleanup только известных crash-temp имён. Все ciphertext reads продолжают GCM authentication, cache не заменяет проверку. |
 | F05, schema 2 crash window | Обычные CRUD, batch и snapshot replacement проходят общий durable manager. Secret/metadata crash points восстанавливаются без миграции схемы. |
 | F06, backup IO | Bounded binary no-follow reads, atomic private publication, explicit overwrite policy, read-back legacy export и committed uncertainty receipt. Project backup сохраняет необходимый journal authority key и в schema 2. |
@@ -110,9 +110,19 @@ resource ceilings и file conflicts. Windows native DACL tests входят в O
 matrix; локальный macOS прогон не доказывает их исполнение на Windows.
 
 Полный локальный прогон: **1852 passed, 25 skipped, 4 subtests passed**, ошибок
-нет; 1877 collected cases, 681,22 с. Среда: macOS, Python 3.12.11, pytest 9.1.1,
+нет; 1877 collected cases, около 681 с, code commit `26c1cd0`. Среда: macOS,
+Python 3.12.11, pytest 9.1.1,
 cryptography 48.0.1. Пропуски включают Windows-specific checks, четыре live
 Secret Service case и два native clipboard case с выключенным opt-in.
+
+Первый Windows CI обнаружил несовместимость owner check с обычным TokenOwner
+elevated process. Исправление принимает только доверенный exact process default;
+new private creation сохраняет строгий TokenUser owner. Native assertion
+сравнивает числовой SID, поскольку SDDL может использовать стандартный alias.
+Отдельный тест `.env` теперь читает UTF-8 явно. После исправления: 47 passed /
+8 platform skips по IO/owner checks и 62 passed / 1 native clipboard skip по
+CLI/fixtures. Окончательное исполнение native cases проверяется по новому SHA
+платформенного CI.
 
 Wheel построен и установлен в чистое временное окружение. Проверены импорт из
 установленного пакета, CLI surface, генерация skill и совпадение payload в
@@ -123,8 +133,10 @@ Project idle benchmark: 6 scopes × 3 cycles, 0 journal writes, 0 изменён
 encrypted files, 6 cold KDF derivations. Результат характеризует синтетический
 idle workload; физическое энергопотребление не измерялось.
 
-Локальные результаты, версии, SHA исходного кода, fingerprint 285 validation
-files и checksum wheel сохранены в [verification.json](hardening-evidence-2026-10-02/verification.json).
+Локальные результаты, версии, SHA исходного кода и checksum нового wheel
+сохранены в [verification.json](hardening-evidence-2026-10-02/verification.json).
+Receipt сохраняет fingerprint 285 файлов полного локального прогона отдельно
+от 286 файлов после Windows correction; SHA для каждой проверки указан явно.
 Платформенное исполнение, native Windows DACL, Linux Secret Service, macOS build
 и combined coverage подтверждаются отдельными
 [GitHub Checks draft PR №21](https://github.com/kyzdes/keys-keeper-skill/pull/21/checks).
