@@ -1,6 +1,6 @@
 # S3 removal and VPS refactor
 
-Status: development candidate **0.12.0**, not a published release. Baseline:
+Release line: **0.12.0**. Initial refactor baseline:
 `7966581aa013326996fb479fb3fa38148681766b`. This follows the
 [mutation and private-file hardening](HARDENING-2026-10-02.md).
 
@@ -196,9 +196,11 @@ the preceding hardening run is not evidence for this candidate. The PR validatio
 summary records final full-run outcomes. Local Docker startup is not claimed;
 the Docker daemon was unavailable and image startup is delegated to CI.
 
-Marketplace verification currently matches the latest published **v0.11.1**
+Before this release, marketplace verification matched published **v0.11.1**
 commit `36df576ba403437d6352add265232bc01601cbae`, including its description.
 The maintainer helper now checks both the description and immutable source pin;
 its optional `--write` only edits the local manifest. It never commits, rebases
 or pushes. Publishing a candidate and updating the marketplace pin are separate
-from verifying the existing public release.
+from verifying the existing public release. See the
+[review corrections and release gates](REVIEW-FIXES-0.12.0.md) and the release
+verification manifest for final artifact and CI evidence.

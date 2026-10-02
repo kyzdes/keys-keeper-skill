@@ -58,3 +58,28 @@ image against the migrated copy. Resource evidence separates process RSS,
 cgroup memory, CPU, latency and rejected requests. Limiting concurrency is
 not a throughput improvement. Private configurations, credentials and server
 inventory are excluded from this repository.
+
+## Linux staging measurement
+
+The installed image built from `cf4586a` matched all 97 package files in the
+verified wheel. A separate server container used 1 CPU, 768 MiB, 64 PIDs,
+read-only rootfs, non-root user, dropped capabilities and no-new-privileges.
+Clients ran in a different cgroup against a new synthetic loopback database.
+
+| Measurement | Observed result |
+|---|---|
+| Four maximum 16 MiB plaintext KK2 commits against one parent | 1 accepted (201), 1 CAS conflict (409), 2 capacity rejections (429) |
+| Server process peak RSS | 317.62 MiB |
+| Server cgroup peak memory, including charged page cache | 319.84 MiB of 768 MiB; 58.35% headroom |
+| Server CPU / measured load interval | 1.895 CPU seconds / 3.340 wall seconds |
+| Accepted / CAS-conflict latency | 3.330 / 2.802 seconds |
+| Capacity-rejection latency | 3.13–4.58 milliseconds |
+| Active operations / OOM / restarts | 2 / 0 / 0 |
+| Full verification of 205 signed commits | 6 HTTP requests, 3 pages, 1 ciphertext |
+| Three idle push cycles | 0 changed files, 0 reported changes |
+| Quota checks with 1 and 500 records | 2 SELECTs and 32 SQLite VM instructions in both cases |
+
+Request timings include a 150 ms staged-upload barrier to exercise overlapping
+large bodies. They are not production TLS latency or successful throughput.
+This validates the specified KK2 load and limits, not every possible traffic
+mix. The release manifest identifies the final image qualification separately.

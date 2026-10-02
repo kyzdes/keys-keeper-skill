@@ -4,7 +4,7 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
-## [0.12.0] — Unreleased
+## [0.12.0] — 2026-10-02
 
 ### Removed
 

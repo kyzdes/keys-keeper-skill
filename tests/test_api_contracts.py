@@ -66,15 +66,19 @@ def admin_contract(tmp_path):
 
     def request(method, path, body=None, *, authenticated=True):
         raw = json.dumps(body).encode() if isinstance(body, dict) else body
-        connection = http.client.HTTPConnection("127.0.0.1", server.bound_port, timeout=3)
+        # Functional contracts include real journal key derivation and fsync.
+        # Give loaded CI hosts headroom; dedicated resource tests check deadlines.
+        connection = http.client.HTTPConnection("127.0.0.1", server.bound_port, timeout=10)
         headers = {"Content-Type": "application/json"}
         if authenticated:
             headers["Sec-Keys-Token"] = server.token
-        connection.request(method, path, body=raw, headers=headers)
-        response = connection.getresponse()
-        data = response.read()
-        connection.close()
-        return response.status, (json.loads(data) if response.getheader("Content-Type") == "application/json" else data)
+        try:
+            connection.request(method, path, body=raw, headers=headers)
+            response = connection.getresponse()
+            data = response.read()
+            return response.status, (json.loads(data) if response.getheader("Content-Type") == "application/json" else data)
+        finally:
+            connection.close()
 
     yield SimpleNamespace(request=request, backend=backend, store=store, audit=audit,
                           context=context, runtime=runtime, calls=calls)

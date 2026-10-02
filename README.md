@@ -6,15 +6,17 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.12.0 (unreleased) · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.12.0 · macOS + Windows + Linux · local-first · MIT license
 
-The current development branch removes S3 and its browser WebVault, reduces VPS
+Version 0.12.0 removes S3 and its browser WebVault, reduces VPS
 history transfer and relay resource usage, and consolidates durable mutations,
 private file IO and request validation. See the
 [VPS refactor report](docs/architecture/VPS-REFACTOR-2026-10-02.md),
 [hardening report](docs/architecture/HARDENING-2026-10-02.md) and
-[CLI sink contract](docs/CLI-SINK-CONTRACT.md). These changes are unreleased;
-the latest published release remains v0.11.1.
+[CLI sink contract](docs/CLI-SINK-CONTRACT.md). The
+[independent review corrections](docs/architecture/REVIEW-FIXES-0.12.0.md)
+map durable revocation, concurrent rotation, reference identity, replacement
+and operation outcomes to their regression tests.
 
 v0.11.1 fixes byte-faithful macOS legacy Keychain reads, including SSH private
 keys and Unicode/multiline values. Saved values and Keychain access policies
