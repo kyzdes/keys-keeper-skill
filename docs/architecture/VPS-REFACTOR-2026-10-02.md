@@ -50,7 +50,7 @@ The remaining `Entry`/`EntryType`, folder, project, scope and binding models
 have live consumers in the local catalog, UI, validation, delivery and recovery.
 Removing them would remove supported behavior; they are retained. Relative to
 the preceding hardening commit, packaged source drops from 111 to 97 files and
-from 35,831 to 32,464 lines; Python modules drop from 84 to 76. These are net
+from 35,831 to 32,467 lines; Python modules drop from 84 to 76. These are net
 counts including the two small extracted shared modules, excluding tests,
 bytecode and build caches.
 
@@ -166,6 +166,11 @@ cases; and 124 relay/private-IO cases with one platform skip. These suites
 partially overlap and must not be summed. The built 0.12.0 wheel installs into
 a fresh environment and produces matching generated skills and references.
 Canonical instruction, UI-token, JavaScript syntax and whitespace checks pass.
+The complete local Python 3.12 run at `418abf8` passes 1,777 tests, with 26
+platform skips and four passing subtests. A subsequent Python 3.10 compatibility
+correction handles an empty URL query before strict parsing and removes a
+3.11-only test callback reset. Its real Python 3.10.21 regression run passes
+56 cases; the corresponding Python 3.12 run passes 38.
 
 Full local validation uses `KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=0 PYTHONPATH=src
 .venv/bin/python -m pytest -q -o addopts=''`. Cross-platform release gates run

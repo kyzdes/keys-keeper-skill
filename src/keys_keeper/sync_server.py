@@ -1159,6 +1159,9 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
             raise SyncServerError(404, "not_found", "endpoint not found")
 
         def _query(self, query_string, allowed):
+            # Python 3.10's strict parser rejects an empty query string.
+            if not query_string:
+                return {}
             query = parse_qs(query_string, keep_blank_values=True,
                              strict_parsing=True, max_num_fields=len(allowed))
             if set(query) - allowed or any(len(values) != 1 for values in query.values()):

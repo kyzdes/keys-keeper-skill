@@ -79,7 +79,17 @@ def test_history_projection_never_reads_snapshot_or_unrequested_manifest(app, mo
         app.get_commit(created["vault_id"], "synthetic-commit-1", device)
 
 
-def test_history_http_options_keep_defaults_and_reject_ambiguous_query(app):
+@pytest.mark.parametrize("legacy_empty_query", [False, True])
+def test_history_http_options_keep_defaults_and_reject_ambiguous_query(app, monkeypatch, legacy_empty_query):
+    if legacy_empty_query:
+        parse = module.parse_qs
+
+        def parse_like_python310(query, **kwargs):
+            if not query and kwargs.get("strict_parsing"):
+                raise ValueError("bad query field: ''")
+            return parse(query, **kwargs)
+
+        monkeypatch.setattr(module, "parse_qs", parse_like_python310)
     with _running(app) as address:
         created, identity, token = _create_vault(address)
         payload, blob, ciphertext = _commit_payload(
@@ -91,11 +101,16 @@ def test_history_http_options_keep_defaults_and_reject_ambiguous_query(app):
         status, result = _request(address, "POST", base, body=payload, headers=headers)
         assert status == 201
         path = base + "/" + result["commit_id"]
-        full = _request(address, "GET", path, headers=headers)[1]
+        status, full = _request(address, "GET", path, headers=headers)
+        assert status == 200
+        assert _request(address, "GET", path + "?", headers=headers) == (200, full)
         small = _request(address, "GET", path + "?snapshot=0", headers=headers)[1]
         assert full == {**small, "snapshot_ciphertext": _b64(ciphertext)}
         assert small["commit_blob"] == _b64(blob)
-        default = _request(address, "GET", base, headers=headers)[1]["commits"][0]
+        status, page = _request(address, "GET", base, headers=headers)
+        assert status == 200
+        assert _request(address, "GET", base + "?", headers=headers) == (200, page)
+        default = page["commits"][0]
         signed = _request(address, "GET", base + "?include_commit=1", headers=headers)[1]["commits"][0]
         assert signed == {**default, "commit_blob": _b64(blob)}
         for invalid in ("?snapshot=2", "?snapshot=0&snapshot=1", "?snapshot=0&unknown=1"):
@@ -203,7 +218,8 @@ def test_quota_checks_are_two_small_queries_independent_of_history_size(app):
         app.project_relay._storage_budget(connection, scope)
         assert len(queries) == 2
         assert all("FROM relay_usage" in query for query in queries)
-        connection.set_authorizer(None)
+        # The connection closes after commit; keep the guard active until then.
+        # Disabling an authorizer with None is only supported from Python 3.11.
 
 
 def test_v1_ingestion_quota_rolls_back_but_reads_and_revoke_keep_working(app):
