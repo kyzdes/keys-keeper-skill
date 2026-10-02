@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from keys_keeper.audit import AuditLog
+from keys_keeper.audit import AuditLog, normalize_outcome
 from keys_keeper.backend import Sealed
 from keys_keeper.composition import build_backend
 from keys_keeper.paths import Paths
@@ -40,11 +40,9 @@ from keys_keeper.sync_vps import (
     invite_secret_hash,
     load_vps_config,
     make_membership_statement,
-    make_revocation_statement,
     new_device_token,
     save_vps_config,
     sign_membership,
-    sign_revocation,
     verify_membership,
 )
 from keys_keeper.sync_vps_client import VpsProtocolError, VpsSyncClient, _decode_json
@@ -211,8 +209,10 @@ def _handled(fn):
         except Exception as exc:
             from keys_keeper.cli import _operation_failure
             operation = "sync.vps." + fn.__name__.removeprefix("cmd_vps_")
-            committed = True if getattr(exc, "committed", None) is True else (
-                False if fn.__name__ in {"cmd_vps_status", "cmd_vps_devices"} else None)
+            committed = normalize_outcome(
+                committed=False if fn.__name__ in {"cmd_vps_status", "cmd_vps_devices"} else None,
+                error=exc,
+            )["committed"]
             status = _audit(Paths(), op=operation, name="<all>", id_="-",
                             success=committed is True, committed=committed)
             return _operation_failure(operation, exc, committed=committed, audit_status=status)
@@ -644,36 +644,8 @@ def cmd_vps_devices(args: argparse.Namespace) -> int:
 def cmd_vps_revoke(args: argparse.Namespace) -> int:
     paths = Paths()
     engine, config, _backend = _engine(paths)
-    if config.device_id != config.root_device_id:
-        raise VpsSyncError("only the pinned root device can revoke another device")
-    if args.device_id in (config.device_id, config.root_device_id):
-        raise VpsSyncError("refusing to revoke this device or the pinned root device")
-    verified_head = engine.verified_head()
-    statement = make_revocation_statement(
-        vault_id=config.vault_id,
-        device_id=args.device_id,
-        revoked_by_device_id=config.device_id,
-        checkpoint_commit_id=None if verified_head is None else verified_head.commit_id,
-        checkpoint_manifest_hash=None if verified_head is None else verified_head.manifest_hash,
-        checkpoint_sequence=0 if verified_head is None else verified_head.sequence,
-    )
-    signature = sign_revocation(
-        statement,
-        engine.signing_private_key,
-    )
-    engine.client.revoke_device(
-        config.vault_id,
-        args.device_id,
-        expected_head=None if verified_head is None else verified_head.commit_id,
-        revocation_statement=canonical_json_bytes(statement).decode("utf-8"),
-        revocation_signature=signature,
-    )
-    audit_status = _audit(paths, op="sync.vps.revoke", name="<device>", id_=args.device_id, file_target=config.endpoint)
-    try:
-        engine.refresh_trust_anchor()
-    except Exception as ex:
-        from keys_keeper.cli import _operation_failure
-        return _operation_failure("sync.vps.revoke", ex, committed=True, audit_status=audit_status)
+    engine.revoke_device(args.device_id)
+    _audit(paths, op="sync.vps.revoke", name="<device>", id_=args.device_id, file_target=config.endpoint)
     print(f"revoked server access for device {args.device_id}")
     print("important: this does not erase snapshots or VaultKey material already held by that device")
     return 0
