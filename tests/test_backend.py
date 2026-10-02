@@ -203,6 +203,69 @@ def test_bypass_reads_original_legacy_cli_only_acl_without_rewriting(
     assert "kk:legacy-cli" in backend.list_ids()
 
 
+@pytest.mark.parametrize("value", [
+    "line-one\nline-two\n", "line-one\r\nline-two\r\n", "\n\n", "λкириллица🔑",
+    'quoted "value"', r"literal\backslash\n", "", "616263646566", "0xDEADBEEF",
+])
+def test_legacy_cli_only_values_round_trip_exact_bytes(backend, test_keychain, monkeypatch, value):
+    created = subprocess.run(
+        ["/usr/bin/security", "add-generic-password", "-s", "keys-keeper-test", "-a", "kk:legacy-bytes",
+         "-w", value, str(test_keychain)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+    )
+    assert created.returncode == 0
+    assert backend._native.legacy_security_read_allowed("kk:legacy-bytes") is True
+    assert backend._native.native_access_prepared("kk:legacy-bytes") is False
+    original_run, calls = subprocess.run, []
+
+    def recorded_run(command, **kwargs):
+        calls.append(command)
+        return original_run(command, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(subprocess, "run", recorded_run)
+        actual = backend.get("kk:legacy-bytes").unseal()
+        if value == "" and not calls:
+            # macOS can return zero bytes without decrypt authorization. Still
+            # exercise the real CLI's empty record after proving its ACL above.
+            assert actual == ""
+            actual = backend._read_legacy_security_bridge("kk:legacy-bytes").unseal()
+    assert actual.encode("utf-8") == value.encode("utf-8")
+    assert len(calls) == 1
+    assert calls[0][0:2] == ["/usr/bin/security", "find-generic-password"]
+    assert "-g" in calls[0]
+    assert "-w" not in calls[0]
+
+
+def test_legacy_cli_only_openssh_key_remains_parseable(backend, test_keychain, tmp_path):
+    original = tmp_path / "synthetic-ed25519"
+    generated = subprocess.run(
+        ["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "synthetic-test", "-f", str(original)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+    )
+    assert generated.returncode == 0
+    value = original.read_bytes().decode("utf-8")
+    created = subprocess.run(
+        ["/usr/bin/security", "add-generic-password", "-s", "keys-keeper-test", "-a", "kk:legacy-openssh",
+         "-w", value, str(test_keychain)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+    )
+    assert created.returncode == 0
+    assert backend._native.legacy_security_read_allowed("kk:legacy-openssh") is True
+    assert backend._native.native_access_prepared("kk:legacy-openssh") is False
+    actual = backend.get("kk:legacy-openssh").unseal()
+    assert actual.encode("utf-8") == original.read_bytes()
+    restored = tmp_path / "restored-ed25519"
+    restored.write_bytes(actual.encode("utf-8"))
+    restored.chmod(0o600)
+    public = subprocess.run(
+        ["/usr/bin/ssh-keygen", "-y", "-f", str(restored)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+    )
+    assert public.returncode == 0
+    assert public.stdout.split()[:2] == original.with_suffix(".pub").read_bytes().split()[:2]
+
+
 def test_legacy_acl_copy_can_be_prepared_in_memory_without_reading_value(
     backend, test_keychain, monkeypatch
 ):

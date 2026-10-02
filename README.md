@@ -6,7 +6,11 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.11.0 · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.11.1 · macOS + Windows + Linux · local-first · MIT license
+
+v0.11.1 fixes byte-faithful macOS legacy Keychain reads, including SSH private
+keys and Unicode/multiline values. Saved values and Keychain access policies
+stay in place; local diagnostics may continue after a failed authorization.
 
 v0.11.0 bounds large logs, HTTP handlers and native bridge messages; avoids
 repeated journal/replica KDF work; and validates fresh ciphertext and profile
@@ -66,7 +70,7 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 ### 1. Install the `keys` CLI
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.0'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.1'
 keys doctor                                            # smoke check
 ```
 

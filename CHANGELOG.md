@@ -4,6 +4,22 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.11.1] — 2026-10-02
+
+### Fixed
+
+- Legacy macOS Keychain reads preserve the original UTF-8 bytes. The Apple
+  `security -w` output hex-encodes multiline/non-printable values without a
+  marker; the reader now parses the explicitly framed `-g` representation.
+  SSH private keys, trailing newlines, Unicode and literal hex credentials
+  are covered by isolated regression tests. Stored items and ACLs are unchanged.
+- Invalid UTF-8 native reads release and zero the framework buffer, discard
+  the Python bytes and raise a fixed error without a secret-bearing decoder
+  exception chain. Legacy timeout/output errors are also redacted.
+- Agent instructions stop the failed credential operation while allowing
+  metadata-only and local format/configuration diagnostics. Retrying access
+  requires a confirmed repair or explicit user direction.
+
 ## [0.11.0] — 2026-10-02
 
 ### Fixed
@@ -523,7 +539,9 @@ Initial public release. macOS-only.
 
 ---
 
-[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/kyzdes/keys-keeper-skill/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.11.1
+[0.11.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.11.0
 [0.10.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.10.0
 [0.9.1]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.9.1
 [0.9.0]: https://github.com/kyzdes/keys-keeper-skill/releases/tag/v0.9.0
