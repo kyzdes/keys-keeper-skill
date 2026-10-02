@@ -16,6 +16,10 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 - Invalid UTF-8 native reads release and zero the framework buffer, discard
   the Python bytes and raise a fixed error without a secret-bearing decoder
   exception chain. Legacy timeout/output errors are also redacted.
+- Legacy read preflight checks the item's code-signature partition policy as
+  well as its trusted application ACL. A policy that does not authorize the
+  system security tool fails before a helper starts; item permissions are
+  never changed to make a read succeed.
 - Agent instructions stop the failed credential operation while allowing
   metadata-only and local format/configuration diagnostics. Retrying access
   requires a confirmed repair or explicit user direction.

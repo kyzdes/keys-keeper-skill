@@ -203,6 +203,9 @@ class FrameworkBindings:
         ]
         security.SecTrustedApplicationCopyData.restype = status
 
+        security.SecTrustedApplicationValidateWithPath.argtypes = [void_p, ctypes.c_char_p]
+        security.SecTrustedApplicationValidateWithPath.restype = status
+
     def _declare_core_foundation(self) -> None:
         void_p = ctypes.c_void_p
         uint32 = ctypes.c_uint32
@@ -214,6 +217,18 @@ class FrameworkBindings:
             uint32,
         ]
         core_foundation.CFStringCreateWithCString.restype = void_p
+
+        core_foundation.CFGetTypeID.argtypes = [void_p]
+        core_foundation.CFGetTypeID.restype = ctypes.c_ulong
+
+        core_foundation.CFStringGetTypeID.argtypes = []
+        core_foundation.CFStringGetTypeID.restype = ctypes.c_ulong
+
+        core_foundation.CFStringGetLength.argtypes = [void_p]
+        core_foundation.CFStringGetLength.restype = ctypes.c_long
+
+        core_foundation.CFStringGetCString.argtypes = [void_p, void_p, ctypes.c_long, uint32]
+        core_foundation.CFStringGetCString.restype = ctypes.c_ubyte
 
         core_foundation.CFArrayCreate.argtypes = [
             void_p,

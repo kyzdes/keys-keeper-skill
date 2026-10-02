@@ -26,16 +26,25 @@ buffer. No secret item, ACL, reference, Keychain policy, encryption format,
 PBKDF2 setting, sync scope or scheduling policy is migrated or changed.
 
 The compatibility read still requires an unlocked item that explicitly trusts
-`/usr/bin/security`, starts at most one process with the existing five-second
-deadline, and is unavailable to strict background/server contexts. Partitioned
-items cannot be prepared by weakening their code-signature policy. A metadata
-preflight is not proof that an individual value can be read.
+the current `/usr/bin/security` signature and has no password-prompt flags.
+If an item has a code-signature partition policy, that
+policy must explicitly include `apple-tool:`; `apple:` alone is insufficient.
+Apple assigns the security tool its own partition. The preflight reads only
+ACL metadata, rejects malformed or unsupported policies and prevents a helper
+from starting when authorization cannot be established. It never edits an ACL.
+Permitted reads start at most one process with the existing five-second
+deadline and remain unavailable to strict background/server contexts.
+Partitioned items cannot be prepared by weakening their code-signature policy.
+A metadata preflight is not proof that an individual value can be read.
 
 Regression tests cover real isolated macOS Keychain round trips, a generated
 disposable Ed25519 key parsed by OpenSSH, byte fidelity for LF/CRLF/trailing
 newlines/Unicode/quotes/backslashes/empty/literal hex, malformed input,
 redacted failures, and retained unknown/locked/strict-context restrictions.
-Cross-platform parser tests require no access to an OS credential store.
+Partition-policy tests cover allowed, denied, malformed and oversized metadata
+and prove that denied policies, stale trusted applications and password-prompt
+requirements start no compatibility helper. Cross-platform
+parser tests require no access to an OS credential store.
 
 The agent stop rule now names the failed credential operation: unchanged
 authorization retries and repeated dialogs stop, while metadata-only and local
@@ -51,3 +60,4 @@ Primary implementation references:
 
 - [Apple password output](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_find.c)
 - [Apple tagged buffer format](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_utilities.c)
+- [Apple security tool partition identity](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp)
