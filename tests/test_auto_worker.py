@@ -2,16 +2,132 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import signal
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from keys_keeper import auto_worker as worker
 from keys_keeper.paths import Paths
+
+
+def _synthetic_group_clock(monkeypatch):
+    clock, sleeps = [0.0], []
+    def sleep(duration):
+        sleeps.append(duration)
+        clock[0] += duration
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    return clock, sleeps
+
+
+def test_group_eperm_needs_independent_esrch_after_uncertain_probes(monkeypatch):
+    clock, sleeps = _synthetic_group_clock(monkeypatch)
+    original = PermissionError(errno.EPERM, "synthetic group is being reaped")
+    answers = iter([original, None, PermissionError(errno.EPERM, "still uncertain"),
+                    ProcessLookupError(errno.ESRCH, "group gone")])
+    calls = []
+    def killpg(pgid, kind):
+        calls.append((pgid, kind))
+        result = next(answers)
+        if result is not None:
+            raise result
+    monkeypatch.setattr(worker.os, "killpg", killpg, raising=False)
+    worker._signal_group(12345, 9)
+    assert calls == [(12345, 9), (12345, 0), (12345, 0), (12345, 0)]
+    assert clock[0] == pytest.approx(0.02)
+    assert sleeps == [0.01, 0.01]
+
+
+@pytest.mark.parametrize("probe_alive", [True, False], ids=["live-group", "permission-unknown"])
+def test_group_eperm_without_esrch_preserves_error_and_deadline(monkeypatch, probe_alive):
+    clock, sleeps = _synthetic_group_clock(monkeypatch)
+    original = PermissionError(errno.EPERM, "synthetic permission denied")
+    calls = []
+    def killpg(pgid, kind):
+        calls.append((pgid, kind))
+        if kind or not probe_alive:
+            raise original
+    monkeypatch.setattr(worker.os, "killpg", killpg, raising=False)
+    with pytest.raises(PermissionError) as failure:
+        worker._signal_group(12345, 9)
+    assert failure.value is original
+    assert calls[0] == (12345, 9)
+    assert all(call == (12345, 0) for call in calls[1:])
+    assert clock[0] == pytest.approx(0.2)
+    assert len(calls) <= 23
+    assert all(0 < duration <= 0.01 for duration in sleeps)
+
+
+@pytest.mark.parametrize("during_probe", [False, True])
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EIO])
+def test_group_signal_preserves_other_errors_without_waiting(monkeypatch, during_probe, error_number):
+    clock, sleeps = _synthetic_group_clock(monkeypatch)
+    unexpected = OSError(error_number, "synthetic unexpected failure")
+    calls = []
+    def killpg(pgid, kind):
+        calls.append((pgid, kind))
+        if during_probe and kind:
+            raise PermissionError(errno.EPERM, "initial uncertainty")
+        raise unexpected
+    monkeypatch.setattr(worker.os, "killpg", killpg, raising=False)
+    with pytest.raises(OSError) as failure:
+        worker._signal_group(12345, 9)
+    assert failure.value is unexpected
+    assert calls == [(12345, 9)] + ([(12345, 0)] if during_probe else [])
+    assert clock[0] == 0 and sleeps == []
+
+
+@pytest.mark.parametrize("gone", [False, True], ids=["signal-sent", "already-absent"])
+def test_group_signal_ordinary_result_needs_no_probe(monkeypatch, gone):
+    clock, sleeps = _synthetic_group_clock(monkeypatch)
+    calls = []
+    def killpg(pgid, kind):
+        calls.append((pgid, kind))
+        if gone:
+            raise ProcessLookupError(errno.ESRCH, "already gone")
+    monkeypatch.setattr(worker.os, "killpg", killpg, raising=False)
+    worker._signal_group(12345, 9)
+    assert calls == [(12345, 9)]
+    assert clock[0] == 0 and sleeps == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group cleanup boundary")
+@pytest.mark.parametrize("direct,fault_signal", [(False, 15), (False, 9), (True, 9)],
+                         ids=["foreground-term", "foreground-kill", "direct-kill"])
+@pytest.mark.parametrize("group_gone", [True, False], ids=["confirmed-absent", "still-live"])
+def test_worker_timeout_outcome_requires_confirmed_group_exit(tmp_path, monkeypatch, direct, fault_signal, group_gone):
+    clock, sleeps = _synthetic_group_clock(monkeypatch)
+    calls, waits = [], []
+    def wait(timeout=None):
+        waits.append(timeout)
+        if len(waits) == 1:
+            raise subprocess.TimeoutExpired("synthetic worker", timeout)
+        return -fault_signal
+    process = SimpleNamespace(pid=12345, wait=wait)
+    monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_kw: process)
+    def killpg(pgid, kind):
+        calls.append((pgid, kind))
+        if kind == fault_signal:
+            raise PermissionError(errno.EPERM, "synthetic termination race")
+        if kind == 0 and group_gone:
+            raise ProcessLookupError(errno.ESRCH, "confirmed absent")
+    monkeypatch.setattr(worker.os, "killpg", killpg)
+    expected = "operation_timed_out" if group_gone else "operation_failed"
+    with pytest.raises(worker.AutoWorkerError, match="^" + expected + "$"):
+        worker.run_auto_worker("personal", Paths(tmp_path), timeout=0.3, _direct=direct)
+    destructive = [kind for _pgid, kind in calls if kind]
+    expected_signals = [9] if direct else ([15, 9] if group_gone or fault_signal == 9 else [15])
+    assert destructive == expected_signals  # No destructive retry after EPERM.
+    assert all(pgid == process.pid for pgid, _kind in calls)
+    assert clock[0] == pytest.approx(0 if group_gone else 0.2)
+    assert all(0 < duration <= 0.01 for duration in sleeps)
+    if group_gone:
+        assert waits[-1] is None  # The parent is reaped before timeout is reported.
 
 
 def test_timeout_reaps_worker_before_return_and_prevents_late_writes(tmp_path, monkeypatch):

@@ -4,6 +4,20 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.12.1] — 2026-10-03
+
+### Fixed
+
+- macOS foreground-worker cleanup verifies whether a process group has
+  disappeared after a transient permission error following termination and
+  parent reaping. The existence check is bounded; a surviving group or
+  unverifiable termination retains the original failure.
+- Package metadata, plugin manifests and generated installation instructions
+  target the corrected 0.12.1 release. The existing `v0.12.0` tag is unchanged.
+
+See the [release qualification follow-up](docs/architecture/RELEASE-0.12.1-FOLLOWUP.md)
+for the reproduced race, correction and validation boundaries.
+
 ## [0.12.0] — 2026-10-02
 
 ### Removed

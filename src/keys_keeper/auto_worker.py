@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import os
 import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from keys_keeper.paths import Paths
@@ -83,22 +85,43 @@ def _arguments(mode, paths, selector=None, *, supervise=False):
     return result
 
 
+def _signal_group(pgid, kind):
+    try:
+        os.killpg(pgid, kind)
+    except ProcessLookupError:
+        return
+    except PermissionError as original:
+        if original.errno != errno.EPERM:
+            raise
+        # macOS can report transient EPERM during process-group teardown.
+        # EPERM itself never proves the group has stopped. Only
+        # an independent ESRCH permits us to finish; a live or unverifiable
+        # group retains the original failure after this short bounded wait.
+        deadline = time.monotonic() + 0.2
+        while True:
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError as probe:
+                if probe.errno != errno.EPERM:
+                    raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise original
+            time.sleep(min(0.01, remaining))
+
+
 def _stop_tree(process, *, graceful=False):
     # Wait for termination before returning: no timed-out thread keeps writing.
     if os.name == "posix":
         if graceful:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            _signal_group(process.pid, signal.SIGTERM)
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        _signal_group(process.pid, signal.SIGKILL)
     else:
         try:
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
