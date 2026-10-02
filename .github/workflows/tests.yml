@@ -70,6 +70,11 @@ jobs:
       - name: Compile all modules
         run: python -m compileall -q src
 
+      # Catch resource cleanup regressions before expensive real-crypto tests.
+      # These tests use only temporary stores and loopback sockets.
+      - name: HTTP resource lifecycle preflight
+        run: python -m pytest -q tests/test_http_resources.py tests/test_remote_http_resources.py tests/test_sync_connection_lifecycle.py -W error
+
       - name: Windows installer smoke
         if: runner.os == 'Windows'
         shell: pwsh

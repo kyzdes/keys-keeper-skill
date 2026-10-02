@@ -20,6 +20,9 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 - Local admin and WebVault HTTP servers bound handler admission and absolute
   request input time. Framing rejects ambiguous lengths and truncated bodies;
   unauthenticated static requests cannot extend the local server's lifetime.
+  Closing wakes all admitted plain/TLS readers without idle polling or unsafe
+  descriptor reuse. Relay database operations explicitly close owned SQLite
+  connections after success and failure.
 - WebVault sessions and login buckets have finite capacity. Deleted accounts
   fail closed instead of inheriting the operator's storage prefix; a damaged
   account registry cannot be overwritten by a new registration.

@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 import re
 from uuid import UUID
@@ -102,7 +102,7 @@ class ProjectRelay:
         self.app = app
         self.limits = limits or ProjectRelayLimits()
         self._request_slots = threading.BoundedSemaphore(self.limits.concurrent_requests)
-        with app._connect() as connection:
+        with closing(app._connect()) as connection, connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS kk3_scopes (
                     scope_id TEXT PRIMARY KEY, pinned_key TEXT NOT NULL,

@@ -156,6 +156,7 @@ def test_server_close_interrupts_owned_incomplete_connections():
     with listener(timeout=10) as server, connect(server) as peer:
         peer.sendall(b'GET / HTTP/1.1\r\n')
         wait_for(lambda: len(server._connections) == 1)
+        server.shutdown()
         server.server_close()
         wait_for(lambda: not server._connections)
 
@@ -177,6 +178,7 @@ def test_close_preserves_receiving_fd_until_owner_exits_and_cancels_partial_disp
             accepted, = server._connections
             descriptor = accepted.fileno()
             assert descriptor >= 0
+            server.shutdown()
             server.server_close()
             # Only the owner may invalidate its receive descriptor. Immediate
             # cross-thread close would deterministically violate this contract.
@@ -228,6 +230,7 @@ def test_close_does_not_dispatch_next_keepalive_request_already_in_read_buffer(m
             request = b'GET / HTTP/1.1\r\nHost: synthetic\r\n\r\n'
             peer.sendall(request + request)
             assert entered.wait(1)
+            server.shutdown()
             server.server_close()
         finally:
             release.set()
@@ -293,3 +296,243 @@ def test_invalid_resource_limits_never_bind(workers, timeout):
     with pytest.raises(ValueError):
         BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler,
                                   max_workers=workers, request_timeout=timeout)
+
+
+def test_cancellation_wakes_all_select_waiters_and_retains_reader_until_last_owner(monkeypatch):
+    app_work = Mock()
+    monkeypatch.setattr(EchoHandler, 'do_GET', lambda self: app_work())
+    waiting, release_last, last_finished = threading.Condition(), threading.Event(), threading.Event()
+    blocked, last_owner = set(), []
+    original_select = http_resources.select.select
+    with listener(workers=4, timeout=10) as server:
+        cancel_reader, cancel_writer = server._cancel_reader, server._cancel_writer
+
+        def observed_select(reading, writing, errors, timeout=None):
+            if cancel_reader in reading and not any(original_select(reading, writing, errors, 0)):
+                with waiting:
+                    blocked.add(threading.get_ident())
+                    waiting.notify_all()
+            return original_select(reading, writing, errors, timeout)
+
+        monkeypatch.setattr(http_resources.select, 'select', observed_select)
+        finish_request = server.finish_request
+
+        def retain_last_owner(request, address):
+            try:
+                finish_request(request, address)
+            finally:
+                if last_owner and request is last_owner[0]:
+                    last_finished.set()
+                    assert release_last.wait(2), 'last admitted owner was not released'
+
+        monkeypatch.setattr(server, 'finish_request', retain_last_owner)
+        peers = [connect(server) for _ in range(4)]
+        try:
+            for peer in peers:
+                peer.sendall(b'GET / HTTP/1.1\r\nX-Incomplete: ')
+            with waiting:
+                assert waiting.wait_for(lambda: len(blocked) == 4, timeout=1)
+            assert len(server._connections) == 4
+            last_owner.append(next(iter(server._connections)))
+            server.shutdown()
+            server.server_close()
+            assert last_finished.wait(1)
+            wait_for(lambda: server._connections == {last_owner[0]})
+            assert cancel_writer.fileno() == -1
+            assert cancel_reader.fileno() >= 0
+            app_work.assert_not_called()
+            release_last.set()
+            wait_for(lambda: not server._connections)
+            assert cancel_reader.fileno() == -1
+            assert server._capacity.acquire(blocking=False)
+            server._capacity.release()
+        finally:
+            release_last.set()
+            for peer in peers:
+                peer.close()
+
+
+def test_cancellation_queued_owner_keeps_reader_until_thread_exits(monkeypatch):
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler,
+                                       max_workers=1, request_timeout=10)
+    cancel_reader, cancel_writer = server._cancel_reader, server._cancel_writer
+    queued, finish = [], Mock()
+    monkeypatch.setattr(server, 'finish_request', finish)
+    try:
+        with connect(server):
+            accepted, address = server.socket.accept()
+            with monkeypatch.context() as held:
+                held.setattr(threading.Thread, 'start', lambda thread: queued.append(thread))
+                server.process_request(accepted, address)
+            assert len(queued) == 1 and server._connections == {accepted}
+            server.server_close()
+            assert cancel_writer.fileno() == -1 and cancel_reader.fileno() >= 0
+            assert accepted.fileno() >= 0
+            queued[0].start()
+            queued[0].join(1)
+            assert not queued[0].is_alive()
+            assert accepted.fileno() == -1 and cancel_reader.fileno() == -1
+            assert not server._connections
+            finish.assert_not_called()
+    finally:
+        server.server_close()
+
+
+def test_cancellation_no_handlers_and_idempotent_close_release_both_sockets():
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler)
+    cancel_reader, cancel_writer = server._cancel_reader, server._cancel_writer
+    assert cancel_reader.fileno() >= 0 and cancel_writer.fileno() >= 0
+    server.server_close()
+    server.server_close()
+    assert server.socket.fileno() == cancel_reader.fileno() == cancel_writer.fileno() == -1
+
+
+def test_cancellation_pair_construction_failure_closes_bound_listener(monkeypatch):
+    bound = []
+    failure = OSError('synthetic cancellation socket exhaustion')
+
+    class CaptureBoundServer(BoundedThreadingHTTPServer):
+        def server_bind(self):
+            super().server_bind()
+            bound.append(self.socket)
+
+    monkeypatch.setattr(http_resources.socket, 'socketpair', Mock(side_effect=failure))
+    with pytest.raises(OSError) as caught:
+        CaptureBoundServer(('127.0.0.1', 0), EchoHandler)
+    assert caught.value is failure
+    assert len(bound) == 1 and bound[0].fileno() == -1
+
+
+@pytest.mark.parametrize('stage', ['server_bind', 'server_activate'])
+def test_cancellation_bind_activate_failure_preserves_original_exception(monkeypatch, stage):
+    owned = []
+    failure = OSError('synthetic listener setup failure')
+
+    def fail_setup(server):
+        owned.append(server.socket)
+        raise failure
+
+    class FailureServer(BoundedThreadingHTTPServer):
+        pass
+
+    monkeypatch.setattr(FailureServer, stage, fail_setup)
+    make_pair = Mock(side_effect=AssertionError('pair created before listener setup completed'))
+    monkeypatch.setattr(http_resources.socket, 'socketpair', make_pair)
+    with pytest.raises(OSError) as caught:
+        FailureServer(('127.0.0.1', 0), EchoHandler)
+    assert caught.value is failure
+    assert len(owned) == 1 and owned[0].fileno() == -1
+    make_pair.assert_not_called()
+
+
+def _synthetic_tls_context(tmp_path):
+    import ssl
+    from datetime import datetime, timedelta, timezone
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'localhost')])
+    now = datetime.now(timezone.utc)
+    certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - timedelta(minutes=1))
+                   .not_valid_after(now + timedelta(days=1)).sign(key, hashes.SHA256()))
+    certificate_file, key_file = tmp_path / 'synthetic-cert.pem', tmp_path / 'synthetic-key.pem'
+    certificate_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                         serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certificate_file, key_file)
+    return context
+
+
+@pytest.mark.parametrize('fragment', ['handshake', 'record'])
+def test_cancellation_tls_partial_handshake_or_record_wakes_without_dispatch(tmp_path, monkeypatch, fragment):
+    import ssl
+
+    app_work, armed, blocked = Mock(), threading.Event(), threading.Event()
+    monkeypatch.setattr(EchoHandler, 'do_GET', lambda self: app_work())
+    context = _synthetic_tls_context(tmp_path)
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler, request_timeout=10)
+    server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    cancel_reader, cancel_writer = server._cancel_reader, server._cancel_writer
+    original_select = http_resources.select.select
+
+    def observed_select(reading, writing, errors, timeout=None):
+        if (armed.is_set() and cancel_reader in reading
+                and not any(original_select(reading, writing, errors, 0))):
+            blocked.set()
+        return original_select(reading, writing, errors, timeout)
+
+    monkeypatch.setattr(http_resources.select, 'select', observed_select)
+    serving = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01})
+    serving.start()
+    try:
+        with connect(server) as peer:
+            if fragment == 'handshake':
+                armed.set()
+                # TLS header declares 16 handshake bytes; only one is supplied.
+                peer.sendall(b'\x16\x03\x01\x00\x10\x01')
+            else:
+                client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                client.check_hostname = False
+                client.verify_mode = ssl.CERT_NONE
+                incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+                tls = client.wrap_bio(incoming, outgoing, server_hostname='localhost')
+                for _ in range(10):
+                    try:
+                        tls.do_handshake()
+                    except ssl.SSLWantReadError:
+                        peer.sendall(outgoing.read())
+                        incoming.write(peer.recv(64 * 1024))
+                    else:
+                        peer.sendall(outgoing.read())
+                        break
+                else:
+                    pytest.fail('synthetic TLS handshake exceeded bounded steps')
+                tls.write(b'GET / HTTP/1.1\r\nHost: synthetic\r\n\r\n')
+                encrypted = outgoing.read()
+                assert len(encrypted) > 6
+                armed.set()
+                peer.sendall(encrypted[:6])
+            assert blocked.wait(1), 'partial TLS input did not reach a cancellable wait'
+            server.shutdown()
+            server.server_close()
+            wait_for(lambda: not server._connections)
+            assert cancel_reader.fileno() == cancel_writer.fileno() == -1
+            app_work.assert_not_called()
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join(2)
+        assert not serving.is_alive()
+
+
+def test_cancellation_thread_start_failure_during_close_releases_last_reader_and_slot(monkeypatch):
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler, max_workers=1)
+    cancel_reader, cancel_writer = server._cancel_reader, server._cancel_writer
+    failure = RuntimeError('synthetic thread start failure during cancellation')
+    try:
+        with connect(server):
+            accepted, address = server.socket.accept()
+
+            def fail_start(thread):
+                assert server._connections == {accepted}
+                server.server_close()
+                assert cancel_writer.fileno() == -1 and cancel_reader.fileno() >= 0
+                raise failure
+
+            with monkeypatch.context() as exhausted:
+                exhausted.setattr(threading.Thread, 'start', fail_start)
+                with pytest.raises(RuntimeError) as caught:
+                    server.process_request(accepted, address)
+            assert caught.value is failure
+            assert accepted.fileno() == cancel_reader.fileno() == -1
+            assert not server._connections
+            assert server._capacity.acquire(blocking=False)
+            server._capacity.release()
+    finally:
+        server.server_close()

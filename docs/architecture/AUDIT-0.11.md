@@ -62,6 +62,8 @@ catalog updater helper remains unchanged.
    input deadline. Local shutdown closes owned sockets and cannot deadlock when
    serving has not started. Shutdown wakes a receiver before its owning thread
    closes the descriptor, avoiding a reproduced macOS receive/close race.
+   A shared socketpair EOF wakes all admitted input readers on Windows/macOS
+   without idle polling; TLS reads handle both negotiation wait directions.
    Cancellation rejects incomplete headers and already-buffered later requests.
 9. WebVault registry/session/rate maps lacked complete corruption/capacity
    handling. Damaged registries fail closed; deleted sessions cannot inherit
@@ -82,6 +84,10 @@ catalog updater helper remains unchanged.
 12. Personal API construction escaped safe error handling and duplicate JSON
     keys were accepted. Construction is contained, exact schemas reject
     duplicates, and unknown routes fail before manager work.
+13. Relay SQLite connection contexts committed or rolled back without closing
+    their owned descriptor. Initialization, reads and failures now explicitly
+    close connections while retaining transaction semantics. Fast HTTP CI
+    preflight treats unhandled thread/resource warnings as failures.
 
 ## Resource contracts
 

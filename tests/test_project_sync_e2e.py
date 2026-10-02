@@ -292,7 +292,7 @@ def test_publish_resume_rotation_history_and_revoked_create_denied(two_scopes):
     assert {former_contributor["grant"]["grant_id"], newcomer["grant"]["grant_id"]} <= {
         grant["grant_id"] for grant in latest["used_grants"]
     }
-    with env["app"]._connect() as connection:
+    with env["app"]._connection() as connection:
         history = connection.execute(
             "SELECT grant_id FROM kk3_grants WHERE scope_id=?",
             (env["scope_a"].id,),
