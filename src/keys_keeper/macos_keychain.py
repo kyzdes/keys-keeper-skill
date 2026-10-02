@@ -8,10 +8,12 @@ custom keychain files. No ``/usr/bin/security`` child process is involved.
 from __future__ import annotations
 
 import ctypes
+import plistlib
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
+from xml.parsers.expat import ExpatError, ParserCreate
 
 from keys_keeper.macos_keychain_abi import (
     ACCOUNT_ITEM_ATTR as _ACCOUNT_ITEM_ATTR,
@@ -58,6 +60,103 @@ from keys_keeper.macos_keychain_abi import (
 from keys_keeper.macos_keychain_cf import release_cf_refs
 
 _INTERACTION_LOCK = threading.RLock()
+_MAX_LEGACY_ACLS = 128
+_MAX_ACL_AUTHORIZATIONS = 128
+_MAX_PARTITION_DESCRIPTION_BYTES = 64 * 1024
+_MAX_PARTITIONS = 128
+_MAX_PARTITION_ID_BYTES = 1024
+_MAX_LEGACY_APPLICATIONS = 128
+
+
+class _PartitionPolicyDict(dict):
+    """Reject ambiguous duplicate keys in the XML policy dictionary."""
+
+    def __setitem__(self, key, value):
+        if key in self:
+            raise ValueError("duplicate partition policy key")
+        super().__setitem__(key, value)
+
+
+def _validate_partition_xml(raw: bytes) -> None:
+    """Reject XML extensions that plistlib otherwise silently ignores."""
+    stack = []
+    dictionary_seen = False
+    permitted = {
+        (): {"plist"}, ("plist",): {"dict"},
+        ("plist", "dict"): {"key", "array"},
+        ("plist", "dict", "array"): {"string"},
+    }
+
+    def reject(*_args):
+        raise ValueError("unsupported partition XML")
+
+    def start(name, attributes):
+        nonlocal dictionary_seen
+        if name not in permitted.get(tuple(stack), ()):
+            reject()
+        if attributes != ({"version": "1.0"} if name == "plist" else {}):
+            reject()
+        if name == "dict":
+            if dictionary_seen:
+                reject()
+            dictionary_seen = True
+        stack.append(name)
+
+    def text(value):
+        if (not stack or stack[-1] not in {"key", "string"}) and value.strip():
+            reject()
+
+    def doctype(name, _system, _public, internal):
+        if name != "plist" or internal:
+            reject()
+
+    parser = ParserCreate()
+    parser.StartElementHandler = start
+    parser.EndElementHandler = lambda _name: stack.pop()
+    parser.CharacterDataHandler = text
+    parser.StartDoctypeDeclHandler = doctype
+    parser.EntityDeclHandler = reject
+    parser.ExternalEntityRefHandler = reject
+    parser.Parse(raw, True)
+    if not dictionary_seen:
+        reject()
+
+
+def _partition_description_allows_security(description: bytes) -> bool:
+    """Recognize Apple's bounded hex/XML Partitions policy for security(1)."""
+    if (
+        not isinstance(description, bytes)
+        or not 0 < len(description) <= _MAX_PARTITION_DESCRIPTION_BYTES
+        or len(description) % 2
+        or any(byte not in b"0123456789abcdefABCDEF" for byte in description)
+    ):
+        return False
+    try:
+        raw = bytes.fromhex(description.decode("ascii"))
+        _validate_partition_xml(raw)
+        policy = plistlib.loads(
+            raw,
+            fmt=plistlib.FMT_XML,
+            dict_type=_PartitionPolicyDict,
+        )
+    except (ValueError, TypeError, OverflowError, RecursionError, ExpatError, plistlib.InvalidFileException):
+        return False
+    if not isinstance(policy, dict) or set(policy) != {"Partitions"}:
+        return False
+    partitions = policy["Partitions"]
+    if not isinstance(partitions, list) or not 0 < len(partitions) <= _MAX_PARTITIONS:
+        return False
+    if any(
+        not isinstance(value, str)
+        or not 0 < len(value) <= _MAX_PARTITION_ID_BYTES
+        or not value.isascii()
+        or any(ord(character) < 33 or ord(character) > 126 for character in value)
+        for value in partitions
+    ):
+        return False
+    # Apple assigns com.apple.security its own partition. "apple:" alone
+    # authorizes other Apple-signed processes, not this fixed helper.
+    return "apple-tool:" in partitions
 
 
 class SecurityFrameworkError(RuntimeError):
@@ -661,8 +760,9 @@ class MacOSNativeKeychain:
         Some records created before the native writer trust only Apple's fixed
         ``/usr/bin/security`` executable for the decrypt authorization. Bypass
         may use that already-authorized executable as a narrow compatibility
-        bridge, but only after this metadata-only ACL check proves that it will
-        not need an authorization prompt. Any inspection error fails closed.
+        bridge, but only after metadata proves both explicit decrypt trust and
+        authorization by any partition policy. This preflight does not change
+        ACLs; any inspection error fails closed.
         """
         account = _encode_label(account_value, "keychain account")
         item = ctypes.c_void_p()
@@ -689,13 +789,13 @@ class MacOSNativeKeychain:
                     None,
                     ctypes.byref(item),
                 )
-                if status != _ERR_SEC_SUCCESS:
+                if status != _ERR_SEC_SUCCESS or item.value is None:
                     return False
                 status = self.api.security.SecKeychainItemCopyAccess(
                     item,
                     ctypes.byref(access),
                 )
-                if status != _ERR_SEC_SUCCESS:
+                if status != _ERR_SEC_SUCCESS or access.value is None:
                     return False
                 status = self.api.security.SecAccessCopyACLList(
                     access,
@@ -707,34 +807,52 @@ class MacOSNativeKeychain:
                 self.api.security,
                 "kSecACLAuthorizationDecrypt",
             ).value
-            for index in range(self.api.core_foundation.CFArrayGetCount(acl_list)):
+            partition = ctypes.c_void_p.in_dll(
+                self.api.security,
+                "kSecACLAuthorizationPartitionID",
+            ).value
+            if decrypt is None or partition is None:
+                return False
+            acl_count = self.api.core_foundation.CFArrayGetCount(acl_list)
+            if not 0 < acl_count <= _MAX_LEGACY_ACLS:
+                return False
+            decrypt_acls = []
+            partition_seen = False
+            for index in range(acl_count):
                 acl = self.api.core_foundation.CFArrayGetValueAtIndex(
                     acl_list,
                     index,
                 )
+                if not acl:
+                    return False
                 authorizations = ctypes.c_void_p(
                     self.api.security.SecACLCopyAuthorizations(acl)
                 )
                 if authorizations.value is None:
-                    continue
+                    return False
                 try:
-                    is_decrypt_acl = any(
-                        self.api.core_foundation.CFEqual(
-                            self.api.core_foundation.CFArrayGetValueAtIndex(
-                                authorizations,
-                                auth_index,
-                            ),
-                            decrypt,
-                        )
-                        for auth_index in range(
-                            self.api.core_foundation.CFArrayGetCount(authorizations)
-                        )
-                    )
+                    authorization_count = self.api.core_foundation.CFArrayGetCount(authorizations)
+                    if not 0 < authorization_count <= _MAX_ACL_AUTHORIZATIONS:
+                        return False
+                    is_decrypt_acl = False
+                    is_partition_acl = False
+                    for auth_index in range(authorization_count):
+                        authorization = self.api.core_foundation.CFArrayGetValueAtIndex(authorizations, auth_index)
+                        if not authorization:
+                            return False
+                        is_decrypt_acl |= bool(self.api.core_foundation.CFEqual(authorization, decrypt))
+                        is_partition_acl |= bool(self.api.core_foundation.CFEqual(authorization, partition))
                 finally:
                     release_cf_refs(self.api.core_foundation, authorizations)
-                if is_decrypt_acl and self._acl_trusts_system_security(acl):
-                    return True
-            return False
+                if is_partition_acl:
+                    # securityd rejects multiple partition ACL entries. Do not
+                    # let an earlier trusted decrypt ACL hide a late policy.
+                    if partition_seen or is_decrypt_acl or not self._partition_acl_allows_system_security(acl):
+                        return False
+                    partition_seen = True
+                if is_decrypt_acl:
+                    decrypt_acls.append(acl)
+            return any(self._acl_trusts_system_security(acl) for acl in decrypt_acls)
         except (
             OSError,
             ValueError,
@@ -745,6 +863,35 @@ class MacOSNativeKeychain:
             return False
         finally:
             release_cf_refs(self.api.core_foundation, acl_list, access, item)
+
+    def _partition_acl_allows_system_security(self, acl: ctypes.c_void_p) -> bool:
+        """Inspect one partition descriptor without reading or changing data."""
+        applications = ctypes.c_void_p()
+        descriptor = ctypes.c_void_p()
+        prompt_selector = ctypes.c_uint32()
+        try:
+            status = self.api.security.SecACLCopyContents(
+                acl, ctypes.byref(applications), ctypes.byref(descriptor), ctypes.byref(prompt_selector)
+            )
+            if (
+                status != _ERR_SEC_SUCCESS
+                or descriptor.value is None
+                or applications.value is not None
+                or prompt_selector.value != 0
+            ):
+                return False
+            cf = self.api.core_foundation
+            if cf.CFGetTypeID(descriptor) != cf.CFStringGetTypeID():
+                return False
+            length = cf.CFStringGetLength(descriptor)
+            if not 0 < length <= _MAX_PARTITION_DESCRIPTION_BYTES:
+                return False
+            buffer = ctypes.create_string_buffer(length + 1)
+            if not cf.CFStringGetCString(descriptor, buffer, len(buffer), _CF_STRING_ENCODING_UTF8):
+                return False
+            return _partition_description_allows_security(buffer.raw[:-1])
+        finally:
+            release_cf_refs(self.api.core_foundation, descriptor, applications)
 
     def _acl_trusts_system_security(self, acl: ctypes.c_void_p) -> bool:
         applications = ctypes.c_void_p()
@@ -757,9 +904,12 @@ class MacOSNativeKeychain:
                 ctypes.byref(descriptor),
                 ctypes.byref(prompt_selector),
             )
-            if status != _ERR_SEC_SUCCESS or applications.value is None:
+            if status != _ERR_SEC_SUCCESS or applications.value is None or prompt_selector.value != 0:
                 return False
-            for index in range(self.api.core_foundation.CFArrayGetCount(applications)):
+            application_count = self.api.core_foundation.CFArrayGetCount(applications)
+            if not 0 < application_count <= _MAX_LEGACY_APPLICATIONS:
+                return False
+            for index in range(application_count):
                 application = self.api.core_foundation.CFArrayGetValueAtIndex(
                     applications,
                     index,
@@ -773,11 +923,18 @@ class MacOSNativeKeychain:
                     if status != _ERR_SEC_SUCCESS or data.value is None:
                         continue
                     length = self.api.core_foundation.CFDataGetLength(data)
+                    if not 0 < length <= _MAX_LABEL_BYTES:
+                        return False
+                    pointer = self.api.core_foundation.CFDataGetBytePtr(data)
+                    if not pointer:
+                        return False
                     raw = bytes(
-                        self.api.core_foundation.CFDataGetBytePtr(data)[:length]
+                        pointer[:length]
                     ).rstrip(b"\0")
                     if raw == _SYSTEM_SECURITY_PATH:
-                        return True
+                        return self.api.security.SecTrustedApplicationValidateWithPath(
+                            application, _SYSTEM_SECURITY_PATH
+                        ) == _ERR_SEC_SUCCESS
                 finally:
                     release_cf_refs(self.api.core_foundation, data)
             return False
