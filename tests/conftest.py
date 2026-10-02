@@ -126,6 +126,21 @@ def isolated_clipboard(request):
 
 
 @pytest.fixture
+def tmp_path(tmp_path):
+    """Give empty synthetic Windows roots the privacy pytest supplies on POSIX.
+
+    The same-name dependency delegates creation/cleanup to pytest's fixture.
+    Explicit unsafe-ACL tests add their own foreign grants after this setup.
+    """
+    if os.name == "nt":
+        from keys_keeper.windows_file_security import restrict_new_object, validate_path
+        assert not any(tmp_path.iterdir()), "synthetic private test root must be empty"
+        restrict_new_object(tmp_path)
+        validate_path(tmp_path, directory=True, require_protected=True)
+    return tmp_path
+
+
+@pytest.fixture
 def kk_home(tmp_path, monkeypatch):
     """Isolated KEYS_KEEPER_HOME for each test."""
     home = tmp_path / "kk-home"
