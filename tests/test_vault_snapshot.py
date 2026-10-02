@@ -318,10 +318,10 @@ def test_merge_rejects_source_reference_substitution_after_local_or_remote_colli
     for local, remote in ((bound, other), (other, bound)):
         with pytest.raises(MergeReferenceConflict) as failure:
             merge(local, [], remote, [])
-        assert str(failure.value) == (
-            "vault merge would redirect an existing credential reference; "
-            "resolve conflicting names before syncing"
-        )
+        assert target.id in str(failure.value)
+        assert newer.id in str(failure.value)
+        assert dependent.name in str(failure.value)
+        assert "remove the old reference and sync" in str(failure.value)
     assert [entry.to_dict() for entry in bound + other] == original
 
 
@@ -334,14 +334,34 @@ def test_merge_preserves_reference_already_bound_to_name_winner():
     assert len({entry.name for entry in result.entries}) == 3
 
 
-def test_merge_rejects_tombstone_recreation_substitution_but_preserves_dangling_reference_contract():
+def test_merge_rejects_tombstone_recreation_and_new_dangling_reference():
     from keys_keeper.vault_snapshot import MergeReferenceConflict
 
     target, dependent, newer = _referenced_collision()
     tombstone = {"id": target.id, "name": target.name, "deleted_at": "2026-01-03T00:00:00Z"}
     with pytest.raises(MergeReferenceConflict):
         merge([target, dependent], [], [newer], [tombstone])
-    result = merge([target, dependent], [], [], [tombstone])
-    assert [entry.id for entry in result.entries] == [dependent.id]
-    assert result.entries[0].refs == dependent.refs
-    assert result.tombstones == [tombstone]
+    with pytest.raises(MergeReferenceConflict, match="to missing"):
+        merge([target, dependent], [], [], [tombstone])
+
+
+def test_snapshot_schema_is_checked_on_the_actual_metadata_read(tmp_path, monkeypatch):
+    from keys_keeper.vault_snapshot import LegacyCatalogSyncError
+
+    store = MetadataStore(Paths(tmp_path / "migration-race"))
+    entry = Entry.new(name="catalog-key", type=EntryType.API_KEY)
+    store.add(entry)
+    original_snapshot = store.snapshot
+    assert store.schema_version == 2
+
+    def migrate_then_read():
+        # Models a migration after any earlier CLI/schema preflight, immediately
+        # before the metadata snapshot that would otherwise expose catalog keys.
+        store.migrate_catalog_v3()
+        return original_snapshot()
+
+    monkeypatch.setattr(store, "snapshot", migrate_then_read)
+    backend = SimpleNamespace(list_ids=lambda: pytest.fail("catalog snapshot must not open credentials"))
+    with pytest.raises(LegacyCatalogSyncError):
+        prepare_snapshot_payload(store, backend)
+    assert store.schema_version == 3

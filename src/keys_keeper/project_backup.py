@@ -152,7 +152,7 @@ def create_master_backup(
         if journal.pending_refs(kind=MASTER_MUTATION_KIND):
             raise ProjectBackupError("master recovery is required before backup")
         with store.read_transaction() as tx:
-            before = MetadataSnapshot(tx.list(), tx.tombstones(), tx.revision())
+            before = MetadataSnapshot(tx.list(), tx.tombstones(), tx.revision(), tx.schema_version)
             records = tx.records()
             metadata_schema = tx.schema_version
             catalog = tx.catalog_state() if metadata_schema >= CATALOG_SCHEMA_VERSION else None

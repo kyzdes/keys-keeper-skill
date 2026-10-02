@@ -245,7 +245,15 @@ class MasterMutationManager:
             return self._replacement_state(tx, before, _metadata_image(staged), writes), [entry for entry, _ in prepared]
         return self._transact(prepare)
 
-    def apply_snapshot(self, entries, tombstones, *, secret_writes, secret_deletes, expected_revision):
+    def apply_snapshot(self, entries, tombstones, *, secret_writes, secret_deletes,
+                       expected_revision, expected_accounts):
+        # Capture caller-owned input before acquiring the mutation boundary.
+        # These preimages come from the prepared snapshot, never a fresh read.
+        try:
+            expected_accounts = _validate_account_images(dict(expected_accounts))
+        except (TypeError, ValueError, MasterRecoveryRequired):
+            raise ValueError("snapshot account preconditions are invalid") from None
+
         def prepare(tx):
             from keys_keeper.service import ConcurrentMutation
             from keys_keeper.store import MetadataTransaction
@@ -261,7 +269,16 @@ class MasterMutationManager:
             if deletes.intersection(writes):
                 raise ValueError("an account cannot be written and deleted in the same snapshot")
             writes.update({account: {"present": False} for account in deletes})
-            return self._replacement_state(tx, before, _metadata_image(staged), writes), None
+            if set(expected_accounts) != set(writes):
+                raise ValueError("snapshot account preconditions must cover exactly the changed accounts")
+            state = self._replacement_state(tx, before, _metadata_image(staged), writes)
+            # _replacement_state already reads these values for recovery, under
+            # both locks. Reuse that read before _transact can begin a journal
+            # record or change metadata/backend state. Timestamp precision is
+            # irrelevant, including for schema-2 secret-only rotations.
+            if state["accounts_before"] != expected_accounts:
+                raise ConcurrentMutation("local secrets changed while preparing the snapshot")
+            return state, None
         return self._transact(prepare)
 
     def _replacement_state(self, tx, before, after, accounts_after):
@@ -464,13 +481,12 @@ def _writes_for(entry_id: str, secrets: "SecretInput | None") -> dict[str, dict[
     result: dict[str, dict[str, object]] = {}
     if secrets is None:
         return result
-    if secrets.value is not None:
-        result[entry_id] = {"present": True, "value": secrets.value}
-    if secrets.passphrase is not None:
-        result[entry_id + ":passphrase"] = {
-            "present": True,
-            "value": secrets.passphrase,
-        }
+    for account, value in ((entry_id, secrets.value),
+                           (entry_id + ":passphrase", secrets.passphrase)):
+        if value is not None:
+            result[account] = {"present": True, "value": value}
+        elif secrets.mode == "replace":
+            result[account] = {"present": False}
     return result
 
 

@@ -101,6 +101,19 @@ def test_schema_version_written(store):
     assert raw["schema_version"] == SCHEMA_VERSION
 
 
+def test_schema_version_query_is_typed_and_does_not_migrate_catalog(store):
+    assert store.schema_version == 2
+    assert not store.paths.data_json.exists()
+    store.add(Entry.new(name="typed-schema", type=EntryType.API_KEY))
+    before = store.paths.data_json.read_bytes()
+    assert store.schema_version == 2
+    assert store.paths.data_json.read_bytes() == before
+    store.migrate_catalog_v3()
+    before = store.paths.data_json.read_bytes()
+    assert store.schema_version == 3
+    assert store.paths.data_json.read_bytes() == before
+
+
 def test_concurrent_writes_serialize(store, kk_home):
     """Two threads adding different entries must both succeed without losing one."""
     paths = Paths()

@@ -275,3 +275,38 @@ VaultService(manager.store, backend, master_mutations=manager).delete_entry({par
     assert store.get_by_id(child.id).refs == []
     assert parent.id not in backend.list_ids()
     assert parent.id + ":passphrase" not in backend.list_ids()
+
+
+@pytest.mark.parametrize("schema", [2, 3])
+def test_process_exit_after_replacement_passphrase_delete_recovers_forward(tmp_path, schema):
+    paths = Paths(tmp_path / "master")
+    if schema == 3:
+        MetadataStore(paths).migrate_catalog_v3()
+    _password_file(paths)
+    store, _backend, _journal, _manager, service = _file_components(paths)
+    entry = Entry.new(name="replace-key", type=EntryType.SSH_KEY,
+                      fields={"public_key": "ssh-ed25519 synthetic"})
+    service.create_entry(entry, secrets=SecretInput(value="old-key", passphrase="old-passphrase"))
+    result = _run_child(paths, f"""
+class StopBackend(EncryptedFileBackend):
+    def delete(self, account):
+        super().delete(account)
+        os._exit(76)
+backend = StopBackend(paths=paths, password_file=paths.backend_password_file, allow_env_password=False)
+journal = OperationJournal(paths=paths, password_provider=lambda: b'durable-master-journal-key-32!!')
+manager = MasterMutationManager(MetadataStore(paths), backend, journal)
+changed = manager.store.get_by_id({entry.id!r})
+changed.note = 'restored metadata'
+VaultService(manager.store, backend, master_mutations=manager).update_entry(
+    changed, secrets=SecretInput(value='restored-key', mode='replace'))
+""")
+    assert result.returncode == 76
+    store, backend, _journal, manager, _service = _file_components(paths)
+    assert manager.has_pending
+    assert store.get_by_id(entry.id).note != "restored metadata"
+    manager.recover()
+    assert store.get_by_id(entry.id).note == "restored metadata"
+    assert backend.get(entry.id).unseal() == "restored-key"
+    assert entry.id + ":passphrase" not in backend.list_ids()
+    assert store.schema_version == schema
+    assert not manager.has_pending

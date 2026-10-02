@@ -241,6 +241,8 @@ def test_snapshot_failure_restores_overwritten_and_deleted_values(service_env):
             secret_writes={first.id: "sentinel-remote-one"},
             secret_deletes=[second.id],
             expected_revision=revision,
+            expected_accounts={first.id: {"present": True, "value": "sentinel-old-one"},
+                               second.id: {"present": True, "value": "sentinel-old-two"}},
         )
 
     assert [entry.to_dict() for entry in store.list()] == [
@@ -266,6 +268,7 @@ def test_snapshot_rejects_stale_revision_before_secret_mutation(service_env):
             secret_writes={first.id: "sentinel-new"},
             secret_deletes=[],
             expected_revision=stale.revision,
+            expected_accounts={first.id: {"present": True, "value": "sentinel-old"}},
         )
 
     assert {entry.name for entry in store.list()} == {first.name, concurrent.name}
@@ -286,6 +289,7 @@ def test_snapshot_rejects_write_delete_overlap_before_mutation(service_env):
             secret_writes={entry.id: "sentinel-new"},
             secret_deletes=[entry.id],
             expected_revision=snapshot.revision,
+            expected_accounts={entry.id: {"present": True, "value": "sentinel-old"}},
         )
 
     assert backend.values[entry.id] == "sentinel-old"

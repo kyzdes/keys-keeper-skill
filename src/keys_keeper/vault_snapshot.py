@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from keys_keeper.backend import KeychainBackend, KeychainError
 from keys_keeper.crypto import BadPassword, decrypt_blob, encrypt_blob
 from keys_keeper.models import Entry, ValidationError, entry_requires_secret, validate_name
-from keys_keeper.store import SCHEMA_VERSION, MetadataStore, StoreError
+from keys_keeper.store import SCHEMA_VERSION, MetadataStore
 
 _MAGIC = b"KK1\x00"
 MAX_SNAPSHOT_BLOB_BYTES = 64 * 1024 * 1024
@@ -27,7 +27,7 @@ class SnapshotReadError(KeychainError):
 
 
 class MergeReferenceConflict(ValidationError):
-    """A name-based reference would silently resolve to another immutable ID."""
+    """A surviving name-based reference would silently change its binding."""
 
 
 def build_snapshot_payload(store: MetadataStore, backend: KeychainBackend) -> dict:
@@ -50,20 +50,16 @@ def _prepare_snapshot_payload(
 
     Reserved service accounts are never entries, so they are never included.
     """
-    # Check the local schema before listing entries or opening any secret
-    # account. Schema v3 must use the separate project protocol; serializing it
-    # as a legacy full-vault snapshot would both discard catalog metadata and
+    # Bind the schema to the same metadata read as the payload and revision,
+    # before opening any secret account. Schema v3 uses the project protocol;
+    # a separate schema preflight could race an explicit catalog migration.
+    # Serializing catalog data as a legacy snapshot would discard metadata and
     # disclose the entire master vault.
-    try:
-        store.catalog_state()
-    except StoreError as ex:
-        if "explicit schema-v3 migration" not in str(ex):
-            raise
-    else:
+    snapshot = store.snapshot()
+    if snapshot.schema_version >= 3:
         raise LegacyCatalogSyncError(
             "legacy full-vault snapshots are disabled for catalog schema v3; use the project protocol"
         )
-    snapshot = store.snapshot()
     try:
         # Presence is metadata. Enumerate once before any credential read so
         # optional absence stays distinct from denied/unavailable access.
@@ -280,21 +276,34 @@ def _require_reference_bindings(
     local_entries: list[Entry],
     remote_entries: list[Entry],
 ) -> None:
-    source_targets = {
-        "local": {entry.name: entry.id for entry in local_entries},
-        "remote": {entry.name: entry.id for entry in remote_entries},
-    }
+    sources = [({entry.id: entry for entry in entries},
+                {entry.name: entry.id for entry in entries})
+               for entries in (local_entries, remote_entries)]
     merged_targets = {entry.name: entry.id for entry, _source in live.values()}
-    for entry, source in live.values():
+    for entry, _source in live.values():
+        histories = [
+            (targets, {(ref["role"], ref["name"]) for ref in original.refs})
+            for entries, targets in sources
+            if (original := entries.get(entry.id)) is not None
+        ]
         for reference in entry.refs:
             name = reference.get("name")
-            original_id = source_targets[source].get(name)
             merged_id = merged_targets.get(name)
-            if original_id is not None and merged_id is not None and original_id != merged_id:
-                raise MergeReferenceConflict(
-                    "vault merge would redirect an existing credential reference; "
-                    "resolve conflicting names before syncing"
-                )
+            # Check both histories, not only the metadata winner: an unrelated
+            # edit or a newer timestamp is not permission to rebind a reference
+            # that survived unchanged on the other peer. A missing target is a
+            # binding state too; it must not silently acquire a new credential.
+            for source_targets, original_refs in histories:
+                if (reference["role"], name) not in original_refs:
+                    continue
+                original_id = source_targets.get(name)
+                if original_id != merged_id:
+                    raise MergeReferenceConflict(
+                        f"vault merge would change reference {name!r} on "
+                        f"{entry.name!r} ({entry.id}) from "
+                        f"{original_id or 'missing'} to {merged_id or 'missing'}; "
+                        "remove the old reference and sync before explicitly relinking"
+                    )
 
 
 def merge(local_entries: list[Entry], local_tombs: list[dict],

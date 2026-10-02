@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from keys_keeper.backend import KeychainBackend
 from keys_keeper.models import Entry
@@ -37,13 +37,20 @@ class IncompleteRollback(RuntimeError):
 
 
 class ConcurrentMutation(RuntimeError):
-    """Metadata changed after a caller computed a replacement snapshot."""
+    """Metadata or a touched secret changed after snapshot preparation."""
 
 
 @dataclass(frozen=True)
 class SecretInput:
+    """Patch leaves None untouched; replacement removes accounts represented by None."""
+
     value: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
+    mode: Literal["patch", "replace"] = "patch"
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"patch", "replace"}:
+            raise ValueError("secret input mode must be patch or replace")
 
 
 @dataclass(frozen=True)
@@ -164,10 +171,12 @@ class VaultService:
 
     def apply_snapshot(self, entries: list[Entry], tombstones: list[dict], *,
                        secret_writes: Mapping[str, str], secret_deletes: Iterable[str],
-                       expected_revision: str) -> None:
+                       expected_revision: str,
+                       expected_accounts: Mapping[str, Mapping[str, object]]) -> None:
         self._manager().apply_snapshot(
             entries, tombstones, secret_writes=secret_writes,
-            secret_deletes=secret_deletes, expected_revision=expected_revision)
+            secret_deletes=secret_deletes, expected_revision=expected_revision,
+            expected_accounts=expected_accounts)
 
     @staticmethod
     def _rollback_or_raise(undo: _BackendUndo, cause: BaseException) -> None:

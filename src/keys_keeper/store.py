@@ -115,6 +115,7 @@ class MetadataSnapshot:
     entries: list[Entry]
     tombstones: list[dict]
     revision: str
+    schema_version: int
 
 
 class MetadataTransaction:
@@ -311,6 +312,11 @@ class MetadataStore:
 
     # ---------- public API ----------
 
+    @property
+    def schema_version(self) -> int:
+        """Return the validated effective schema without opting into catalog v3."""
+        return self._read()["schema_version"]
+
     def list(self) -> list[Entry]:
         data = self._read()
         return [Entry.from_dict(d) for d in data["entries"]]
@@ -429,10 +435,11 @@ class MetadataStore:
             return json.loads(json.dumps(data["catalog"], ensure_ascii=False))
 
     def snapshot(self) -> MetadataSnapshot:
-        """Read entries, tombstones, and their revision under one lock."""
+        """Read entries, tombstones, schema and revision under one lock."""
         with self.read_transaction() as tx:
             return MetadataSnapshot(
                 entries=tx.list(), tombstones=tx.tombstones(), revision=tx.revision(),
+                schema_version=tx.schema_version,
             )
 
     @contextmanager
