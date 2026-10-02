@@ -56,6 +56,10 @@ def test_unknown_partition_policy_schema_fails_closed(value):
     b'<key>Partitions</key><array><string>apple-tool:</string></array></dict></plist>',
     b'<plist version="1.0"><dict><key>Partitions</key><array><string>apple-tool:</string></array>'
     b'<key>Partitions</key><array><string>apple-tool:</string></array></dict></plist>',
+], ids=[
+    "empty", "odd-hex", "non-hex", "spaced-hex", "unencoded-xml",
+    "oversized-descriptor", "binary-plist", "invalid-xml",
+    "duplicate-key-deny-last", "duplicate-key-allow-last", "duplicate-key-both-allow",
 ])
 def test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed(description):
     # Duplicate keys include last-wins cases that would grant access if the
@@ -85,6 +89,9 @@ def test_partition_count_and_id_length_are_bounded(partitions):
     b'<plist version="1.0"><dict><key>Partitions</key><array><string>apple-tool:</string></array></dict>'
     b'<dict><key>Partitions</key><array><string>apple-tool:</string></array></dict></plist>',
     b'<plist version="1.0"><dict>ignored<key>Partitions</key><array><string>apple-tool:</string></array></dict></plist>',
+], ids=[
+    "entity-declaration", "unknown-array-child", "unknown-dict-child",
+    "unknown-string-attribute", "multiple-root-dicts", "stray-dict-text",
 ])
 def test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access(xml):
     assert macos_keychain._partition_description_allows_security(xml.hex().encode("ascii")) is False
