@@ -150,3 +150,42 @@ def test_windows_append_streams_are_protected_and_refuse_existing_broad_acl(broa
     with pytest.raises(OSError, match="another Windows principal"):
         private_files.open_private_file(unsafe, os.O_WRONLY | os.O_TRUNC)
     assert unsafe.read_bytes() == b"preserve-existing"
+
+
+def test_windows_stdlib_owner_rights_dacl_requires_verified_owner(tmp_path, monkeypatch):
+    # CPython 3.12.4+ mkdir(0700) creates protected SYSTEM/Admins/OWNER RIGHTS
+    # grants. Ordinary child creation inherits OW, not a literal user SID.
+    directory = tmp_path / "stdlib-private"
+    directory.mkdir(mode=0o700)
+    created_acl = _dacl_snapshot(directory)
+    if ";;;OW)" not in created_acl and ";;;S-1-3-4)" not in created_acl:
+        # Older CPython Windows ignores 0700; install the same OWNER RIGHTS
+        # descriptor for the policy regression before creating its raw child.
+        _set_dacl(directory, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)")
+    path = directory / "inherited-raw-file"
+    path.write_bytes(b"SYNTHETIC-OWNER-RIGHTS")
+    before = _dacl_snapshot(directory), _dacl_snapshot(path)
+    for acl in before:
+        assert ";;;OW)" in acl or ";;;S-1-3-4)" in acl
+    ensure_private_dir(directory)
+    assert private_files.secure_read(path, max_bytes=128) == b"SYNTHETIC-OWNER-RIGHTS"
+    assert (_dacl_snapshot(directory), _dacl_snapshot(path)) == before
+
+    # The real OW descriptor cannot bypass owner verification. Prove that the
+    # native ACE API is never called under a simulated foreign token context.
+    api, _ = security._bindings()
+    with monkeypatch.context() as foreign:
+        foreign.setattr(security, "current_user_sid", lambda: "S-1-5-21-0-0-0-1234")
+        foreign.setattr(security, "current_token_owner_sid", lambda: "S-1-5-32-545")
+        foreign.setattr(api, "GetAce", lambda *args: pytest.fail("ACE scan before owner verification"))
+        with pytest.raises(OSError, match="unexpected owner"):
+            ensure_private_dir(directory)
+        with pytest.raises(private_files.PrivateFileError):
+            private_files.secure_read(path, max_bytes=128)
+    assert (_dacl_snapshot(directory), _dacl_snapshot(path)) == before
+
+    _set_dacl(directory, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;OICI;GR;;;WD)")
+    broad = _dacl_snapshot(directory)
+    with pytest.raises(OSError, match="another Windows principal"):
+        ensure_private_dir(directory)
+    assert _dacl_snapshot(directory) == broad

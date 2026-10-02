@@ -75,6 +75,10 @@ jobs:
       - name: HTTP resource lifecycle preflight
         run: python -m pytest -q tests/test_http_resources.py tests/test_remote_http_resources.py tests/test_sync_connection_lifecycle.py -W error
 
+      - name: Windows private-file policy preflight
+        if: runner.os == 'Windows'
+        run: python -m pytest -q tests/test_windows_file_security.py tests/test_windows_owner_policy.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py
+
       - name: Windows installer smoke
         if: runner.os == 'Windows'
         shell: pwsh

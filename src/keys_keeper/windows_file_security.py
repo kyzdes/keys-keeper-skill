@@ -117,6 +117,12 @@ def _owner_is_current_token(owner: str, user: str, *, allow_default_owner: bool)
             and owner == current_token_owner_sid())
 
 
+def _allow_sid_is_private(sid: str, user: str, *, owner_trusted: bool) -> bool:
+    # OWNER RIGHTS resolves to this object's owner, which must be verified
+    # before scanning any ACE. It never authorizes another owner or principal.
+    return owner_trusted and (sid in {user, *_PRIVILEGED_SIDS} or sid == "S-1-3-4")
+
+
 @contextmanager
 def _attributes(*, directory: bool = False):
     api, kernel = _bindings()
@@ -180,7 +186,8 @@ def validate_handle(handle, *, directory: bool = False, require_private: bool = 
             # cannot expand access. Unrecognized effective grants fail closed.
             if flags & 0x08 or kind in (1, 6, 10, 12):
                 continue
-            if kind != 0 or _sid_string(ace.value + 8) not in allowed:
+            if kind != 0 or not _allow_sid_is_private(
+                    _sid_string(ace.value + 8), user, owner_trusted=owned):
                 raise WindowsFileSecurityError("Windows private file grants access to another Windows principal")
     finally:
         kernel.LocalFree(descriptor)
