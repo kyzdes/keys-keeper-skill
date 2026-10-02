@@ -79,13 +79,27 @@ publication still compensates the credential writes.
 
 ## VPS relay
 
-The default admission limit is two active application requests and 32 accepted
-connections with a 10-second input deadline. Excess application work gets a
-retryable HTTP 429 response. History listings project metadata and, when requested, signed commits in SQLite;
+The defaults allow 32 accepted handler connections and two concurrent
+application operations. Headers are parsed before an application slot is
+acquired, so this is not a two-handler limit. Excess application work gets a
+retryable HTTP 429 response. The 10-second input budget is checked on socket
+reads; buffered bytes and application/SQLite work are not covered by an
+end-to-end execution deadline. History listings project metadata and, when requested, signed commits in SQLite;
 they do not select historical snapshot bodies. Shared bounded HTTP admission
 covers both protocol versions, and shutdown closes idle connections. Contended
 SQLite work fails with a fixed retryable error instead of occupying request
 slots for the old 30-second busy wait.
+
+CLI and HTTP receipts share the audit-layer outcome normalizer: `published`
+means a confirmed side effect (`committed: true`), `failed` means a confirmed
+failure before publication (`false`), and `unconfirmed` preserves an unknown
+outcome (`null`). A later error or unavailable audit sink cannot erase a known
+publication. New audit events include these optional fields; old JSONL events
+remain readable. Unknown outcomes require state inspection before retrying.
+
+`keys devices status` returns public metadata but can read local unlock material
+to decrypt configured sync state. Installation smoke checks use `keys --version`
+and do not construct a vault backend.
 
 Logical storage usage is maintained by SQLite triggers in the same transaction
 as each insert/update/delete. Existing databases are counted once under the

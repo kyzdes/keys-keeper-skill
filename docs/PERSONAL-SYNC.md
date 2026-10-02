@@ -62,7 +62,10 @@ its durable outbox until submitted. The main computer must run to accept and
 publish them; all replicas eventually fetch that publication. Name conflicts
 keep the canonical existing key and are not resolved by overwriting it.
 
-`keys devices status` reports local state; `keys devices sync` retries now.
+`keys devices status` reports local state and may read local unlock material to
+decrypt configured sync state. It does not contact the VPS or read entry values.
+For a credential-free installation check, use `keys --version` or `keys --help`.
+`keys devices sync` retries now.
 `keys devices autostart on|off` controls automatic startup. Background processes
 use `keys devices watch --home PATH`. A network error is recorded as pending with
 a fixed message. It does not erase keys or log decrypted payloads.

@@ -248,10 +248,12 @@ No invitation files or SSH access on the new computer are needed. Each connected
 computer can read keys offline and submit new entries; the main computer owns
 edits, deletions and device approval. It must be running to accept new entries.
 
-The installer enables a per-user background job on macOS, Windows and Linux.
+Personal sync setup enables a per-user background job on macOS, Windows and Linux.
 Use **Sync now**, the automatic-sync switch and **Disconnect** in the same panel.
 Operational commands are `keys devices status`, `keys devices sync` and
-`keys devices autostart on`. See [setup, recovery and protocol details](docs/PERSONAL-SYNC.md).
+`keys devices autostart on`. Status returns public metadata but may read local
+unlock material to open configured sync state; use `keys --version` for a
+credential-free installation check. See [setup, recovery and protocol details](docs/PERSONAL-SYNC.md).
 
 ## Removed S3 integration
 

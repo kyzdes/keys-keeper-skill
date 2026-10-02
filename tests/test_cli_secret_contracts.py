@@ -253,7 +253,30 @@ def test_inject_success_with_audit_failure_reports_committed(context, tmp_path, 
     assert cli.main(["inject", "test-key", "--file", str(target), "--as", "MY_KEY"]) == 0
     assert SENTINEL in target.read_text()
     receipt = json.loads(capsys.readouterr().err)
-    assert receipt == {"operation": "inject", "committed": True, "audit_status": "unavailable"}
+    assert receipt == {"operation": "inject", "committed": True, "outcome": "published",
+                       "audit_status": "unavailable"}
+
+
+@pytest.mark.parametrize("published", [True, None])
+def test_cli_mutation_audit_matches_known_or_unknown_outcome(context, monkeypatch, capsys, published):
+    class Failure(RuntimeError):
+        committed = published
+    create = context.service.create_entry
+    def fail(entry, **kwargs):
+        if published:
+            create(entry, **kwargs)
+        raise Failure(SENTINEL)
+    monkeypatch.setattr(context.service, "create_entry", fail)
+    monkeypatch.setattr(cli.sys, "stdin", StringIO("synthetic-stored-value"))
+    assert cli.main(["add", "receipt-key", "--stdin"]) == 1
+    output = capsys.readouterr()
+    receipt = json.loads(output.err.splitlines()[0])
+    event = context.audit.events[-1]
+    assert receipt["committed"] is published
+    assert receipt["outcome"] == event["outcome"] == ("published" if published else "unconfirmed")
+    assert event["committed"] is published and event["success"] is (published is True)
+    assert (context.store.get_by_name("receipt-key") is not None) is (published is True)
+    assert SENTINEL not in output.out + output.err
 
 
 def test_resolve_metadata_errors_preflight_all_placeholders_before_any_read(context, tmp_path):

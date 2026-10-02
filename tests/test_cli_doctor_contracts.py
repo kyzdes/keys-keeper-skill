@@ -163,7 +163,8 @@ def test_doctor_recover_completes_committed_mutation_and_keeps_values_private(
     captured = capsys.readouterr()
     receipt = receipts(captured.out)[0]
     assert receipt == {"operation": "recover", "status": "completed", "committed": True,
-                       "recovered_count": 1, "pending_count": 0, "audit_status": "recorded"}
+                       "recovered_count": 1, "pending_count": 0, "audit_status": "recorded",
+                       "outcome": "published"}
     assert not manager.has_pending
     assert context.backend.values[second.id] == SENTINEL
     assert context.audit.events[-1]["op"] == "recover"

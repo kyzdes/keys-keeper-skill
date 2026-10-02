@@ -94,7 +94,8 @@ def api_key(name="synthetic-key"):
 ])
 def test_bad_json_is_structured_400_without_mutation_and_connection_survives(admin_contract, raw):
     status, body = admin_contract.request("POST", "/api/entries", raw)
-    assert (status, body) == (400, {"error": "Invalid request"})
+    assert status == 400 and body["error"] == "Invalid request"
+    assert body["outcome"] == "failed" and body["committed"] is False
     assert admin_contract.backend.values == {}
     assert admin_contract.store.list() == []
     assert admin_contract.request("GET", "/api/entries") == (200, {"entries": []})
@@ -177,7 +178,8 @@ def test_committed_provider_exception_remains_explicit_at_http_boundaries(admin_
 def test_patch_rejects_unsupported_or_wrong_type_mutation(admin_contract, payload):
     _, created = admin_contract.request("POST", "/api/entries", api_key())
     status, body = admin_contract.request("PATCH", "/api/entries/" + created["id"], payload)
-    assert (status, body) == (400, {"error": "Invalid request"})
+    assert status == 400 and body["error"] == "Invalid request"
+    assert body["outcome"] == "failed" and body["committed"] is False
     assert admin_contract.store.get_by_id(created["id"]).name == "synthetic-key"
 
 
@@ -188,6 +190,7 @@ def test_successful_create_retains_committed_receipt_when_audit_is_unavailable(a
     status, body = admin_contract.request("POST", "/api/entries", api_key())
     assert status == 201
     assert body["committed"] is True and body["audit_status"] == "unavailable"
+    assert body["outcome"] == "published"
     assert body["name"] == "synthetic-key"
     assert admin_contract.backend.values[body["id"]] == "synthetic-value"
     assert "synthetic-private-marker" not in json.dumps(body)
@@ -229,14 +232,42 @@ def test_unclassified_mutation_failure_does_not_claim_rollback_or_disclose_error
     status, body = admin_contract.request("POST", "/api/entries", api_key())
     assert status == 503 and body["committed"] is None
     assert "recovery" in body["error"] and "synthetic-private-marker" not in json.dumps(body)
-    assert len(list(admin_contract.audit.search(op="add"))) == 1
+    events = list(admin_contract.audit.search(op="add"))
+    assert len(events) == 1
+    assert events[0]["committed"] is None and events[0]["outcome"] == "unconfirmed"
+    assert events[0]["success"] is False
+
+
+@pytest.mark.parametrize("audit_unavailable", [False, True])
+def test_http_later_failure_retains_published_mutation_and_truthful_audit(admin_contract, monkeypatch, audit_unavailable):
+    class Failure(RuntimeError):
+        committed = True
+    create = admin_contract.context.service.create_entry
+    def fail(entry, **kwargs):
+        create(entry, **kwargs)
+        raise Failure("synthetic-private-marker")
+    monkeypatch.setattr(admin_contract.context.service, "create_entry", fail)
+    if audit_unavailable:
+        monkeypatch.setattr(admin_contract.audit, "record",
+                            lambda **_event: (_ for _ in ()).throw(OSError("synthetic-private-marker")))
+    status, body = admin_contract.request("POST", "/api/entries", api_key())
+    assert status == 503 and body["committed"] is True and body["outcome"] == "published"
+    assert body["audit_status"] == ("unavailable" if audit_unavailable else "recorded")
+    entry = admin_contract.store.get_by_name("synthetic-key")
+    assert admin_contract.backend.values[entry.id] == "synthetic-value"
+    if not audit_unavailable:
+        event = list(admin_contract.audit.search(op="add"))[0]
+        assert event["success"] is True and event["committed"] is True and event["outcome"] == "published"
+    assert "synthetic-private-marker" not in json.dumps(body)
 
 
 def test_unexpected_read_failure_is_structured_and_redacted(admin_contract, monkeypatch):
     def fail():
         raise OSError("synthetic-private-marker")
     monkeypatch.setattr(admin_contract.store, "list", fail)
-    assert admin_contract.request("GET", "/api/entries") == (503, {"error": "Operation unavailable"})
+    status, body = admin_contract.request("GET", "/api/entries")
+    assert status == 503 and body["committed"] is None and body["outcome"] == "unconfirmed"
+    assert "synthetic-private-marker" not in json.dumps(body)
 
 
 def test_recent_events_track_immutable_id_and_multi_entry_usage_newest_first(admin_contract):

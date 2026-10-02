@@ -138,25 +138,56 @@ class AuditEvent:
     caller_kind: str = "unknown"
     caller_agent: str | None = None
     affected_entry_ids: list[str] | None = None
+    committed: bool | None = None
+    outcome: str | None = None
+    audit_status: str | None = None
 
     def to_json(self) -> str:
         data = dict(self.__dict__)
         if self.affected_entry_ids is None:
             data.pop("affected_entry_ids")
+        if self.outcome is None:
+            for field in ("committed", "outcome", "audit_status"):
+                data.pop(field)
         return json.dumps(data, separators=(",", ":"))
+
+
+def normalize_outcome(*, committed: bool | None = None,
+                      audit_status: str = "unknown", error: Exception | None = None) -> dict:
+    """Value-free receipt for publication, rejection or an uncertain operation.
+
+    A later error cannot erase a known publication. Unclassified errors never
+    imply either rollback or success; callers must inspect state before retrying.
+    """
+    if getattr(error, "committed", None) is True:
+        committed = True
+    elif committed is None and getattr(error, "committed", None) is False:
+        committed = False
+    if committed is not True and committed is not False:
+        committed = None
+    audit_status = getattr(error, "audit_status", audit_status)
+    if type(audit_status) is not str or audit_status not in {"recorded", "unavailable", "unknown"}:
+        audit_status = "unknown"
+    return {"committed": committed,
+            "outcome": "published" if committed is True else "failed" if committed is False else "unconfirmed",
+            "audit_status": audit_status}
 
 
 def record_outcome(audit, *, op: str, name: str, id_: str,
                    file_target: str | None = None, success: bool = True,
                    error: str | None = None,
-                   affected_entry_ids: list[str] | None = None) -> str:
+                   affected_entry_ids: list[str] | None = None,
+                   committed=...) -> str:
     """Record metadata without turning an audit failure into an operation retry.
 
     The caller decides whether the operation committed. This helper reports
     only whether its receipt was persisted, never exception text or values.
     Failed operations use a fixed error marker even for third-party audit sinks.
     """
-    event = {"op": op, "name": name, "id_": id_, "success": success}
+    receipt = normalize_outcome(committed=success if committed is ... else committed,
+                                audit_status="recorded")
+    event = {"op": op, "name": name, "id_": id_,
+             "success": receipt["committed"] is True, **receipt}
     if file_target is not None:
         event["file_target"] = file_target
     if error or not success:
@@ -287,7 +318,17 @@ class AuditLog:
         success: bool = True,
         error: str | None = None,
         affected_entry_ids: list[str] | None = None,
+        committed=...,
+        outcome: str | None = None,
+        audit_status: str | None = None,
     ) -> None:
+        receipt = None
+        if committed is not ... or outcome is not None or audit_status is not None:
+            receipt = normalize_outcome(committed=None if committed is ... else committed,
+                                        audit_status=audit_status or "recorded")
+            if outcome is not None and outcome != receipt["outcome"]:
+                raise ValueError("inconsistent audit outcome")
+            success = receipt["committed"] is True
         ensure_private_dir(self.paths.root)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # parent pid is the caller (CLI was invoked by zsh / claude / etc)
@@ -312,6 +353,7 @@ class AuditLog:
             affected_entry_ids=(list(dict.fromkeys(
                 _sanitize_untrusted(value) or "?" for value in affected_entry_ids
             )) if affected_entry_ids is not None else None),
+            **(receipt or {}),
         )
         with open(self.paths.audit_jsonl, "a", opener=_private_opener) as f:
             f.write(event.to_json() + "\n")

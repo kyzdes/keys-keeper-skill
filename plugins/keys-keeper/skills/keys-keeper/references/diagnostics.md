@@ -14,13 +14,14 @@
 | `keys list`, `keys info`, `keys quickstart` | no | no | no | no |
 | `keys keychain status` | no | no | no | no |
 | `keys doctor` | presence only | no | no | no |
-| `keys devices status` | no | no | no | no |
+| `keys devices status` | local unlock material when configured | no | no | requested configured status |
 | `keys sync vps status` | vault and sync credentials | yes | no | configured KK2 status requested |
 | `keys copy`, `inject`, `resolve`, `ssh` | yes | SSH only | explicit sink/session | request authorizes sink |
 | `keys add`, `edit`, `rm`, `sync vps push/pull` | as required | sync only | yes | explicit task required |
 
 "Metadata-only output" does not mean an operation is local or credential-free.
-Use the narrowest command that answers the request.
+Use the narrowest command that answers the request. For an installation check
+without credential access, use `keys --version` and `keys --help`.
 
 ## Structural defenses (informational)
 

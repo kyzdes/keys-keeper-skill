@@ -59,7 +59,7 @@ if (-not $NoPathUpdate) {
     $env:Path = "$scripts;$env:Path"
 }
 Invoke-Checked $venvPython @('-m', 'keys_keeper', 'app', 'install', '--force')
-Invoke-Checked $venvPython @('-m', 'keys_keeper', 'devices', 'status')
+Invoke-Checked $venvPython @('-m', 'keys_keeper', '--version')
 Write-Host 'Keys Keeper is installed. Open Settings -> My computers and paste the connection code from your main computer.'
 if (-not $NoLaunch) {
     Start-Process -FilePath $venvPython -ArgumentList @('-m', 'keys_keeper', 'serve') -WindowStyle Hidden

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from keys_keeper import audit as audit_module
-from keys_keeper.audit import AuditLog, AuditReadLimit
+from keys_keeper.audit import AuditLog, AuditReadLimit, normalize_outcome, record_outcome
 from keys_keeper.paths import Paths
 
 
@@ -27,6 +27,29 @@ def test_record_appends_event(audit):
     assert len(events) == 1
     assert events[0]["op"] == "copy"
     assert events[0]["name"] == "openrouter-cline"
+
+
+def test_legacy_and_new_outcomes_remain_readable_without_false_success(audit):
+    audit.record(op="copy", name="legacy", id_="kk:old", success=True)
+    assert record_outcome(audit, op="update", name="unknown", id_="kk:new", committed=None) == "recorded"
+    assert record_outcome(audit, op="update", name="published", id_="kk:new", success=False,
+                          committed=True, error="synthetic-private-error") == "recorded"
+    legacy, unknown, published = list(audit.tail(3))
+    assert "committed" not in legacy and "outcome" not in legacy
+    assert unknown["committed"] is None and unknown["outcome"] == "unconfirmed" and unknown["success"] is False
+    assert published["committed"] is True and published["outcome"] == "published" and published["success"] is True
+    assert published["audit_status"] == "recorded"
+    assert "synthetic-private-error" not in audit.paths.audit_jsonl.read_text()
+    assert len(list(audit.search(op="update"))) == 2
+
+
+def test_outcome_normalizer_does_not_trust_truthy_or_secret_bearing_error_fields():
+    error = RuntimeError("synthetic-private-error")
+    error.committed = 1
+    error.audit_status = {"secret": "synthetic-private-error"}
+    assert normalize_outcome(error=error) == {"committed": None, "outcome": "unconfirmed", "audit_status": "unknown"}
+    error.committed = True
+    assert normalize_outcome(error=error, committed=False)["outcome"] == "published"
 
 
 def test_record_includes_timestamp_and_caller(audit):

@@ -13,7 +13,7 @@ import webbrowser
 from pathlib import Path
 
 from keys_keeper import __version__, clipboard
-from keys_keeper.audit import AuditLog, record_outcome
+from keys_keeper.audit import AuditLog, normalize_outcome, record_outcome
 from keys_keeper.backend import SecretAccessDenied, SecretNotFound, SecretUnavailable
 from keys_keeper.composition import build_backend
 from keys_keeper.models import (
@@ -32,12 +32,12 @@ from keys_keeper.store import MetadataStore, NameConflict, StoreError
 
 def _audit_outcome(audit, *, committed=..., **event) -> str:
     """Audit is observational: never conceal an already committed side effect."""
-    status = record_outcome(audit, **event)
+    status = record_outcome(audit, committed=committed, **event)
     if status != "recorded":
         sys.stderr.write(json.dumps({
             "operation": event["op"],
-            "committed": event.get("success", True) if committed is ... else committed,
-            "audit_status": status,
+            **normalize_outcome(committed=event.get("success", True) if committed is ... else committed,
+                                audit_status=status),
         }, separators=(",", ":")) + "\n")
     return status
 
@@ -55,30 +55,22 @@ def _secret_read_error(error: Exception) -> str:
 def _operation_failure(operation: str, error: Exception | None = None, *,
                        committed: bool | None = None, audit_status: str = "unknown") -> int:
     """One value-free adapter receipt, preserving typed publication outcomes."""
-    if getattr(error, "committed", None) is True:
-        committed = True
-    reported_audit = getattr(error, "audit_status", audit_status)
-    if not isinstance(reported_audit, str) or reported_audit not in {"recorded", "unavailable", "unknown"}:
-        reported_audit = "unknown"
-    outcome = "published" if committed is True else "failed" if committed is False else "unconfirmed"
-    sys.stderr.write(json.dumps({"operation": operation, "committed": committed,
-                               "outcome": outcome, "audit_status": reported_audit},
+    receipt = normalize_outcome(committed=committed, audit_status=audit_status, error=error)
+    sys.stderr.write(json.dumps({"operation": operation, **receipt},
                               separators=(",", ":")) + "\n")
-    if committed is False:
+    if receipt["committed"] is False:
         sys.stderr.write("error: operation failed before a confirmed change\n")
     else:
         sys.stderr.write("error: operation did not return a verified receipt; inspect state before retrying\n")
     return 1
 
 
-def _mutation_failure(audit, *, op: str, entry: Entry) -> int:
+def _mutation_failure(audit, *, op: str, entry: Entry, error: Exception | None = None) -> int:
     """An unexpected durable mutation failure may require forward recovery."""
-    status = _audit_outcome(audit, op=op, name=entry.name, id_=entry.id,
-                           success=False, committed=None)
-    sys.stderr.write(json.dumps({"operation": op, "committed": None, "audit_status": status},
-                               separators=(",", ":")) + "\n")
-    sys.stderr.write("error: mutation did not return a verified receipt; check vault recovery before retrying\n")
-    return 1
+    receipt = normalize_outcome(error=error)
+    status = record_outcome(audit, op=op, name=entry.name, id_=entry.id,
+                            success=False, committed=receipt["committed"])
+    return _operation_failure(op, error, committed=receipt["committed"], audit_status=status)
 
 
 def _profile_selector(args: argparse.Namespace) -> str | None:
@@ -119,7 +111,7 @@ def _context_or_error(args: argparse.Namespace, *, access=None):
     try:
         return _context(args, access=access)
     except (ValueError, RuntimeError) as ex:
-        sys.stderr.write(f"error: {ex}\n")
+        _operation_failure(getattr(args, "command", "context"), ex, committed=False)
         return None
 
 
@@ -242,8 +234,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     except ValidationError:
         sys.stderr.write("error: invalid entry or secret input\n")
         return 2
-    except Exception:
-        return _mutation_failure(audit, op="add", entry=entry)
+    except Exception as ex:
+        return _mutation_failure(audit, op="add", entry=entry, error=ex)
     _audit_outcome(audit, op="add", name=entry.name, id_=entry.id, success=True)
     print(f"added {entry.type.value} '{entry.name}' (id={entry.id})")
     return 0
@@ -393,13 +385,15 @@ def cmd_copy(args: argparse.Namespace) -> int:
         return 1
 
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    _audit_outcome(audit, op="copy", name=e.name, id_=e.id, success=True)
+    audit_status = _audit_outcome(audit, op="copy", name=e.name, id_=e.id, success=True)
 
     if args.clear_after > 0:
         try:
             clipboard.spawn_clear_after(written_hash, args.clear_after)
         except Exception:
-            sys.stderr.write('{"operation":"copy","committed":true,"auto_clear":"unavailable"}\n')
+            sys.stderr.write(json.dumps({"operation": "copy", "auto_clear": "unavailable",
+                                        **normalize_outcome(committed=True, audit_status=audit_status)},
+                                       separators=(",", ":")) + "\n")
             sys.stderr.write("error: clipboard was written but automatic clearing could not be scheduled\n")
             return 1
     print(f"copied {e.name} to clipboard · auto-clear in {args.clear_after}s")
@@ -603,8 +597,8 @@ def cmd_rm(args: argparse.Namespace) -> int:
             f"Use --cascade to remove the references too.\n"
         )
         return 1
-    except Exception:
-        return _mutation_failure(audit, op="delete", entry=e)
+    except Exception as ex:
+        return _mutation_failure(audit, op="delete", entry=e, error=ex)
     _audit_outcome(audit, op="delete", name=e.name, id_=e.id, success=True)
     print(f"removed {e.name}")
     return 0
@@ -668,8 +662,8 @@ def cmd_edit(args: argparse.Namespace) -> int:
     except ValidationError:
         sys.stderr.write("error: invalid entry metadata\n")
         return 2
-    except Exception:
-        return _mutation_failure(audit, op="update", entry=e)
+    except Exception as ex:
+        return _mutation_failure(audit, op="update", entry=e, error=ex)
     _audit_outcome(audit, op="update", name=e.name, id_=e.id, success=True)
     print(f"updated {e.name}")
     return 0
@@ -709,25 +703,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("recovery:     ✗ pending state is unavailable or unsafe")
             if recover:
                 print(json.dumps({"operation": "recover", "status": "blocked",
-                                  "committed": False, "recovered_count": 0},
+                                  "recovered_count": 0, **normalize_outcome(committed=False)},
                                  separators=(",", ":")))
                 return 1
     if recover:
         try:
             manager = compose_master_mutations(ctx.store, ctx.backend)
             recovered = manager.recover()
-        except Exception:
+        except Exception as ex:
+            receipt = normalize_outcome(error=ex)
             status = record_outcome(ctx.audit, op="recover", name="master", id_="",
-                                    success=False)
+                                    success=False, committed=receipt["committed"])
             print(json.dumps({"operation": "recover", "status": "unconfirmed",
-                              "committed": None, "recovered_count": None,
-                              "audit_status": status}, separators=(",", ":")))
+                              "recovered_count": None,
+                              **normalize_outcome(committed=receipt["committed"], audit_status=status, error=ex)},
+                             separators=(",", ":")))
             sys.stderr.write("error: recovery did not return a verified receipt; inspect pending state before retrying\n")
             return 1
         status = record_outcome(ctx.audit, op="recover", name="master", id_="")
         print(json.dumps({"operation": "recover", "status": "completed",
-                          "committed": True, "recovered_count": len(recovered),
-                          "pending_count": 0, "audit_status": status},
+                          "recovered_count": len(recovered), "pending_count": 0,
+                          **normalize_outcome(committed=True, audit_status=status)},
                          separators=(",", ":")))
 
     # Presence-only diagnostics: one enumeration, no entry credential reads.
@@ -948,7 +944,7 @@ def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
     """Refuse legacy writers before a prompt or a credential-backend access.
 
     Schema v3 has catalog bindings which the old encrypted backup format cannot
-    represent.  Reading ``catalog_state`` is intentionally side-effect free;
+    represent. Reading the validated schema version is side-effect free;
     it does not migrate legacy metadata.
     """
     ctx = _context_or_error(args)
@@ -957,15 +953,8 @@ def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
     if ctx.kind != "master":
         sys.stderr.write(f"error: legacy {operation} is only available to the master profile\n")
         return None
-    paths = ctx.paths
-    store = ctx.store
-    try:
-        store.catalog_state()
-    except StoreError as ex:
-        if "explicit schema-v3 migration" in str(ex):
-            return ctx
-        sys.stderr.write(f"error: cannot verify legacy {operation} compatibility: {ex}\n")
-        return None
+    if ctx.store.schema_version < 3:
+        return ctx
     sys.stderr.write(
         f"error: legacy {operation} is disabled for catalog schema v3 because it "
         "cannot preserve project scopes. Use project-scoped recovery, or restore "
@@ -1014,9 +1003,11 @@ def cmd_export(args: argparse.Namespace) -> int:
         atomic_write_bytes(target, blob, replace_existing=replace_existing,
                            expected=state, ensure_parent_private=False)
     except PrivateFileCommitError:
-        _audit_outcome(audit, op="export", name="<all>", id_="-",
-                       file_target=str(target), success=True)
-        sys.stderr.write('{"operation":"export","committed":true,"durability":"unconfirmed"}\n')
+        status = record_outcome(audit, op="export", name="<all>", id_="-",
+                                file_target=str(target), committed=True)
+        sys.stderr.write(json.dumps({"operation": "export", "durability": "unconfirmed",
+                                    **normalize_outcome(committed=True, audit_status=status)},
+                                   separators=(",", ":")) + "\n")
         sys.stderr.write("error: backup was published but directory durability could not be confirmed; inspect before retrying\n")
         return 1
     except (PrivateFileError, OSError):
@@ -1029,9 +1020,11 @@ def cmd_export(args: argparse.Namespace) -> int:
     except (PrivateFileError, OSError):
         verified = False
     if not verified:
-        _audit_outcome(audit, op="export", name="<all>", id_="-",
-                       file_target=str(target), success=True)
-        sys.stderr.write('{"operation":"export","committed":true,"verification":"failed"}\n')
+        status = record_outcome(audit, op="export", name="<all>", id_="-",
+                                file_target=str(target), committed=True)
+        sys.stderr.write(json.dumps({"operation": "export", "verification": "failed",
+                                    **normalize_outcome(committed=True, audit_status=status)},
+                                   separators=(",", ":")) + "\n")
         sys.stderr.write("error: backup was published but verification failed; inspect before retrying\n")
         return 1
     _audit_outcome(audit, op="export", name="<all>", id_="-", file_target=str(target), success=True)
@@ -1079,18 +1072,18 @@ def cmd_import(args: argparse.Namespace) -> int:
         try:
             service.create_entry(
                 e,
-                secrets=SecretInput(value=secret, passphrase=passphrase),
+                secrets=SecretInput(value=secret, passphrase=passphrase, mode="replace"),
                 replace=not fresh,
             )
-        except Exception:
-            # ``VaultService`` has already compensated metadata and secret
-            # writes. Stop after the first failure so a rerun can resume at the
-            # same entry without a flood of repeated backend errors.
-            status = _audit_outcome(audit, op="import", name=e.name, id_=e.id,
+        except Exception as ex:
+            # Completed earlier rows remain published. The failing row can
+            # require forward recovery, so a rerun must inspect state first.
+            receipt = normalize_outcome(committed=True if imported else None, error=ex)
+            status = record_outcome(audit, op="import", name=e.name, id_=e.id,
                                     file_target=args.file, success=False,
-                                    committed=True if imported else None)
-            sys.stderr.write(json.dumps({"operation": "import", "committed": True if imported else None,
-                                        "stored_entries": imported, "audit_status": status},
+                                    committed=receipt["committed"])
+            sys.stderr.write(json.dumps({"operation": "import", "stored_entries": imported,
+                                        **normalize_outcome(committed=receipt["committed"], audit_status=status, error=ex)},
                                        separators=(",", ":")) + "\n")
             sys.stderr.write(
                 f"error: stored {imported} entr{'y' if imported == 1 else 'ies'}, "

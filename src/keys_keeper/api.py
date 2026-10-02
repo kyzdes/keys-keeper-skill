@@ -10,7 +10,7 @@ from collections.abc import Callable
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from keys_keeper import clipboard
-from keys_keeper.audit import record_outcome
+from keys_keeper.audit import normalize_outcome, record_outcome
 from keys_keeper.backend import KeychainError
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
@@ -136,29 +136,29 @@ def handle_api(
         if _dispatch_entry_route(handler, paths, method, parsed, body):
             return
         handler._send_json(404, {"error": "not found"})
-    except NotFound:
-        handler._send_json(404, {"error": "not found"})
+    except NotFound as ex:
+        if not _committed_exception(handler, ex):
+            handler._send_json(404, {"error": "not found", **normalize_outcome(committed=False, error=ex)})
     except RuntimeErrorSafe as ex:
         if not _committed_exception(handler, ex):
-            handler._send_json(400, {"error": str(ex)})
+            handler._send_json(400, {"error": str(ex), **normalize_outcome(error=ex)})
     except (ValueError, TypeError, KeyError) as ex:
         if not _committed_exception(handler, ex):
-            handler._send_json(400, {"error": "Invalid request"})
+            handler._send_json(400, {"error": "Invalid request", **normalize_outcome(committed=False, error=ex)})
     except Exception as ex:
         # Backend/process errors can contain a value or a private filesystem
         # path. No unclassified exception message crosses the HTTP boundary.
         if not _committed_exception(handler, ex):
-            handler._send_json(503, {"error": "Operation unavailable"})
+            handler._send_json(503, {"error": "Operation unavailable; inspect state before retrying",
+                                     **normalize_outcome(error=ex)})
 
 
 def _committed_exception(handler, ex: Exception) -> bool:
-    if getattr(ex, "committed", None) is not True:
+    receipt = normalize_outcome(error=ex)
+    if receipt["committed"] is not True:
         return False
-    audit_status = getattr(ex, "audit_status", "unknown")
-    if type(audit_status) is not str or audit_status not in {"recorded", "unavailable"}:
-        audit_status = "unknown"
     handler._send_json(503, {"error": "Change was published; confirm state before retrying",
-                             "committed": True, "audit_status": audit_status})
+                             **receipt})
     return True
 
 
@@ -169,23 +169,27 @@ def _committed(handler, audit, *, op: str, entry: Entry | None = None,
     audit_status = record_outcome(
         audit, op=op, name=entry.name if entry else "<batch>",
         id_=entry.id if entry else "<batch>", affected_entry_ids=affected_entry_ids,
+        committed=True,
     )
-    handler._send_json(status, {**payload, "committed": True, "audit_status": audit_status})
+    handler._send_json(status, {**payload, **normalize_outcome(committed=True, audit_status=audit_status)})
 
 
 def _operation_failed(handler, audit, *, op: str, entry: Entry | None = None,
                       affected_entry_ids: list[str] | None = None,
                       status: int = 503, message: str = "Operation unavailable",
-                      committed: bool | None = False) -> None:
+                      committed: bool | None = False, error: Exception | None = None) -> None:
+    receipt = normalize_outcome(committed=committed, error=error)
     audit_status = record_outcome(
         audit, op=op, name=entry.name if entry else "<batch>",
         id_=entry.id if entry else "<batch>", success=False,
-        affected_entry_ids=affected_entry_ids,
+        affected_entry_ids=affected_entry_ids, committed=receipt["committed"],
     )
-    if committed is True:
+    if receipt["committed"] is True:
         message = "Change was published; confirm state before retrying"
-    handler._send_json(status, {"error": message, "committed": committed,
-                                "audit_status": audit_status})
+    elif receipt["committed"] is None:
+        message = "Operation outcome is unconfirmed; inspect recovery state before retrying"
+    handler._send_json(status, {"error": message,
+                                **normalize_outcome(committed=receipt["committed"], audit_status=audit_status, error=error)})
 
 
 _ApiRoute = Callable[[object, Paths, ParseResult, bytes | None], None]
@@ -350,7 +354,7 @@ def _delete_entry(handler, paths: Paths, entry_id: str, query: str) -> None:
         )
         return
     except Exception as ex:
-        _operation_failed(handler, audit, op="delete", entry=e, committed=True if getattr(ex, "committed", None) is True else None,
+        _operation_failed(handler, audit, op="delete", entry=e, committed=None, error=ex,
                           message="Vault operation failed; check recovery status before retrying")
         return
     _committed(handler, audit, op="delete", entry=e, ok=True, cascaded=result.cascaded)
@@ -664,7 +668,7 @@ def _create_entry(handler, paths: Paths, body: bytes) -> None:
                           status=400, message="Invalid entry")
         return
     except Exception as ex:
-        _operation_failed(handler, audit, op="add", entry=e, committed=True if getattr(ex, "committed", None) is True else None,
+        _operation_failed(handler, audit, op="add", entry=e, committed=None, error=ex,
                           message="Vault operation failed; check recovery status before retrying")
         return
     _committed(handler, audit, op="add", entry=e, status=201, id=e.id, name=e.name)
@@ -719,7 +723,7 @@ def _patch_entry(handler, paths: Paths, entry_id: str, body: bytes) -> None:
                           status=400, message="Invalid entry")
         return
     except Exception as ex:
-        _operation_failed(handler, audit, op="update", entry=e, committed=True if getattr(ex, "committed", None) is True else None,
+        _operation_failed(handler, audit, op="update", entry=e, committed=None, error=ex,
                           message="Vault operation failed; check recovery status before retrying")
         return
     _committed(handler, audit, op="update", entry=updated, ok=True)
@@ -795,7 +799,7 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
         handler._send_json(409, {"error": "Entry name already exists"})
         return
     except Exception as ex:
-        _operation_failed(handler, audit, op="bulk_import", committed=True if getattr(ex, "committed", None) is True else None,
+        _operation_failed(handler, audit, op="bulk_import", committed=None, error=ex,
                           affected_entry_ids=[entry.id for entry, _ in prepared],
                           message="Vault operation failed; check recovery status before retrying")
         return
@@ -854,7 +858,7 @@ def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:
     try:
         context.service.update_entry(e, secrets=SecretInput(value=value))
     except Exception as ex:
-        _operation_failed(handler, audit, op="replace_secret", entry=e, committed=True if getattr(ex, "committed", None) is True else None,
+        _operation_failed(handler, audit, op="replace_secret", entry=e, committed=None, error=ex,
                           message="Vault operation failed; check recovery status before retrying")
         return
     _committed(handler, audit, op="replace_secret", entry=e, ok=True)

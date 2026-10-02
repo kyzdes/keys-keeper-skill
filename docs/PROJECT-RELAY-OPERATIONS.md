@@ -155,10 +155,13 @@ There is no automatic safe history compaction or retention deletion.
 
 Pending creates also have independent bounds: 100 per device, 1,000 and 64 MiB
 per scope, with 30 creates per minute per device. Queue reads are bounded by count
-and bytes. Defaults allow four simultaneous project handlers, 32 accepted
-connections and a 10-second socket inactivity timeout. Request types have separate
-body limits. A reverse proxy must provide an absolute request deadline and rate
-limits; an inactivity timeout alone does not stop a client sending bytes slowly.
+and bytes. Defaults allow 32 accepted handler connections and two simultaneous
+application operations, shared by both protocol versions. Headers are parsed
+before an application slot is acquired; excess application work receives HTTP
+429. Socket reads check a 10-second absolute input budget, with separate body
+limits for each request type. Buffered bytes and application/SQLite execution
+are not covered by an end-to-end deadline. The reverse proxy must also enforce
+request deadlines and rate limits.
 
 Clients limit each policy or snapshot chain walk to 256 steps, with a combined
 64 MiB budget for authenticated records.

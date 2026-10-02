@@ -214,7 +214,7 @@ FLOW_SYNC = """\
 
 - Prefer **Settings → My computers** for personal VPS sync. Explicit all-key setup includes all current and future entries in a dedicated encrypted master authority without changing ordinary project bindings or entry distribution. Other computers have read + create access; existing entries can only be edited/deleted on the main computer.
 - Enrollment uses a short-lived connection code copied directly between the owner's computers. Never read, print, paste into chat, or inspect the code through an agent tool. The human compares verification codes on both screens and approves the exact device on the main computer. The relay transports encrypted invitation/request/response material; no manual bundle files or SSH setup are required.
-- `keys devices status` returns public personal-sync metadata; `keys devices sync` retries durable work. `keys devices autostart on|off` controls the per-user background job after sync setup is authorized. `keys devices setup --endpoint HTTPS_URL --admin-token-entry NAME --name LABEL --all-keys` is explicit all-entry setup; never run it for a request to deliver only selected project keys.
+- `keys devices status` returns public personal-sync metadata and may read local unlock material to open configured sync state. `keys devices sync` retries durable work. `keys devices autostart on|off` controls the per-user background job after sync setup is authorized. `keys devices setup --endpoint HTTPS_URL --admin-token-entry NAME --name LABEL --all-keys` is explicit all-entry setup; never run it for a request to deliver only selected project keys.
 - Automatic project/device sync attempts are limited to once per rolling 24 hours, including after errors or restarts. Manual Sync runs immediately; do not lower the background interval to deliver changes sooner.
 - KK2 full-vault sync remains available for schema-2 catalogs. Schema-3 catalogs use project or personal sync and reject legacy full-vault writers.
 - `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
@@ -271,13 +271,14 @@ ACTION_EFFECTS = """\
 | `keys list`, `keys info`, `keys quickstart` | no | no | no | no |
 | `keys keychain status` | no | no | no | no |
 | `keys doctor` | presence only | no | no | no |
-| `keys devices status` | no | no | no | no |
+| `keys devices status` | local unlock material when configured | no | no | requested configured status |
 | `keys sync vps status` | vault and sync credentials | yes | no | configured KK2 status requested |
 | `keys copy`, `inject`, `resolve`, `ssh` | yes | SSH only | explicit sink/session | request authorizes sink |
 | `keys add`, `edit`, `rm`, `sync vps push/pull` | as required | sync only | yes | explicit task required |
 
 "Metadata-only output" does not mean an operation is local or credential-free.
-Use the narrowest command that answers the request."""
+Use the narrowest command that answers the request. For an installation check
+without credential access, use `keys --version` and `keys --help`."""
 
 
 STRUCTURAL_DEFENSE = """\
