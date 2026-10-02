@@ -351,8 +351,10 @@ same OS user. Clipboard and agent-readable files are exposure surfaces.
   `keys resolve`, or `keys ssh`. Verify destination and outcome, never value.
 - Secret ingestion, plaintext export, ACL changes, sync setup, and destructive
   repair require the user's explicit request. Do not broaden authorization.
-- Stop after one failed authorization attempt. Do not retry a command that may
-  be opening repeated Keychain dialogs.
+- Stop that credential operation after one failed authorization attempt. Do
+  not retry it unchanged or trigger repeated Keychain dialogs. You may continue
+  metadata-only checks and local format/configuration diagnostics. Retry the
+  credential operation only after a confirmed repair or explicit user direction.
 
 ## Route the request
 

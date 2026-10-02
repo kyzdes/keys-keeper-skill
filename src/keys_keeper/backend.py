@@ -76,6 +76,56 @@ class MacOSKeychainReadiness:
     legacy_bridge_allowed: bool
 
 
+def _decode_legacy_security_password(output: bytes) -> str | None:
+    """Decode Apple's tagged ``print_buffer`` output, never guess raw hex.
+
+    ``security -g`` writes exactly one password record to stderr. Printable
+    bytes are enclosed in literal quotes (interior quotes are not escaped).
+    Other bytes use an authoritative hex field and, when printable bytes are
+    present, an octal-escaped preview. Validate that preview too so malformed
+    or unexpected output cannot silently become a different credential.
+
+    A failure sentinel keeps secret-bearing decoding exceptions out of the
+    caller's error chain. Empty passwords are distinct from failures.
+    """
+    prefix = b"password: "
+    if not isinstance(output, bytes) or not output.startswith(prefix) or not output.endswith(b"\n"):
+        return None
+    payload = output[len(prefix):-1]
+    if not payload:
+        raw = b""
+    elif payload.startswith(b'"') and payload.endswith(b'"'):
+        raw = payload[1:-1]
+        if not raw or any(byte < 32 or byte > 126 or byte == 92 for byte in raw):
+            return None
+    elif payload.startswith(b"0x"):
+        end = payload.find(b" ", 2)
+        hexadecimal = payload[2:end] if end != -1 else b""
+        if not hexadecimal or len(hexadecimal) % 2 or any(byte not in b"0123456789ABCDEF" for byte in hexadecimal):
+            return None
+        raw = bytes.fromhex(hexadecimal.decode("ascii"))
+        printable = [32 <= byte <= 126 and byte != 92 for byte in raw]
+        if all(printable):
+            return None
+        expected = b"0x" + hexadecimal
+        if any(printable):
+            preview = b"".join(
+                bytes((byte,)) if is_printable else f"\\{byte:03o}".encode("ascii")
+                for byte, is_printable in zip(raw, printable)
+            )
+            expected += b'  "' + preview + b'"'
+        else:
+            expected += b" "
+        if payload != expected:
+            return None
+    else:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 class MacOSKeychainBackend(KeychainBackend):
     """macOS Keychain backend with native secret-value operations.
 
@@ -143,33 +193,36 @@ class MacOSKeychainBackend(KeychainBackend):
             self.service,
             "-a",
             account,
-            "-w",
+            "-g",
         ]
         if self.keychain_path:
             command.append(self.keychain_path)
+        result = None
         try:
             result = subprocess.run(
                 command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
                 timeout=5,
             )
-        except (OSError, subprocess.TimeoutExpired) as ex:
-            raise KeychainError(
-                f"trusted legacy Keychain bridge failed for {account}"
-            ) from ex
-        if result.returncode != 0:
+        except (OSError, subprocess.TimeoutExpired):
+            # TimeoutExpired can retain captured secret bytes. Raise only after
+            # leaving the handler, without retaining it as cause or context.
+            pass
+        if result is None or result.returncode != 0:
+            result = None
             raise KeychainError(
                 f"trusted legacy Keychain bridge failed for {account}"
             )
-        raw = result.stdout[:-1] if result.stdout.endswith(b"\n") else result.stdout
-        try:
-            return Sealed(raw.decode("utf-8"))
-        except UnicodeDecodeError as ex:
+        value = _decode_legacy_security_password(result.stderr)
+        result = None
+        if value is None:
             raise KeychainError(
                 f"failed to decode keychain entry {account}"
-            ) from ex
+            )
+        return Sealed(value)
 
     def set(self, account: str, value: str) -> None:
         try:

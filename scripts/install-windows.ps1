@@ -5,7 +5,7 @@ No vault contents, connection codes or credential values are read by this script
 #>
 [CmdletBinding()]
 param(
-    [string]$Source = 'https://github.com/kyzdes/keys-keeper-skill/archive/refs/tags/v0.11.0.zip',
+    [string]$Source = 'https://github.com/kyzdes/keys-keeper-skill/archive/refs/tags/v0.11.1.zip',
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'KeysKeeper'),
     [switch]$NoLaunch,
     [switch]$NoPathUpdate

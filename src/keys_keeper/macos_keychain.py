@@ -636,15 +636,24 @@ class MacOSNativeKeychain:
             )
         if status != _ERR_SEC_SUCCESS:
             raise SecurityFrameworkError("read keychain item", status)
+        raw = b""
+        value = None
         try:
             raw = ctypes.string_at(data, length.value)
-            return raw.decode("utf-8")
-        except UnicodeDecodeError as ex:
-            raise SecurityFrameworkError("decode keychain item") from ex
+            try:
+                value = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                # The decoder exception owns the plaintext bytes. Leave its
+                # handler before raising a public error without that context.
+                pass
         finally:
+            raw = b""
             if data.value is not None:
                 ctypes.memset(data, 0, length.value)
                 self.api.security.SecKeychainItemFreeContent(None, data)
+        if value is None:
+            raise SecurityFrameworkError("decode keychain item")
+        return value
 
     def legacy_security_read_allowed(self, account_value: str) -> bool:
         """Return whether an unlocked legacy item explicitly trusts ``security``.
