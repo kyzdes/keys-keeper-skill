@@ -11,6 +11,11 @@ class SecureFileError(RuntimeError):
     """A target cannot safely be used as a plaintext secret sink."""
 
 
+class SecureFileCommitError(SecureFileError):
+    """Publication completed; callers must preserve matching committed state."""
+    committed = True
+
+
 DEFAULT_MAX_TEXT_BYTES = 8 * 1024 * 1024
 
 
@@ -71,5 +76,7 @@ def replace_secure_text(state: SecureTextState, text: str, *, encoding: str = "u
         raise
     except UnicodeError:
         raise SecureFileError("target text cannot be encoded") from None
+    except private_files.PrivateFileCommitError as ex:
+        raise SecureFileCommitError("target was published but completion failed; inspect before retrying") from ex
     except (OSError, private_files.PrivateFileError) as ex:
         raise SecureFileError(f"cannot securely replace target {state.path}: {ex}") from ex

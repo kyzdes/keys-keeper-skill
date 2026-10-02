@@ -132,10 +132,9 @@ def test_api_resolves_project_selector_before_using_selected_context():
     ("DELETE", "/api/entries/id"),
     ("POST", "/api/entries/id/replace-secret"),
     ("POST", "/api/bulk-import"),
-    ("GET", "/api/sync/status"),
     ("POST", "/api/projects/folders"),
 ])
-def test_replica_rejects_mutating_and_legacy_sync_routes_without_backend(method, path):
+def test_replica_rejects_mutating_routes_without_backend(method, path):
     context = Context()
     runtime = Runtime(context)
 

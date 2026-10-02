@@ -200,3 +200,19 @@ def test_quickstart_states_explicit_sink_contract(context, capsys):
     assert "routes secrets to explicit sinks" in output
     assert "never read" not in output
     assert context.backend.reads == [] and context.backend.enumerations == 0
+
+
+def test_doctor_diagnoses_retired_s3_config_without_reading_or_deleting_credentials(context, capsys):
+    context.paths.ensure()
+    original = ("[sync]\nmode='auto'\nendpoint='https://retired.example.test'\n"
+                "secret='" + SENTINEL + "'\n").encode()
+    context.paths.config_toml.write_bytes(original)
+    context.backend.values["kk:sync-passphrase"] = SENTINEL
+    assert cli.main(["doctor"]) == 0
+    captured = capsys.readouterr()
+    assert "legacy S3 config retained" in captured.out
+    assert "S3 synchronization has been removed" in captured.out
+    assert SENTINEL not in captured.out + captured.err
+    assert context.backend.reads == []
+    assert context.backend.values == {"kk:sync-passphrase": SENTINEL}
+    assert context.paths.config_toml.read_bytes() == original

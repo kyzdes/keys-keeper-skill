@@ -4,6 +4,8 @@ services:
       context: ../..
       dockerfile: docs/syncd/Dockerfile
     restart: unless-stopped
+    read_only: true
+    pids_limit: 64
     environment:
       KEYS_KEEPER_SYNC_ADMIN_TOKEN: ${KEYS_KEEPER_SYNC_ADMIN_TOKEN:?set in a mode-0600 .env file}
     volumes:

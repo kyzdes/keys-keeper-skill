@@ -13,7 +13,7 @@ from pathlib import Path
 from keys_keeper.paths import Paths
 
 AUTO_TIMEOUT = 300
-_MODES = {"project", "personal", "s3"}
+_MODES = {"project", "personal"}
 _supervisor_job = None
 
 
@@ -202,15 +202,6 @@ def main(argv=None):
             if settings is None or not settings["auto"]:
                 return 0
             PersonalSync(paths).sync()
-        else:
-            from keys_keeper.project_runtime import ProjectRuntime
-            # Re-check role at execution time, after the public scheduling claim.
-            # A root reconfigured as a replica must never open master credentials.
-            if ProjectRuntime(paths).context().kind != "master":
-                return 1
-            from keys_keeper.sync_application import _run_auto_worker
-            if _run_auto_worker(paths) is False:
-                return 1
     except Exception:
         return 1
     return 0

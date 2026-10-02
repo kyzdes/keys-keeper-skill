@@ -55,7 +55,8 @@ must be treated as exposed to other processes with access to that destination:
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
-- `keys sync status` — reads sync credentials and contacts the remote; output contains metadata only
+- `keys devices status` — local public personal-sync metadata
+- `keys sync vps status` — verifies the remote and reads local vault secrets to compare snapshots; output contains metadata only
 - `keys keychain status` — current macOS prompt/bypass policy; does not open Keychain
 - `keys doctor` — vault-wide checks that inspect keychain presence but never print values
 - `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values"""
@@ -215,12 +216,8 @@ FLOW_SYNC = """\
 - Enrollment uses a short-lived connection code copied directly between the owner's computers. Never read, print, paste into chat, or inspect the code through an agent tool. The human compares verification codes on both screens and approves the exact device on the main computer. The relay transports encrypted invitation/request/response material; no manual bundle files or SSH setup are required.
 - `keys devices status` returns public personal-sync metadata; `keys devices sync` retries durable work. `keys devices autostart on|off` controls the per-user background job after sync setup is authorized. `keys devices setup --endpoint HTTPS_URL --admin-token-entry NAME --name LABEL --all-keys` is explicit all-entry setup; never run it for a request to deliver only selected project keys.
 - Automatic project/device sync attempts are limited to once per rolling 24 hours, including after errors or restarts. Manual Sync runs immediately; do not lower the background interval to deliver changes sooner.
-- S3 and KK2 below are legacy compatibility paths, not the default onboarding flow. Existing S3 configuration is preserved; schema-3 catalogs continue to reject legacy full-vault writers.
-- `keys sync setup` connects an S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi) and stores the access-key id, secret key, and a backup passphrase in the OS keychain. This step INGESTS secrets (it prompts for the secret key + passphrase), so it's user-driven — walk them through `keys sync setup --endpoint ... --bucket ... --access-key-id ...`, don't run it unprompted. The passphrase encrypts the whole cloud copy; a lost passphrase = unrecoverable backup, so tell the user to keep it somewhere safe.
-- Once configured you CAN run `keys sync push` / `keys sync pull` / `keys sync status` yourself — they move only the encrypted AES-256-GCM blob (same zero-knowledge format as `keys export`); no plaintext hits stdout or the transcript. `keys sync status` reads the saved sync credentials and contacts the remote even though its output contains metadata only.
-- `keys sync rollback N` restores an earlier snapshot version; `keys sync mode {off,manual,auto}` switches modes. `auto` enables a fail-open SessionStart auto-sync that exits silently on any error and never prompts.
-- Legacy S3 automatic attempts are limited to once per 24 hours; explicit `push`/`pull` remain immediate. `sync auto --force` is an explicit manual override, not a hook default.
-- For S3-free private VPS sync, `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a separate KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
+- KK2 full-vault sync remains available for schema-2 catalogs. Schema-3 catalogs use project or personal sync and reject legacy full-vault writers.
+- `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
 - After VPS setup, you CAN run `keys sync vps status`, `push`, or `pull`; the server receives only ciphertext, signed manifests, public device keys, and token hashes. For onboarding, run `invite`, `join`, `approve`, and `finish` only when the user explicitly asks to add that device. `invite` and `approve` must run on the pinned root device. The invite file contains a short-lived secret: transfer it only to the user-selected destination and never read it back through an agent-visible tool. Pass the invitation trust fingerprint to `join` only after the human verifies it against the root device over a separate channel. Then require the new-device fingerprint to match before `approve`; approval also takes the original invite file so its signed checkpoint cannot change.
 - `keys sync vps revoke DEVICE_ID` is root-device-only. It blocks future server access but does not erase snapshots or VaultKey material already held by that device. Run it only on explicit request and report that cryptographic key rotation is not implemented yet."""
 
@@ -238,20 +235,11 @@ FLOW_PROJECT_SYNC = """\
 - `keys project-sync revoke --scope SCOPE --device DEVICE` is master-only and requires explicit authorization after checking IDs. It blocks future access and schedules a rekey/publish; it cannot erase data or material already held by that device. Check status until pending rekey work clears."""
 
 
-FLOW_WEBVAULT = """\
-### User wants the vault in a browser (self-hosted)
-
-- `keys webvault serve` runs the browser-decrypted web vault: the shipped client fetches the encrypted blob and decrypts it in-page, so the normal server request path receives ciphertext rather than vault plaintext. A compromised server can replace the JavaScript it serves; self-hosting and verifying the reviewed release remain part of the trust model. It reads the same S3 vault `keys sync` writes.
-- Prerequisite: `keys sync` must be configured (or pass the `WEBVAULT_S3_*` env vars). Defaults to `127.0.0.1:8333`.
-- Gate sign-up with `--register-token TOKEN` (registration is closed by default). For internet exposure, terminate TLS — put a reverse proxy in front and add `--behind-proxy`, or hand it `--certfile/--keyfile` directly.
-- v1 is read-only (view / search / reveal / copy in the browser). Adding and editing entries stay in the CLI or the local `keys serve` admin."""
-
-
 FLOW_AUDIT = """\
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
-- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.push`, `sync.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
+- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.vps.push`, `sync.vps.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
 - The web admin's `/audit` page has the same data plus charts; either is fine."""
 
 
@@ -283,9 +271,10 @@ ACTION_EFFECTS = """\
 | `keys list`, `keys info`, `keys quickstart` | no | no | no | no |
 | `keys keychain status` | no | no | no | no |
 | `keys doctor` | presence only | no | no | no |
-| `keys sync status` | sync credentials | yes | no | setup must already exist |
+| `keys devices status` | no | no | no | no |
+| `keys sync vps status` | vault and sync credentials | yes | no | configured KK2 status requested |
 | `keys copy`, `inject`, `resolve`, `ssh` | yes | SSH only | explicit sink/session | request authorizes sink |
-| `keys add`, `edit`, `rm`, `sync push/pull` | as required | sync only | yes | explicit task required |
+| `keys add`, `edit`, `rm`, `sync vps push/pull` | as required | sync only | yes | explicit task required |
 
 "Metadata-only output" does not mean an operation is local or credential-free.
 Use the narrowest command that answers the request."""
@@ -364,8 +353,7 @@ same OS user. Clipboard and agent-readable files are exposure surfaces.
   [temporary sinks](references/temporary-sinks.md).
 - Repeated macOS authorization dialogs or bypass: read
   [Keychain bypass](references/keychain-bypass.md).
-- Cloud sync, project delivery profiles, worker onboarding, recovery, or browser
-  vault: read [sync](references/sync.md).
+- VPS sync, project delivery profiles, worker onboarding, or recovery: read [sync](references/sync.md).
 - Installation, plugin version, health, or missing data: read
   [diagnostics](references/diagnostics.md).
 - First setup, admin UI, or desktop launcher: read
@@ -423,7 +411,7 @@ SKILL_REFERENCE_FILES: dict[str, str] = {
         ["# macOS Keychain bypass", "", FLOW_KEYCHAIN_BYPASS]
     ).rstrip() + "\n",
     "sync.md": "\n".join(
-        ["# Sync, project delivery, and WebVault", "", FLOW_SYNC, "", FLOW_PROJECT_SYNC, "", FLOW_WEBVAULT]
+        ["# VPS sync and project delivery", "", FLOW_SYNC, "", FLOW_PROJECT_SYNC]
     ).rstrip() + "\n",
     "diagnostics.md": "\n".join(
         ["# Diagnostics", "", FLOW_DIAGNOSTICS, "", ACTION_EFFECTS, "", STRUCTURAL_DEFENSE]
@@ -501,7 +489,7 @@ def common_body(
         FLOW_DIAGNOSTICS,
     ]
     if include_admin:
-        parts.extend(["", FLOW_ADMIN, "", FLOW_APP_INSTALL, "", FLOW_SYNC, "", FLOW_PROJECT_SYNC, "", FLOW_WEBVAULT])
+        parts.extend(["", FLOW_ADMIN, "", FLOW_APP_INSTALL, "", FLOW_SYNC, "", FLOW_PROJECT_SYNC])
     parts.extend(["", FLOW_AUDIT, "", SEARCH, "", ARGUMENT_HYGIENE, "", STRUCTURAL_DEFENSE, "", UNTRUSTED_DATA])
     if include_when_in_doubt:
         parts.extend(["", WHEN_IN_DOUBT])

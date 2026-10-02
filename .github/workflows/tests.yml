@@ -187,3 +187,25 @@ jobs:
 
       - name: Verify installed artifact and generated skill
         run: python scripts/verify-release-artifact.py dist/*.whl
+
+      - name: Build and smoke-test private relay image
+        run: |
+          docker build -f docs/syncd/Dockerfile -t keys-keeper-relay:test .
+          trap 'docker rm -vf keys-keeper-relay-test >/dev/null 2>&1 || true' EXIT
+          docker run -d --name keys-keeper-relay-test --read-only \
+            --cap-drop=ALL --security-opt no-new-privileges --pids-limit=64 \
+            -e KEYS_KEEPER_SYNC_ADMIN_TOKEN=synthetic-ci-bootstrap-token \
+            -p 127.0.0.1:18787:8787 keys-keeper-relay:test
+          python - <<'PYTHON'
+          import json, time, urllib.request
+          for attempt in range(20):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:18787/healthz', timeout=2) as response:
+                      assert response.status == 200
+                      assert isinstance(json.load(response), dict)
+                  break
+              except OSError:
+                  if attempt == 19:
+                      raise
+                  time.sleep(0.25)
+          PYTHON

@@ -24,6 +24,7 @@ EXPECTED_WHEEL_PATHS = {
     "keys_keeper/macos_keychain_abi.py",
     "keys_keeper/macos_keychain_cf.py",
     "keys_keeper/service.py",
+    "keys_keeper/vault_snapshot.py",
     "keys_keeper/static/app.css",
     "keys_keeper/static/theme.js",
     "keys_keeper/templates/base.html",
@@ -32,10 +33,6 @@ EXPECTED_WHEEL_PATHS = {
     "keys_keeper/project_recovery.py",
     "keys_keeper/static/projects.js",
     "keys_keeper/templates/projects.html",
-    "keys_keeper/webvault/static/app.css",
-    "keys_keeper/webvault/static/theme.js",
-    "keys_keeper/webvault/static/vault.css",
-    "keys_keeper/webvault/static/vault.mjs",
 }
 
 GENERATED_SKILL_PATHS = (

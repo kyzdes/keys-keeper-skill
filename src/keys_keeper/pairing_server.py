@@ -7,6 +7,7 @@ import secrets
 
 from keys_keeper.pairing import MAX_PACKET
 from keys_keeper.project_server import _error, _fields, _uuid
+from keys_keeper.relay_storage import RelayStorage
 
 
 class PairingRelay:
@@ -20,6 +21,9 @@ class PairingRelay:
                 expires INTEGER NOT NULL, invitation TEXT NOT NULL,
                 request TEXT, response TEXT
             )""")
+            self.storage = RelayStorage(connection, "pairing", {
+                "kk3_pairings": ("scope_id", ("invitation", "request", "response")),
+            })
 
     def matches(self, path):
         return self.pattern.fullmatch(path)
@@ -36,7 +40,8 @@ class PairingRelay:
             self.relay._auth(connection, scope, headers, "publish")
             return scope, None, None
         _uuid(pair_id)
-        row = connection.execute("SELECT * FROM kk3_pairings WHERE id=? AND scope_id=?", (pair_id, scope)).fetchone()
+        row = connection.execute("SELECT id,scope_id,token_hash,expires FROM kk3_pairings WHERE id=? AND scope_id=?",
+                                 (pair_id, scope)).fetchone()
         if row is None:
             _error(404, "pairing_not_found")
         if headers.get("X-Device-ID"):
@@ -65,14 +70,16 @@ class PairingRelay:
         return value
 
     def _budget(self, connection, scope, extra):
-        usage = "length(invitation)+coalesce(length(request),0)+coalesce(length(response),0)"
-        total = connection.execute(f"SELECT coalesce(sum({usage}),0) FROM kk3_pairings").fetchone()[0]
-        local = connection.execute(f"SELECT coalesce(sum({usage}),0) FROM kk3_pairings WHERE scope_id=?", (scope,)).fetchone()[0]
+        total, total_records = self.storage.usage(connection)
+        local, local_records = self.storage.usage(connection, scope)
+        # Pairing's existing byte policy counts packets, without row metadata.
+        total -= 256 * total_records
+        local -= 256 * local_records
         if total + extra > 256 * 1024 * 1024 or local + extra > 64 * 1024 * 1024:
             _error(429, "pairing_storage_limit")
 
     def handle(self, method, path, headers, payload):
-        with self.app._transaction(immediate=True) as connection:
+        with self.app._transaction(immediate=method != "GET") as connection:
             scope, row, slot = self._auth(connection, method, path, headers)
             if row is None:
                 _fields(payload, {"pair_id", "token_hash", "expires_at", "invitation"})
@@ -96,15 +103,20 @@ class PairingRelay:
                 connection.execute("INSERT INTO kk3_pairings(id,scope_id,token_hash,expires,invitation) VALUES(?,?,?,?,?)", (pair_id, scope, digest, expires, packet))
                 return 201, {"pair_id": pair_id, "expires_at": expires}
             if method == "GET":
+                row = connection.execute("SELECT * FROM kk3_pairings WHERE id=?", (row["id"],)).fetchone()
                 return 200, {"pair_id": row["id"], "expires_at": row["expires"],
                              "invitation": row["invitation"], "request": row["request"], "response": row["response"]}
             _fields(payload, {"packet"})
             packet = self._packet(payload["packet"], 1024 * 1024 if slot == "request" else MAX_PACKET)
-            if row[slot] is not None:
-                if row[slot] != packet:
+            filled, has_request = connection.execute(
+                f"SELECT {slot} IS NOT NULL,request IS NOT NULL FROM kk3_pairings WHERE id=?", (row["id"],)
+            ).fetchone()
+            if filled:
+                same = connection.execute(f"SELECT {slot}=? FROM kk3_pairings WHERE id=?", (packet, row["id"])).fetchone()[0]
+                if not same:
                     _error(409, "pairing_already_claimed")
                 return 200, {"ok": True}
-            if slot == "response" and row["request"] is None:
+            if slot == "response" and not has_request:
                 _error(409, "pairing_request_required")
             self._budget(connection, scope, len(packet))
             # slot is one of two constants parsed by the route expression.

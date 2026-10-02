@@ -10,7 +10,7 @@ from keys_keeper.paths import Paths
 from keys_keeper.project_service import ProjectService
 from keys_keeper.service import SecretInput, VaultService
 from keys_keeper.store import MetadataStore
-from keys_keeper.sync import LegacyCatalogSyncError, build_snapshot_payload
+from keys_keeper.vault_snapshot import LegacyCatalogSyncError, build_snapshot_payload
 
 
 class MemoryBackend(KeychainBackend):

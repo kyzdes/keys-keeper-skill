@@ -4,10 +4,35 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
-## [Unreleased]
+## [0.12.0] — Unreleased
+
+### Removed
+
+- S3 transport, SigV4 signing, flat-TOML sync model, S3 CLI/API/settings,
+  automatic S3 workers and the S3-only browser WebVault. Existing configuration,
+  credentials, bucket data and encrypted KK1 backups are preserved.
+- The SessionStart sync hook; personal and project background sync continue
+  through their existing OS scheduler.
+
+### Changed
+
+- KK2 VPS sync verifies fresh signed ancestry with compact paged history and
+  downloads only the newest snapshot. Older relays keep a bounded fallback;
+  local trust checkpoints and membership/revocation checks remain mandatory.
+- KK2/KK3 share bounded HTTP admission. Default active requests are reduced to
+  two, SQLite contention is bounded to one second, and quota checks use
+  transactionally maintained counters instead of scanning encrypted history.
+- Relay storage is private before its first write. The container build uses
+  only allowlisted package inputs and runs with an unprivileged user and a
+  read-only root filesystem. No extra runtime dependency is introduced.
 
 ### Fixed
 
+- Snapshot merges preserve credential reference identities and assign unique
+  deterministic names. Ambiguous binding changes fail before mutation.
+- VPS enrollment preserves credentials when configuration was published but
+  the filesystem could not confirm durability. Trust state cannot regress,
+  and unchanged state avoids redundant writes.
 - Complete legacy snapshots fail before publication on missing required
   secrets or denied reads. Encrypted export/import use bounded private IO and
   explicit replacement, with honest receipts after publication uncertainty.
@@ -23,8 +48,7 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
   Sensitive notes use credential storage; bulk import supports API keys and
   protected notes. Committed actions remain successful when audit fails, and
   activity displays recent events with stable entry identities.
-- HTTP and automatic S3 adapters call the application layer directly.
-  Ordinary tests use an isolated clipboard; native integration is explicit.
+- Ordinary tests use an isolated clipboard; native integration is explicit.
 
 ## [0.11.1] — 2026-10-02
 

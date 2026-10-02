@@ -7,7 +7,7 @@ dependency is introduced.
 
 ## Complete legacy backups
 
-`keys export FILE` uses the same complete snapshot builder as KK1/S3 and KK2
+`keys export FILE` uses the complete `vault_snapshot` builder shared with KK2
 full-vault sync. This is a schema 1/2 compatibility path; schema 3 continues to
 use project recovery and cannot be flattened by legacy export.
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from keys_keeper.secure_io import (
+    SecureFileCommitError,
     SecureFileError,
     read_secure_text,
     replace_secure_text,
@@ -133,3 +134,59 @@ def test_secret_snapshot_repr_is_redacted(tmp_path):
     state = read_secure_text(target, missing_ok=False)
     assert "SYNTHETIC" not in repr(state)
     assert "SYNTHETIC" not in repr(state._bytes_state)
+
+
+def test_create_only_postlink_cleanup_failure_keeps_committed_marker_and_target(tmp_path, monkeypatch):
+    target = tmp_path / "synthetic-state"
+    state = read_secure_text(target, missing_ok=True)
+    unlink = os.unlink
+    def fail_temp_cleanup(path, *args, **kwargs):
+        if str(path).endswith(".tmp"):
+            raise OSError("synthetic postpublication cleanup failure")
+        return unlink(path, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "unlink", fail_temp_cleanup)
+        with pytest.raises(SecureFileCommitError) as caught:
+            replace_secure_text(state, "synthetic-published-state")
+    assert caught.value.committed is True
+    assert isinstance(caught.value, SecureFileError)
+    assert target.read_text() == "synthetic-published-state"
+    for temporary in tmp_path.glob("*.tmp"):
+        unlink(temporary)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX parent durability callback")
+def test_replace_postpublication_durability_failure_keeps_committed_marker(tmp_path, monkeypatch):
+    import stat
+    from keys_keeper import private_files, secure_io
+    target = tmp_path / "synthetic-state"
+    target.write_text("old-public-state")
+    state = read_secure_text(target, missing_ok=False)
+    fsync = os.fsync
+    def fail_directory_sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("synthetic postpublication fsync failure")
+        return fsync(fd)
+    # Default secret sinks use best-effort parent sync. Exercise a strict
+    # callback's real post-rename error without changing that existing policy.
+    monkeypatch.setattr(secure_io, "_fsync_parent_best_effort", private_files.fsync_parent)
+    monkeypatch.setattr(os, "fsync", fail_directory_sync)
+    with pytest.raises(SecureFileCommitError) as caught:
+        replace_secure_text(state, "new-published-state")
+    assert caught.value.committed is True
+    assert target.read_text() == "new-published-state"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_prepublication_file_sync_failure_has_no_committed_marker(tmp_path, monkeypatch):
+    target = tmp_path / "synthetic-state"
+    target.write_text("previous-state")
+    state = read_secure_text(target, missing_ok=False)
+    def fail_sync(_fd):
+        raise OSError("synthetic prepublication file fsync failure")
+    monkeypatch.setattr(os, "fsync", fail_sync)
+    with pytest.raises(SecureFileError) as caught:
+        replace_secure_text(state, "must-not-publish")
+    assert getattr(caught.value, "committed", False) is False
+    assert target.read_text() == "previous-state"
+    assert list(tmp_path.iterdir()) == [target]

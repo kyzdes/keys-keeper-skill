@@ -1,7 +1,9 @@
 # Internal refactor plan
 
-Status: active in the current worktree. This plan covers behavior-preserving
-work only; release and product behavior are separate decisions.
+Status: historical plan and execution notes for 2026-09-03. References to
+WebVault and earlier test counts describe that baseline. See the current
+[VPS refactor](VPS-REFACTOR-2026-10-02.md) and
+[hardening](HARDENING-2026-10-02.md) for supported behavior and validation.
 
 ## Execution status — 2026-09-03
 

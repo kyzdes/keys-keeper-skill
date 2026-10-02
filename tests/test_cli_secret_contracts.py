@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from keys_keeper import cli, crypto, sync
+from keys_keeper import cli, crypto, vault_snapshot
 from keys_keeper.backend import (
     KeychainBackend, KeychainError, Sealed,
     SecretAccessDenied, SecretNotFound, SecretUnavailable,
@@ -19,7 +19,7 @@ from keys_keeper.models import Entry, EntryType
 from keys_keeper.paths import Paths
 from keys_keeper.service import VaultService
 from keys_keeper.store import MetadataStore
-from keys_keeper.sync import SnapshotReadError, build_snapshot_payload
+from keys_keeper.vault_snapshot import SnapshotReadError, build_snapshot_payload
 
 
 SENTINEL = "synthetic-secret-that-must-not-appear-in-receipts"
@@ -134,24 +134,12 @@ def test_snapshot_account_enumeration_failure_never_reads_or_publishes(context, 
     assert context.backend.reads == []
 
 
-def test_failed_snapshot_never_publishes_s3_objects(tmp_path):
-    from _sync_fakes import FakeRemote, add_entry, make_device
-    remote = FakeRemote()
-    device = make_device(remote, tmp_path, "source", backend=MemoryBackend())
-    # The shared fake fixture calls set, so this is a present denied account.
-    entry = add_entry(device, "blocked-key", SENTINEL)
-    device.backend.failures[entry.id] = SecretAccessDenied(SENTINEL)
-    with pytest.raises(SnapshotReadError):
-        device.engine.push("synthetic-backup-password")
-    assert remote.objs == {}
-
-
 def test_export_is_private_verified_and_does_not_chmod_parent(context, tmp_path):
     entry = add(context)
     target = tmp_path / "backup.kk"
     original_mode = stat.S_IMODE(tmp_path.stat().st_mode)
     assert cli.main(["export", str(target)]) == 0
-    payload = sync.decrypt_snapshot(target.read_bytes(), passphrase="synthetic-backup-password")
+    payload = vault_snapshot.decrypt_snapshot(target.read_bytes(), passphrase="synthetic-backup-password")
     assert payload["entries"][0]["id"] == entry.id
     assert payload["entries"][0]["_secret"] == SENTINEL
     assert stat.S_IMODE(tmp_path.stat().st_mode) == original_mode
@@ -186,21 +174,21 @@ def test_export_and_import_refuse_symlink_without_touching_target(context, tmp_p
 def test_import_limit_precedes_password_prompt_and_kdf(context, tmp_path, monkeypatch):
     target = tmp_path / "oversized.kk"
     target.write_bytes(b"KK1\x00" + b"x" * 125)
-    monkeypatch.setattr(sync, "MAX_SNAPSHOT_BLOB_BYTES", 128)
+    monkeypatch.setattr(vault_snapshot, "MAX_SNAPSHOT_BLOB_BYTES", 128)
     monkeypatch.setattr(cli.getpass, "getpass", lambda *_args: pytest.fail("unexpected password prompt"))
-    monkeypatch.setattr(sync, "decrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
+    monkeypatch.setattr(vault_snapshot, "decrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
     assert cli.main(["import", str(target)]) == 1
     assert context.store.list() == []
 
 
 def test_snapshot_limits_before_encrypt_or_decrypt_kdf(monkeypatch):
-    monkeypatch.setattr(sync, "MAX_SNAPSHOT_BLOB_BYTES", 128)
-    monkeypatch.setattr(sync, "encrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
-    monkeypatch.setattr(sync, "decrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
+    monkeypatch.setattr(vault_snapshot, "MAX_SNAPSHOT_BLOB_BYTES", 128)
+    monkeypatch.setattr(vault_snapshot, "encrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
+    monkeypatch.setattr(vault_snapshot, "decrypt_blob", lambda *_args, **_kwargs: pytest.fail("unexpected KDF"))
     with pytest.raises(SnapshotReadError, match="size limit"):
-        sync.encrypt_snapshot({"entries": [{"value": "x" * 129}]}, passphrase="pw")
+        vault_snapshot.encrypt_snapshot({"entries": [{"value": "x" * 129}]}, passphrase="pw")
     with pytest.raises(crypto.BadPassword, match="size limit"):
-        sync.decrypt_snapshot(b"KK1\x00" + b"x" * 125, passphrase="pw")
+        vault_snapshot.decrypt_snapshot(b"KK1\x00" + b"x" * 125, passphrase="pw")
 
 
 def test_import_rejects_incomplete_required_secret_before_mutation(context, tmp_path):

@@ -688,7 +688,7 @@ footer .tagline {
 <section class="hero" id="hero">
   <div class="wrap">
     <div class="hero-head">
-      <p class="eyebrow">v0.11.1 · macOS + Windows + Linux · MIT</p>
+      <p class="eyebrow">v0.12.0 preview · macOS + Windows + Linux · MIT</p>
       <h1>a cross-platform secrets workflow that keeps plaintext <span class="accent">out of normal agent output</span>.</h1>
       <p class="sub">Stores keys in the macOS Keychain, Windows Credential Manager, or Linux Secret Service — with an encrypted-file fallback on headless servers. Normal commands route values to explicit sinks instead of returning them in tool output. v0.9.0 adds opt-in project-scoped delivery with explicit entry assignments. Free, open source, reviewed-release install.</p>
       <div class="cta-row">
@@ -1201,7 +1201,7 @@ footer .tagline {
     <div class="section-head">
       <p class="eyebrow">install in 2 minutes</p>
       <h2>two lines in Claude Code. reviewed updates.</h2>
-      <p>The Claude Code plugin adds the skill and auto-sync hook. Its fallback updater is disabled by default; Claude's native marketplace auto-update is an independent setting. Disable native auto-update as well when you require reviewed manual updates. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
+      <p>The Claude Code plugin adds the skill. Personal and project background sync use the OS scheduler. Its fallback updater is disabled by default; Claude's native marketplace auto-update is an independent setting. Disable native auto-update as well when you require reviewed manual updates. The CLI itself installs via pipx. For Cursor, Aider, Codex CLI, or Cline — one <code class="mono" style="color:var(--accent);">keys init &lt;target&gt;</code> emits the matching rule file.</p>
     </div>
 
     <p class="install-note" style="margin: 0 0 12px; color: var(--text-3); font-size: 14px;">Run these as <strong>two separate slash commands</strong> in Claude Code — paste step 1, press Enter, then paste step 2. (Claude Code runs one slash command at a time.)</p>
@@ -1236,6 +1236,7 @@ footer .tagline {
           <span>copy</span>
         </button>
       </div>
+<p>Latest published release: v0.11.1. This page previews the unreleased v0.12.0 changes.</p>
 <pre id="install-pre-pipx"><span class="cmd">pipx install</span> <span class="arg">'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.1'</span></pre>
     </div>
 
@@ -1285,16 +1286,16 @@ footer .tagline {
     <div class="section-head">
       <p class="eyebrow">now shipping</p>
       <h2>what landed since v0.5.</h2>
-      <p>Two things that used to be on this list moved off it. Both are end-to-end encrypted and stay true to the architecture — the server never sees a plaintext secret.</p>
+      <p>Connect your own computers or deliver selected entries to project workers. Snapshots are encrypted on the device before upload.</p>
     </div>
     <div class="limit-cards">
       <div class="limit-card">
-        <h3>cloud sync</h3>
-        <p>S3-compatible backup and sync across machines — AWS S3, Cloudflare R2, Backblaze B2, or self-hosted MinIO. End-to-end encrypted as one AES-256-GCM blob; the bucket only ever holds ciphertext. <code style="font-family:'JetBrains Mono',monospace;">keys sync setup</code>.</p>
+        <h3>personal sync</h3>
+        <p>Connect your own computers through your private VPS. The relay stores encrypted snapshots and signed records; decryption stays on enrolled computers. Open Settings → My computers to begin.</p>
       </div>
       <div class="limit-card">
-        <h3>browser-decrypted web vault</h3>
-        <p>Open your vault from a host you run yourself. The reviewed page decrypts in-memory in the browser, while normal server requests handle ciphertext. You still trust the host to serve honest JavaScript. <code style="font-family:'JetBrains Mono',monospace;">keys webvault serve</code> (read-only v1).</p>
+        <h3>project delivery</h3>
+        <p>Assign selected entries to a project scope. Enrolled workers can read assigned entries and submit new ones; existing-entry edits and deletions remain on the main computer.</p>
       </div>
     </div>
   </div>
@@ -1358,7 +1359,7 @@ footer .tagline {
     <div class="row">
       <a class="brand" href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">
         <span class="glyph">K</span>
-        <span>keys-keeper · v0.11.1</span>
+        <span>keys-keeper · v0.12.0 preview</span>
       </a>
       <div class="links">
         <a href="https://github.com/kyzdes/keys-keeper-skill" target="_blank" rel="noopener">GitHub</a>

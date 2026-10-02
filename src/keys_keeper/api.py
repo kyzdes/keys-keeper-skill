@@ -113,6 +113,11 @@ def handle_api(
 
     parsed = urlparse(path)
     try:
+        if parsed.path == "/api/sync" or parsed.path.startswith("/api/sync/"):
+            handler._send_json(410, {
+                "error": "S3 synchronization has been removed; use My computers or keys sync vps",
+            })
+            return
         if parsed.path.startswith("/api/personal-sync/"):
             from keys_keeper.api_personal_sync import handle_personal_api
             handle_personal_api(handler, paths=paths, method=method, parsed=parsed,
@@ -278,44 +283,6 @@ def _route_env_names(
     _env_names(handler)
 
 
-def _route_sync_setup(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    data = request_object(body, {
-        "endpoint": str, "bucket": str, "access_key_id": str,
-        "secret_key": str, "passphrase": str, "region": str,
-        "prefix": str, "mode": str, "addressing": str, "insecure": bool,
-    }, required={"endpoint", "bucket", "access_key_id", "secret_key", "passphrase"})
-    _sync_action(handler, paths, lambda: _sync_mod().web_setup(paths, data), mutation=True)
-
-
-def _route_sync_status(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    _sync_action(handler, paths, lambda: _sync_mod().web_status(paths))
-
-
-def _route_sync_push(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    request_object(body, {})
-    _sync_action(handler, paths, lambda: _sync_mod().web_push(paths), mutation=True)
-
-
-def _route_sync_pull(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    request_object(body, {})
-    _sync_action(handler, paths, lambda: _sync_mod().web_pull(paths), mutation=True)
-
-
-def _route_sync_mode(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    mode = request_object(body, {"mode": str}, required={"mode"})["mode"]
-    _sync_action(handler, paths, lambda: _sync_mod().web_set_mode(paths, mode), mutation=True)
-
-
 _EXACT_ROUTES: dict[tuple[str, str], _ApiRoute] = {
     ("GET", "/api/entries"): _route_entries,
     ("POST", "/api/copy"): _route_copy,
@@ -332,11 +299,6 @@ _EXACT_ROUTES: dict[tuple[str, str], _ApiRoute] = {
     ("POST", "/api/project-sync/revoke"): _route_project_sync_revoke,
     ("POST", "/api/project-sync/initialize"): _route_project_sync_initialize,
     ("GET", "/api/env-names"): _route_env_names,
-    ("POST", "/api/sync/setup"): _route_sync_setup,
-    ("GET", "/api/sync/status"): _route_sync_status,
-    ("POST", "/api/sync/push"): _route_sync_push,
-    ("POST", "/api/sync/pull"): _route_sync_pull,
-    ("POST", "/api/sync/mode"): _route_sync_mode,
 }
 
 
@@ -538,40 +500,6 @@ def _project_sync_initialize(handler, paths: Paths, body: bytes | None) -> None:
         handler._send_json(200, {"ok": True, "result": result})
     except (ValueError, RuntimeError, KeychainError) as ex:
         _safe_project_error(handler, ex)
-
-
-def _sync_mod():
-    from keys_keeper import sync_application
-
-    return sync_application
-
-
-def _sync_action(handler, paths: Paths, fn, *, mutation: bool = False) -> None:
-    """Separate safe request errors, commit uncertainty and audit outcomes."""
-    from keys_keeper.backend import KeychainError
-    from keys_keeper.config import SyncConfigError
-    from keys_keeper.crypto import BadPassword
-    from keys_keeper.sync_remote import AuthError, TransportError
-
-    if not _require_master(handler, _context(handler, paths)):
-        return
-    try:
-        handler._send_json(200, fn())
-    except Exception as ex:
-        if not _committed_exception(handler, ex):
-            if isinstance(ex, (SyncConfigError, KeychainError)):
-                status, message = 400, "Sync configuration or credential is unavailable"
-            elif isinstance(ex, (AuthError, TransportError, BadPassword)):
-                status, message = 502, "Sync transport or authentication failed"
-            else:
-                status, message = 503, "Sync operation unavailable"
-            if mutation:
-                message += "; check recovery status before retrying"
-            audit_status = getattr(ex, "audit_status", "unknown")
-            if type(audit_status) is not str or audit_status not in {"recorded", "unavailable"}:
-                audit_status = "unknown"
-            handler._send_json(status, {"error": message, "committed": None if mutation else False,
-                                        "audit_status": audit_status})
 
 
 def _env_names(handler) -> None:

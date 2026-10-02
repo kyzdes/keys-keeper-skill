@@ -37,8 +37,7 @@ same OS user. Clipboard and agent-readable files are exposure surfaces.
   [temporary sinks](references/temporary-sinks.md).
 - Repeated macOS authorization dialogs or bypass: read
   [Keychain bypass](references/keychain-bypass.md).
-- Cloud sync, project delivery profiles, worker onboarding, recovery, or browser
-  vault: read [sync](references/sync.md).
+- VPS sync, project delivery profiles, worker onboarding, or recovery: read [sync](references/sync.md).
 - Installation, plugin version, health, or missing data: read
   [diagnostics](references/diagnostics.md).
 - First setup, admin UI, or desktop launcher: read

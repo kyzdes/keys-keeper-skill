@@ -17,7 +17,7 @@ from keys_keeper.private_files import PrivateFileError, atomic_write_bytes, open
 from keys_keeper.operation_journal import JournalError, _atomic_write_bytes, _secure_read
 
 # v2 (2026-06): adds a top-level `tombstones` list so deletes propagate through
-# S3 sync instead of being resurrected by an older peer snapshot. See sync.py.
+# snapshot sync instead of being resurrected by an older peer snapshot.
 SCHEMA_VERSION = 2
 CATALOG_SCHEMA_VERSION = 3
 _MAX_METADATA_BYTES = 128 * 1024 * 1024

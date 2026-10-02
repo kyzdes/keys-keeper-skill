@@ -1,7 +1,9 @@
 # Keys Keeper access architecture
 
-Status: implementation plan with the first compatibility-mode slice present in
-the current worktree. It is not a release claim.
+Status: historical implementation plan for the compatibility-mode work.
+Its progress statements describe that earlier stage. Current scope and verified
+contracts are in [VPS refactor](VPS-REFACTOR-2026-10-02.md) and
+[hardening](HARDENING-2026-10-02.md).
 
 ## Product invariants
 

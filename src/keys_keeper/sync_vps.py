@@ -11,8 +11,10 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import re
 import secrets
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,13 +23,14 @@ from typing import Any, Mapping
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from keys_keeper.backend import KeychainBackend, KeychainError
+from keys_keeper.backend import KeychainBackend
 from keys_keeper.models import ValidationError as VaultValidationError, validate_snapshot_payload
 from keys_keeper.paths import Paths
+from keys_keeper.request_json import request_object
 from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
 from keys_keeper.service import ConcurrentMutation, VaultService
 from keys_keeper.store import MetadataStore
-from keys_keeper.sync import build_snapshot_payload, content_hash, merge
+from keys_keeper.vault_snapshot import build_snapshot_payload, content_hash, merge, prepare_snapshot_payload
 from keys_keeper.sync_protocol_v2 import (
     KK2Error,
     VerifiedCommit,
@@ -36,10 +39,11 @@ from keys_keeper.sync_protocol_v2 import (
     compute_manifest_hash,
     open_snapshot,
     seal_snapshot,
-    verify_commit,
     verify_commit_signature,
 )
-from keys_keeper.sync_vps_client import VpsConflictError, VpsProtocolError, VpsTransportError
+from keys_keeper.sync_vps_client import (
+    VpsBadRequestError, VpsConflictError, VpsProtocolError, VpsTransportError, _decode_json,
+)
 
 
 SYNC_VPS_TOKEN = "kk:sync-vps-device-token"
@@ -53,6 +57,13 @@ _MEMBERSHIP_DOMAIN = b"keys-keeper/KK2/device-membership/v1\x00"
 _REVOCATION_DOMAIN = b"keys-keeper/KK2/device-revocation/v1\x00"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_STATE_FIELDS = {
+    "commit_id": str, "manifest_hash": str, "sequence": int, "manifest": dict,
+    "revocations": dict, "last_sync_at": str,
+}
+_ANCHOR_FIELDS = {"commit_id", "manifest_hash", "sequence", "manifest"}
+MAX_CHAIN_COMMITS = 10_000
+HISTORY_PAGE_SIZE = 100
 
 
 class VpsSyncError(VpsTransportError):
@@ -61,6 +72,12 @@ class VpsSyncError(VpsTransportError):
 
 class VpsTrustError(VpsSyncError):
     """The relay returned data that does not extend the local trust anchor."""
+
+
+class VpsSyncCommitError(VpsSyncError):
+    """A sync side effect completed but a subsequent local step failed."""
+
+    committed = True
 
 
 @dataclass(frozen=True)
@@ -85,10 +102,13 @@ class VpsSyncConfig:
         from keys_keeper.sync_vps_client import VpsSyncClient
 
         # Reuse the transport's HTTPS/loopback and credential-in-URL policy.
+        if any(type(getattr(self, name)) is not (int if name == "trusted_checkpoint_sequence" else str)
+               for name in self.__annotations__):
+            raise VpsTrustError("VPS sync configuration has invalid field types")
         VpsSyncClient(base_url=self.endpoint, proxy=self.proxy)
         for label in ("vault_id", "device_id", "root_device_id"):
             value = getattr(self, label)
-            if not _ID_RE.fullmatch(value):
+            if not isinstance(value, str) or not _ID_RE.fullmatch(value):
                 raise VpsTrustError(f"invalid {label} in VPS sync configuration")
         if self.status not in ("active", "pending"):
             raise VpsTrustError("invalid VPS sync enrollment status")
@@ -187,9 +207,11 @@ def load_vps_config(paths: Paths | None = None) -> VpsSyncConfig:
     paths = paths or Paths()
     sidecar = _sidecar(paths)
     try:
-        raw = json.loads(read_secure_text(sidecar, missing_ok=False).text)
-        if not isinstance(raw, dict) or set(raw) != set(VpsSyncConfig.__annotations__):
-            raise ValueError
+        fields = {name: int if name == "trusted_checkpoint_sequence" else str
+                  for name in VpsSyncConfig.__annotations__}
+        raw = request_object(read_secure_text(sidecar, missing_ok=False, max_bytes=64 * 1024).text.encode("utf-8"),
+                             fields, required={"endpoint", "vault_id", "device_id", "root_device_id",
+                                               "root_sign_public_key", "sign_public_key", "wrap_public_key"})
         config = VpsSyncConfig(**raw)
         config.validate()
         return config
@@ -381,12 +403,24 @@ class VpsSyncEngine:
         signing_private_key: bytes,
         paths: Paths,
         max_retries: int = 5,
+        max_history_seconds: float = 60.0,
     ) -> None:
         config.validate()
         if config.status != "active":
             raise VpsSyncError("this device is not approved yet; run `keys sync vps finish`")
-        if len(vault_key) != 32 or len(signing_private_key) != 32:
+        if not isinstance(vault_key, bytes) or not isinstance(signing_private_key, bytes) or len(vault_key) != 32 or len(signing_private_key) != 32:
             raise VpsTrustError("invalid local VPS sync key material")
+        from cryptography.hazmat.primitives import serialization
+        public_key = Ed25519PrivateKey.from_private_bytes(signing_private_key).public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )
+        if public_key != _decode_b64(config.sign_public_key, label="device signing key", length=32):
+            raise VpsTrustError("local VPS signing key does not match the pinned device identity")
+        if type(max_retries) is not int or not 1 <= max_retries <= 20:
+            raise VpsSyncError("VPS retry limit must be between 1 and 20")
+        if (isinstance(max_history_seconds, bool) or not isinstance(max_history_seconds, (int, float))
+                or not math.isfinite(max_history_seconds) or max_history_seconds <= 0):
+            raise VpsSyncError("VPS history deadline must be positive")
         self.client = client
         self.config = config
         self.store = store
@@ -395,17 +429,16 @@ class VpsSyncEngine:
         self.signing_private_key = signing_private_key
         self.paths = paths
         self.max_retries = max_retries
+        self.max_history_seconds = float(max_history_seconds)
 
     def _read_state(self) -> dict[str, Any]:
         try:
             state = read_secure_text(_state_sidecar(self.paths), missing_ok=True)
             if state.identity is None:
                 return {}
-            raw = json.loads(state.text)
+            raw = request_object(state.text.encode("utf-8"), _STATE_FIELDS, required=_ANCHOR_FIELDS)
         except (ValueError, OSError, SecureFileError) as exc:
             raise VpsTrustError("local VPS sync trust state is unreadable or malformed") from exc
-        if not isinstance(raw, dict):
-            raise VpsTrustError("local VPS sync trust state is malformed")
         return raw
 
     def _write_state(self, verified: VerifiedCommit) -> None:
@@ -419,9 +452,20 @@ class VpsSyncEngine:
         }
         self.paths.ensure()
         previous = read_secure_text(_state_sidecar(self.paths), missing_ok=True)
+        if previous.identity is not None:
+            old = request_object(previous.text.encode("utf-8"), _STATE_FIELDS, required=_ANCHOR_FIELDS)
+            anchor = self._anchor(old)
+            assert anchor is not None
+            if anchor.sequence > verified.sequence or (
+                    anchor.sequence == verified.sequence and anchor.commit_id != verified.commit_id):
+                raise VpsTrustError("local VPS trust state advanced during this operation")
+            if (anchor.sequence, anchor.commit_id, anchor.manifest_hash) not in getattr(self, "_last_chain_checkpoints", set()):
+                raise VpsTrustError("local VPS trust state no longer belongs to the verified chain")
+            if (anchor.commit_id == verified.commit_id and old.get("revocations", {}) == state["revocations"]):
+                return
         replace_secure_text(previous, json.dumps(state, sort_keys=True, indent=2) + "\n")
 
-    def _trusted_device_keys(self) -> dict[str, bytes]:
+    def _trusted_device_keys(self, state: dict | None = None) -> dict[str, bytes]:
         response = self.client.list_devices(self.config.vault_id)
         records = response.get("devices") if isinstance(response, dict) else None
         if not isinstance(records, list):
@@ -491,6 +535,12 @@ class VpsSyncEngine:
                 break
         if pending:
             raise VpsTrustError("an active device has no verifiable membership chain")
+        own = by_id.get(self.config.device_id)
+        if (own is None or own.get("status") not in ("active", "revoked")
+                or own.get("sign_public_key") != self.config.sign_public_key
+                or own.get("wrap_public_key") != self.config.wrap_public_key
+                or self.config.device_id not in trusted):
+            raise VpsTrustError("this device has no matching trusted membership")
 
         revocations: dict[str, dict[str, Any]] = {}
         revocation_records: dict[str, dict[str, str]] = {}
@@ -528,10 +578,13 @@ class VpsSyncEngine:
                 "signature": signature,
             }
 
-        pinned = self._read_state().get("revocations", {})
+        pinned = (self._read_state() if state is None else state).get("revocations", {})
         if not isinstance(pinned, dict):
             raise VpsTrustError("local VPS sync revocation state is malformed")
         for device_id, evidence in pinned.items():
+            if (not isinstance(evidence, dict) or set(evidence) != {"statement", "signature"}
+                    or not all(isinstance(value, str) for value in evidence.values())):
+                raise VpsTrustError("local VPS sync revocation state is malformed")
             if revocation_records.get(device_id) != evidence:
                 raise VpsTrustError("VPS omitted or rewrote a previously trusted revocation")
         self._membership_checkpoints = memberships
@@ -550,24 +603,13 @@ class VpsSyncEngine:
             raise VpsProtocolError("sync server returned an invalid HEAD commit id")
         return value
 
-    def _fetch_commit(self, commit_id: str) -> tuple[bytes, bytes]:
-        response = self.client.get_commit(self.config.vault_id, commit_id)
-        if not isinstance(response, dict):
-            raise VpsProtocolError("sync server returned an invalid commit")
-        return (
-            _wire_bytes(response.get("commit_blob"), label="commit blob", maximum=32 * 1024),
-            _wire_bytes(
-                response.get("snapshot_ciphertext"),
-                label="snapshot ciphertext",
-                maximum=24 * 1024 * 1024,
-            ),
-        )
-
-    def _anchor(self) -> VerifiedCommit | None:
-        state = self._read_state()
+    def _anchor(self, state: dict | None = None) -> VerifiedCommit | None:
+        state = self._read_state() if state is None else state
+        if not state:
+            return None
         manifest = state.get("manifest")
         if not isinstance(manifest, dict):
-            return None
+            raise VpsTrustError("local VPS sync trust anchor is malformed")
         try:
             if set(state) - {
                 "commit_id", "manifest_hash", "sequence", "manifest",
@@ -582,6 +624,7 @@ class VpsSyncEngine:
                 or isinstance(state["sequence"], bool)
                 or not isinstance(state["sequence"], int)
                 or state["sequence"] < 1
+                or manifest.get("sequence") != state["sequence"]
                 or manifest.get("vault_id") != self.config.vault_id
                 or compute_manifest_hash(manifest) != state["manifest_hash"]
             ):
@@ -601,157 +644,200 @@ class VpsSyncEngine:
         except (KeyError, TypeError, ValueError, KK2Error):
             raise VpsTrustError("local VPS sync trust anchor is malformed") from None
 
-    def _verified_head(self) -> tuple[VerifiedCommit | None, dict | None]:
-        head_id = self._head_id(self.client.get_head(self.config.vault_id))
-        if head_id is None:
-            if self._anchor() is not None:
-                raise VpsTrustError("VPS omitted a previously trusted commit chain")
-            return None, None
-        trusted_keys = self._trusted_device_keys()
-        anchor = self._anchor()
-        reverse: list[tuple[bytes, bytes, VerifiedCommit]] = []
-        cursor = head_id
-        seen: set[str] = set()
-        while True:
-            if cursor in seen or len(seen) >= 10_000:
-                raise VpsTrustError("VPS commit chain is cyclic or too long")
-            seen.add(cursor)
-            commit_blob, snapshot = self._fetch_commit(cursor)
-            try:
-                raw = json.loads(commit_blob)
-                author = raw["manifest"]["author_device_id"]
-            except (ValueError, KeyError, TypeError):
-                raise VpsTrustError("VPS commit envelope is malformed") from None
-            public_key = trusted_keys.get(author)
-            if public_key is None:
-                raise VpsTrustError("commit author has no trusted device membership")
-            try:
-                verified = verify_commit_signature(
-                    commit_blob,
-                    signing_public_key=public_key,
-                    snapshot_ciphertext=snapshot,
-                    expected_vault_id=self.config.vault_id,
-                    expected_author_device_id=author,
-                )
-            except KK2Error as exc:
-                raise VpsTrustError("VPS commit or snapshot authentication failed") from exc
-            if verified.commit_id != cursor:
-                raise VpsTrustError("commit address does not match its signed id")
-            reverse.append((commit_blob, snapshot, verified))
-            if verified.parent_commit_id is None:
-                break
-            cursor = verified.parent_commit_id
-
-        previous = None
-        if reverse and reverse[-1][2].sequence != 1:
-            raise VpsTrustError("VPS did not provide a complete chain to genesis")
-        checkpoints = {
-            (candidate.sequence, candidate.commit_id, candidate.manifest_hash)
-            for _blob, _snapshot, candidate in reverse
+    @staticmethod
+    def _record_matches(record: Any, verified: VerifiedCommit) -> None:
+        expected = {
+            "commit_id": verified.commit_id,
+            "sequence": verified.sequence,
+            "parent_commit_id": verified.parent_commit_id,
+            "manifest_hash": verified.manifest_hash,
+            "author_device_id": verified.author_device_id,
         }
-        for device_id, membership in self._membership_checkpoints.items():
-            checkpoint = (
-                membership["checkpoint_sequence"],
-                membership["checkpoint_commit_id"],
-                membership["checkpoint_manifest_hash"],
+        if (not isinstance(record, dict) or type(record.get("sequence")) is not int
+                or any(key not in record or record[key] != value for key, value in expected.items())):
+            raise VpsTrustError("VPS commit metadata does not match its signed envelope")
+
+    def _verify_record(self, record: dict, trusted_keys: dict[str, bytes], *, snapshot=None) -> VerifiedCommit:
+        blob = _wire_bytes(record.get("commit_blob"), label="commit blob", maximum=32 * 1024)
+        try:
+            raw = json.loads(blob)
+            author = raw["manifest"]["author_device_id"]
+            if not isinstance(author, str):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, UnicodeError, RecursionError):
+            raise VpsTrustError("VPS commit envelope is malformed") from None
+        public_key = trusted_keys.get(author)
+        if public_key is None:
+            raise VpsTrustError("commit author has no trusted device membership")
+        try:
+            verified = verify_commit_signature(
+                blob, signing_public_key=public_key, snapshot_ciphertext=snapshot,
+                expected_vault_id=self.config.vault_id, expected_author_device_id=author,
             )
+        except KK2Error:
+            raise VpsTrustError("VPS commit or snapshot authentication failed") from None
+        self._record_matches(record, verified)
+        return verified
+
+    def _require_chain_checkpoints(self, checkpoints: set[tuple]) -> None:
+        for membership in self._membership_checkpoints.values():
+            checkpoint = (membership["checkpoint_sequence"], membership["checkpoint_commit_id"],
+                          membership["checkpoint_manifest_hash"])
             if checkpoint[0] and checkpoint not in checkpoints:
                 raise VpsTrustError("device membership checkpoint is not in the commit chain")
-            approver = membership["approved_by_device_id"]
-            approver_membership = self._membership_checkpoints.get(approver)
-            if approver != self.config.root_device_id and (
-                approver_membership is None
-                or membership["checkpoint_sequence"]
-                < approver_membership["checkpoint_sequence"]
-            ):
-                raise VpsTrustError("device approved another member before it was admitted")
-            approver_revocation = self._verified_revocations.get(approver)
-            if approver_revocation is not None and (
-                membership["checkpoint_sequence"]
-                > approver_revocation["checkpoint_sequence"]
-            ):
-                raise VpsTrustError("revoked device approved a later membership")
-        for commit_blob, snapshot, _candidate in reversed(reverse):
-            author = _candidate.author_device_id
-            membership = self._membership_checkpoints.get(author)
-            if author == self.config.root_device_id:
-                membership_checkpoint = (0, None, None)
-            elif membership is None:
-                raise VpsTrustError("commit author has no signed membership checkpoint")
-            else:
-                membership_checkpoint = (
-                    membership["checkpoint_sequence"],
-                    membership["checkpoint_commit_id"],
-                    membership["checkpoint_manifest_hash"],
-                )
-            if membership_checkpoint[0] and membership_checkpoint not in checkpoints:
-                raise VpsTrustError("device membership checkpoint is not in the commit chain")
-            if _candidate.sequence <= membership_checkpoint[0]:
-                raise VpsTrustError("device authored a commit before it was admitted")
-            revocation = self._verified_revocations.get(author)
-            if revocation is not None and _candidate.sequence > revocation["checkpoint_sequence"]:
-                raise VpsTrustError("revoked device authored a commit after its revocation")
-            try:
-                previous = verify_commit(
-                    commit_blob,
-                    signing_public_key=trusted_keys[author],
-                    snapshot_ciphertext=snapshot,
-                    expected_vault_id=self.config.vault_id,
-                    expected_author_device_id=author,
-                    previous=previous,
-                    require_genesis=previous is None,
-                )
-            except KK2Error as exc:
-                raise VpsTrustError("VPS commit chain does not extend the trusted anchor") from exc
-        if previous is None:
-            raise VpsTrustError("VPS returned an empty commit chain")
-        if previous.commit_id != head_id:
-            raise VpsTrustError("VPS HEAD verification did not reach the advertised commit")
-        if anchor is not None and (
-            anchor.sequence, anchor.commit_id, anchor.manifest_hash
-        ) not in checkpoints:
-            raise VpsTrustError("VPS HEAD does not descend from the local trust anchor")
-        for device_id, revocation in self._verified_revocations.items():
-            checkpoint = (
-                revocation["checkpoint_sequence"],
-                revocation["checkpoint_commit_id"],
-                revocation["checkpoint_manifest_hash"],
-            )
+        for revocation in self._verified_revocations.values():
+            checkpoint = (revocation["checkpoint_sequence"], revocation["checkpoint_commit_id"],
+                          revocation["checkpoint_manifest_hash"])
             if checkpoint[0] and checkpoint not in checkpoints:
                 raise VpsTrustError("device revocation checkpoint is not in the commit chain")
-            revoker = revocation["revoked_by_device_id"]
-            revoker_membership = self._membership_checkpoints.get(revoker)
-            if revoker != self.config.root_device_id and (
-                revoker_membership is None
-                or revocation["checkpoint_sequence"] <= revoker_membership["checkpoint_sequence"]
-            ):
-                raise VpsTrustError("device signed a revocation before it was admitted")
-            revoker_revocation = self._verified_revocations.get(revoker)
-            if revoker_revocation is not None and (
-                revocation["checkpoint_sequence"]
-                > revoker_revocation["checkpoint_sequence"]
-            ):
-                raise VpsTrustError("revoked device signed a later revocation")
-        checkpoint_sequence = self.config.trusted_checkpoint_sequence
-        if checkpoint_sequence:
-            required = (
-                checkpoint_sequence,
-                self.config.trusted_checkpoint_commit_id,
-                self.config.trusted_checkpoint_manifest_hash,
-            )
-            if required not in checkpoints:
-                raise VpsTrustError("VPS chain does not contain the signed onboarding checkpoint")
+        if self.config.trusted_checkpoint_sequence and (
+                self.config.trusted_checkpoint_sequence, self.config.trusted_checkpoint_commit_id,
+                self.config.trusted_checkpoint_manifest_hash) not in checkpoints:
+            raise VpsTrustError("VPS chain does not contain the signed onboarding checkpoint")
+
+    @staticmethod
+    def _history_budget(deadline: float) -> None:
+        if time.monotonic() >= deadline:
+            raise VpsSyncError("VPS history verification timed out")
+
+    def _verified_head(self) -> tuple[VerifiedCommit | None, dict | None]:
+        # No retained trust cache: every operation refreshes device membership,
+        # revocations and signed history. Pagination bounds memory and requests.
+        deadline = time.monotonic() + self.max_history_seconds
+        for _ in range(self.max_retries):
+            try:
+                return self._verify_advertised_head(deadline)
+            except VpsConflictError:
+                self._history_budget(deadline)
+        raise VpsSyncError("VPS HEAD kept changing during history verification")
+
+    def _verify_advertised_head(self, deadline: float) -> tuple[VerifiedCommit | None, dict | None]:
+        self._history_budget(deadline)
+        state = self._read_state()
+        anchor = self._anchor(state)
+        advertised = self.client.get_head(self.config.vault_id)
+        head_id = self._head_id(advertised)
+        self._history_budget(deadline)
+        trusted_keys = self._trusted_device_keys(state)
+        self._history_budget(deadline)
+        if head_id is None:
+            if advertised.get("sequence") is not None or advertised.get("manifest_hash") is not None:
+                raise VpsProtocolError("sync server returned inconsistent empty HEAD metadata")
+            if anchor is not None:
+                raise VpsTrustError("VPS omitted a previously trusted commit chain")
+            self._require_chain_checkpoints(set())
+            self._last_chain_checkpoints = set()
+            return None, None
+
+        head_record = self.client.get_commit(self.config.vault_id, head_id)
+        if not isinstance(head_record, dict):
+            raise VpsProtocolError("sync server returned an invalid commit")
+        snapshot = _wire_bytes(head_record.get("snapshot_ciphertext"),
+                               label="snapshot ciphertext", maximum=24 * 1024 * 1024)
+        head = self._verify_record(head_record, trusted_keys, snapshot=snapshot)
+        if (type(advertised.get("sequence")) is not int or advertised["sequence"] != head.sequence
+                or advertised.get("manifest_hash") != head.manifest_hash):
+            raise VpsTrustError("VPS HEAD metadata does not match its signed envelope")
+        # Keep only the signed envelope while traversing history; the full
+        # base64 ciphertext response must not survive alongside decoded bytes.
+        head_record = {key: value for key, value in head_record.items() if key != "snapshot_ciphertext"}
+        if head.commit_id != head_id or head.sequence > MAX_CHAIN_COMMITS:
+            raise VpsTrustError("VPS HEAD is misaddressed or its history is too long")
+        self._history_budget(deadline)
+        previous = None
+        checkpoints: set[tuple] = set()
+        identities: set[str] = set()
+        after = 0
+        include_commit = True
+        include_snapshot = False
+        while after < head.sequence:
+            self._history_budget(deadline)
+            try:
+                page = self.client.list_commits(self.config.vault_id, after_sequence=after,
+                                               limit=HISTORY_PAGE_SIZE, include_commit=include_commit)
+            except VpsBadRequestError:
+                if not include_commit:
+                    raise
+                # Released relays reject unknown query fields (36df576). One
+                # compatibility retry removes only the optional batching hint.
+                include_commit = False
+                self._history_budget(deadline)
+                page = self.client.list_commits(self.config.vault_id, after_sequence=after,
+                                               limit=HISTORY_PAGE_SIZE)
+            self._history_budget(deadline)
+            records = page.get("commits") if isinstance(page, dict) else None
+            if not isinstance(records, list) or not records or len(records) > HISTORY_PAGE_SIZE:
+                raise VpsTrustError("VPS commit history is incomplete or malformed")
+            if page.get("head_commit_id") != head_id:
+                raise VpsConflictError("VPS HEAD changed while reading history")
+            for record in records:
+                self._history_budget(deadline)
+                if (not isinstance(record, dict) or type(record.get("sequence")) is not int
+                        or record["sequence"] != after + 1 or record["sequence"] > head.sequence
+                        or not isinstance(record.get("commit_id"), str)
+                        or not _HASH_RE.fullmatch(record["commit_id"])
+                        or record["commit_id"] in identities):
+                    raise VpsTrustError("VPS commit history is unordered, duplicated or has gaps")
+                identities.add(record["commit_id"])
+                if record["sequence"] == head.sequence:
+                    verified = head
+                    self._record_matches(record, verified)
+                    if "commit_blob" in record and record["commit_blob"] != head_record["commit_blob"]:
+                        raise VpsTrustError("VPS history rewrote the advertised HEAD envelope")
+                else:
+                    signed = record
+                    if "commit_blob" not in record:
+                        # Earlier relays return metadata-only pages and may
+                        # ignore snapshot=0, returning a bounded full record.
+                        try:
+                            signed = self.client.get_commit(self.config.vault_id, record["commit_id"],
+                                                            include_snapshot=include_snapshot)
+                        except VpsBadRequestError:
+                            if include_snapshot:
+                                raise
+                            include_snapshot = True
+                            self._history_budget(deadline)
+                            signed = self.client.get_commit(self.config.vault_id, record["commit_id"])
+                        self._history_budget(deadline)
+                        if not isinstance(signed, dict):
+                            raise VpsProtocolError("sync server returned an invalid commit")
+                    verified = self._verify_record(signed, trusted_keys)
+                    self._record_matches(record, verified)
+                    signed = None
+                if previous is None:
+                    if verified.sequence != 1 or verified.parent_commit_id is not None or verified.parent_manifest_hash is not None:
+                        raise VpsTrustError("VPS did not provide a complete chain to genesis")
+                elif (verified.sequence != previous.sequence + 1
+                      or verified.parent_commit_id != previous.commit_id
+                      or verified.parent_manifest_hash != previous.manifest_hash):
+                    raise VpsTrustError("VPS commit chain does not extend the trusted anchor")
+                membership = self._membership_checkpoints.get(verified.author_device_id)
+                admission = 0 if verified.author_device_id == self.config.root_device_id else (
+                    None if membership is None else membership["checkpoint_sequence"])
+                if admission is None or verified.sequence <= admission:
+                    raise VpsTrustError("device authored a commit before it was admitted")
+                revocation = self._verified_revocations.get(verified.author_device_id)
+                if revocation is not None and verified.sequence > revocation["checkpoint_sequence"]:
+                    raise VpsTrustError("revoked device authored a commit after its revocation")
+                checkpoints.add((verified.sequence, verified.commit_id, verified.manifest_hash))
+                previous, after = verified, verified.sequence
+        if previous is None or previous.commit_id != head_id:
+            raise VpsTrustError("VPS HEAD verification did not reach the advertised commit")
+        if anchor is not None and (anchor.sequence, anchor.commit_id, anchor.manifest_hash) not in checkpoints:
+            raise VpsTrustError("VPS HEAD does not descend from the local trust anchor")
+        self._require_chain_checkpoints(checkpoints)
         self._last_chain_checkpoints = checkpoints
-        head_snapshot = reverse[0][1]
         try:
-            plaintext = open_snapshot(
-                head_snapshot, vault_key=self.vault_key, expected_vault_id=self.config.vault_id
-            )
-            payload = json.loads(plaintext)
+            plaintext = open_snapshot(snapshot, vault_key=self.vault_key, expected_vault_id=self.config.vault_id)
+            payload = _decode_json(plaintext)
+            if (not isinstance(payload, dict) or set(payload) != {"schema_version", "entries", "tombstones"}
+                    or type(payload["schema_version"]) is not int):
+                raise VpsTrustError("latest VPS snapshot has invalid fields")
             validate_snapshot_payload(payload)
-        except (KK2Error, VaultValidationError, ValueError, UnicodeDecodeError) as exc:
-            raise VpsTrustError("latest VPS snapshot failed authenticated validation") from exc
-        return previous, payload
+        except (KK2Error, VaultValidationError, VpsProtocolError, ValueError, UnicodeError, RecursionError):
+            raise VpsTrustError("latest VPS snapshot failed authenticated validation") from None
+        self._history_budget(deadline)
+        return head, payload
 
     def verified_head(self) -> VerifiedCommit | None:
         """Verify the remote chain and return its trusted HEAD metadata."""
@@ -762,10 +848,16 @@ class VpsSyncEngine:
         self, sequence: int, commit_id: str | None, manifest_hash: str | None
     ) -> VerifiedCommit | None:
         """Verify HEAD and require one exact prior checkpoint in its ancestry."""
-        verified = self.verified_head()
+        if type(sequence) is not int or sequence < 0:
+            raise VpsTrustError("checkpoint sequence must be a non-negative integer")
         if sequence == 0:
             if commit_id is not None or manifest_hash is not None:
                 raise VpsTrustError("empty checkpoint contains unexpected hashes")
+        elif (not isinstance(commit_id, str) or not _HASH_RE.fullmatch(commit_id)
+              or not isinstance(manifest_hash, str) or not _HASH_RE.fullmatch(manifest_hash)):
+            raise VpsTrustError("checkpoint hashes are invalid")
+        verified = self.verified_head()
+        if sequence == 0:
             return verified
         required = (sequence, commit_id, manifest_hash)
         if required not in getattr(self, "_last_chain_checkpoints", set()):
@@ -779,7 +871,7 @@ class VpsSyncEngine:
             self._write_state(verified)
         return verified
 
-    def _apply_payload(self, payload: dict) -> int:
+    def _apply_payload(self, payload: dict, *, prepared: tuple[dict, str] | None = None) -> int:
         try:
             remote_entries, remote_tombstones = validate_snapshot_payload(payload)
         except VaultValidationError as exc:
@@ -789,31 +881,32 @@ class VpsSyncEngine:
             for item in payload["entries"]
         }
         for _ in range(self.max_retries):
-            local = self.store.snapshot()
-            result = merge(local.entries, local.tombstones, remote_entries, remote_tombstones)
+            local_payload, revision = prepared or prepare_snapshot_payload(self.store, self.backend)
+            prepared = None
+            local_entries, local_tombstones = validate_snapshot_payload(local_payload)
+            local_secrets = {
+                item["id"]: (item.get("_secret"), item.get("_secret_passphrase"))
+                for item in local_payload["entries"]
+            }
+            result = merge(local_entries, local_tombstones, remote_entries, remote_tombstones)
             # Metadata timestamps have one-second precision, so two devices can
             # rotate only the secret while retaining byte-identical metadata.
             # Resolve that otherwise-invisible tie with a digest of the secret
             # pair.  The digest never leaves this process and gives every peer
             # the same winner, preventing endless alternating commits.
-            local_by_id = {entry.id: entry for entry in local.entries}
+            local_by_id = {entry.id: entry for entry in local_entries}
             remote_by_id = {entry.id: entry for entry in remote_entries}
             live_ids = {entry.id for entry in result.entries}
             for entry_id in live_ids & local_by_id.keys() & remote_by_id.keys():
                 if local_by_id[entry_id].to_dict() != remote_by_id[entry_id].to_dict():
                     continue
-                local_pair = []
-                for account in (entry_id, entry_id + ":passphrase"):
-                    try:
-                        local_pair.append(self.backend.get(account).unseal())
-                    except KeychainError:
-                        local_pair.append(None)
+                local_pair = local_secrets[entry_id]
                 remote_pair = remote_secrets[entry_id]
                 local_digest = hashlib.sha256(
-                    canonical_json_bytes([value or "" for value in local_pair])
+                    canonical_json_bytes(list(local_pair))
                 ).digest()
                 remote_digest = hashlib.sha256(
-                    canonical_json_bytes([value or "" for value in remote_pair])
+                    canonical_json_bytes(list(remote_pair))
                 ).digest()
                 if remote_digest > local_digest:
                     result.remote_win_ids.add(entry_id)
@@ -821,30 +914,32 @@ class VpsSyncEngine:
             if not result.changed:
                 return 0
             writes: dict[str, str] = {}
-            for entry_id in result.remote_win_ids:
-                if entry_id not in remote_secrets:
-                    raise VpsTrustError("VPS snapshot is missing an authenticated secret slot")
-                secret, passphrase = remote_secrets[entry_id]
-                if secret is not None:
-                    writes[entry_id] = secret
-                if passphrase is not None:
-                    writes[entry_id + ":passphrase"] = passphrase
-            deletes = [
+            deletes = {
                 account
                 for entry_id in result.secret_delete_ids
                 for account in (entry_id, entry_id + ":passphrase")
-            ]
+            }
+            for entry_id in result.remote_win_ids:
+                if entry_id not in remote_secrets:
+                    raise VpsTrustError("VPS snapshot is missing an authenticated secret slot")
+                for account, value in zip((entry_id, entry_id + ":passphrase"), remote_secrets[entry_id]):
+                    if value is None:
+                        deletes.add(account)
+                    else:
+                        writes[account] = value
             try:
                 VaultService(self.store, self.backend).apply_snapshot(
                     result.entries,
                     result.tombstones,
                     secret_writes=writes,
                     secret_deletes=deletes,
-                    expected_revision=local.revision,
+                    expected_revision=revision,
                 )
             except ConcurrentMutation:
                 continue
-            return len(result.remote_win_ids) + len(result.secret_delete_ids)
+            # Name disambiguation or a new tombstone may change metadata even
+            # without a remote secret winner. Report an actual application.
+            return max(1, len(result.remote_win_ids) + len(result.secret_delete_ids))
         raise VpsSyncError("local vault changed repeatedly while VPS sync was applying")
 
     def pull(self) -> int:
@@ -852,7 +947,12 @@ class VpsSyncEngine:
         if verified is None or payload is None:
             return 0
         changed = self._apply_payload(payload)
-        self._write_state(verified)
+        try:
+            self._write_state(verified)
+        except Exception:
+            if changed:
+                raise VpsSyncCommitError("VPS snapshot was applied; local trust state update failed") from None
+            raise
         return changed
 
     def push(self) -> int:
@@ -861,10 +961,21 @@ class VpsSyncEngine:
             parent, remote_payload = self._verified_head()
             if self.config.device_id in getattr(self, "_verified_revocations", {}):
                 raise VpsTrustError("this device has been revoked and cannot publish commits")
+            if parent is not None and parent.sequence >= MAX_CHAIN_COMMITS:
+                raise VpsSyncError("VPS history reached the supported commit limit")
+            prepared = prepare_snapshot_payload(self.store, self.backend)
             if parent is not None and remote_payload is not None:
-                pulled_total += self._apply_payload(remote_payload)
-                self._write_state(parent)
-            payload = build_snapshot_payload(self.store, self.backend)
+                changed = self._apply_payload(remote_payload, prepared=prepared)
+                pulled_total += changed
+                try:
+                    self._write_state(parent)
+                except Exception:
+                    if pulled_total:
+                        raise VpsSyncCommitError("VPS snapshot was applied; local trust state update failed") from None
+                    raise
+                if changed:
+                    prepared = prepare_snapshot_payload(self.store, self.backend)
+            payload = prepared[0]
             if parent is None and not payload["entries"] and not payload["tombstones"]:
                 return pulled_total
             if remote_payload is not None and content_hash(remote_payload) == content_hash(payload):
@@ -881,15 +992,6 @@ class VpsSyncEngine:
                 author_device_id=self.config.device_id,
                 signing_private_key=self.signing_private_key,
             )
-            try:
-                self.client.append_commit(
-                    self.config.vault_id,
-                    commit_blob=commit,
-                    snapshot_ciphertext=snapshot,
-                    expected_parent=None if parent is None else parent.commit_id,
-                )
-            except VpsConflictError:
-                continue
             own = verify_commit_signature(
                 commit,
                 signing_public_key=_decode_b64(
@@ -899,7 +1001,24 @@ class VpsSyncEngine:
                 expected_vault_id=self.config.vault_id,
                 expected_author_device_id=self.config.device_id,
             )
-            self._write_state(own)
+            try:
+                receipt = self.client.append_commit(
+                    self.config.vault_id,
+                    commit_blob=commit,
+                    snapshot_ciphertext=snapshot,
+                    expected_parent=None if parent is None else parent.commit_id,
+                )
+            except VpsConflictError:
+                continue
+            self._last_chain_checkpoints.add((own.sequence, own.commit_id, own.manifest_hash))
+            try:
+                if not isinstance(receipt, dict) or receipt.get("commit_id") != own.commit_id:
+                    raise VpsProtocolError("VPS returned an inconsistent append receipt")
+                self._write_state(own)
+            except Exception:
+                # A successful append response confirms the remote side effect.
+                # Retrying automatically could publish the same change again.
+                raise VpsSyncCommitError("VPS accepted the commit; local confirmation failed") from None
             return pulled_total + 1
         raise VpsSyncError("VPS push exceeded retries because another device kept winning CAS")
 
@@ -933,7 +1052,7 @@ def invite_secret_hash(secret: str) -> str:
 __all__ = [
     "MEMBERSHIP_PROFILE", "REVOCATION_PROFILE", "SYNC_VPS_SIGNING_PRIVATE",
     "SYNC_VPS_TOKEN", "SYNC_VPS_VAULT_KEY", "SYNC_VPS_WRAPPING_PRIVATE",
-    "VpsSyncConfig", "VpsSyncEngine", "VpsSyncError", "VpsSyncStatus",
+    "VpsSyncConfig", "VpsSyncEngine", "VpsSyncError", "VpsSyncCommitError", "VpsSyncStatus",
     "VpsTrustError", "invite_secret", "invite_secret_hash", "load_vps_config",
     "make_membership_statement", "make_revocation_statement", "new_device_token",
     "save_vps_config", "sign_membership", "sign_revocation", "verify_membership",

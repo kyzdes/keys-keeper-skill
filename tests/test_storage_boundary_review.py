@@ -1,4 +1,4 @@
-"""Independent regressions for the shared metadata/config mutation boundary.
+"""Independent regressions for the shared metadata mutation boundary.
 
 Every fixture is synthetic and isolated; no OS credential backend is opened.
 """
@@ -11,7 +11,6 @@ import uuid
 import pytest
 
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
-from keys_keeper.config import SyncConfigError, load_sync_config
 from keys_keeper.master_journal import MASTER_MUTATION_KIND, MasterMutationManager, MasterRecoveryRequired
 from keys_keeper.models import Entry, EntryType, ValidationError
 from keys_keeper.operation_journal import JournalError, OperationJournal
@@ -221,15 +220,3 @@ def test_explicit_update_can_repair_legacy_note_field_without_automatic_migratio
 
     assert store.get_by_id(candidate.id).fields["secret_body"] is False
     assert backend.writes == []
-
-
-@pytest.mark.parametrize("settings", [
-    'mode="manual"\nendpoint="http://remote.example.test"\ninsecure="false"',
-    "proxy=false",
-    "retain_snapshots=true",
-])
-def test_sync_config_rejects_wrong_scalar_types_with_domain_error(tmp_path, settings):
-    paths = Paths(tmp_path / "config-profile")
-    atomic_write_bytes(paths.config_toml, ("[sync]\n" + settings + "\n").encode("utf-8"))
-    with pytest.raises(SyncConfigError):
-        load_sync_config(paths)

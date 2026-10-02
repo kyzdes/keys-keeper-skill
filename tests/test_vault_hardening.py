@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from _sync_fakes import FakeBackend
+from _vault_fakes import FakeBackend
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.paths import Paths
 from keys_keeper.project_runtime import _ReadBackend

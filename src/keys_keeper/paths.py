@@ -42,6 +42,7 @@ class Paths:
 
     @property
     def config_toml(self) -> Path:
+        # Retired S3 settings: diagnosed by doctor, never read or rewritten.
         return self.root / "config.toml"
 
     @property
@@ -61,12 +62,6 @@ class Paths:
         # Encrypted secret blob for the Linux headless (no-keyring) backend.
         # AES-256-GCM, unlocked by KEYS_KEEPER_MASTER_KEY. See backend_file.py.
         return self.root / "secrets.enc"
-
-    @property
-    def sync_state_json(self) -> Path:
-        # Non-secret sync bookkeeping (last-synced version, last-sync/auto times)
-        # for `keys sync status` + the auto-hook debounce. Never holds secrets.
-        return self.root / "sync-state.json"
 
     @property
     def profiles_dir(self) -> Path:

@@ -116,21 +116,6 @@
           }
         }
       }
-    },
-    "webvault": {
-      "path": "src/keys_keeper/webvault/static/app.css",
-      "extensions": {
-        "evening": {
-          "declarations": {
-            "color-scheme": "dark"
-          }
-        },
-        "day": {
-          "declarations": {
-            "color-scheme": "light"
-          }
-        }
-      }
     }
   }
 }

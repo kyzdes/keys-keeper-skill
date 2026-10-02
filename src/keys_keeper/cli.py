@@ -692,7 +692,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"config dir: {paths.root}")
     print(f"  data.json:    {'exists' if paths.data_json.exists() else 'will be created on first add'}")
     print(f"  audit.jsonl:  {'exists' if paths.audit_jsonl.exists() else '(none yet)'}")
-    print(f"  config.toml:  {'exists' if paths.config_toml.exists() else '(default)'}")
+    if paths.config_toml.exists() or paths.config_toml.is_symlink():
+        print("  config.toml:  legacy S3 config retained; S3 synchronization has been removed")
     from keys_keeper.master_journal import MASTER_MUTATION_KIND, compose_master_mutations
     from keys_keeper.operation_journal import pending_operation_refs
 
@@ -981,7 +982,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         PrivateFileCommitError, PrivateFileError,
         atomic_write_bytes, secure_read, secure_read_state,
     )
-    from keys_keeper.sync import MAX_SNAPSHOT_BLOB_BYTES, build_snapshot_payload, encrypt_snapshot
+    from keys_keeper.vault_snapshot import MAX_SNAPSHOT_BLOB_BYTES, build_snapshot_payload, encrypt_snapshot
     target = Path(args.file)
     replace_existing = getattr(args, "replace", False)
     try:
@@ -1044,7 +1045,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         return 1
     from keys_keeper.crypto import BadPassword
     from keys_keeper.private_files import PrivateFileError, secure_read
-    from keys_keeper.sync import MAX_SNAPSHOT_BLOB_BYTES, decrypt_snapshot
+    from keys_keeper.vault_snapshot import MAX_SNAPSHOT_BLOB_BYTES, decrypt_snapshot
     try:
         blob = secure_read(Path(args.file), max_bytes=MAX_SNAPSHOT_BLOB_BYTES,
                            require_private=False)
@@ -1367,9 +1368,10 @@ def build_parser() -> argparse.ArgumentParser:
     app_uninstall.add_argument("--system", action="store_true", help="remove from /Applications (macOS only)")
     app_uninstall.set_defaults(func=cmd_app_uninstall)
 
-    # sync — S3 cloud backup/sync
-    from keys_keeper.cli_sync import register_sync
-    register_sync(sub)
+    sync = sub.add_parser("sync", help="private VPS synchronization")
+    sync_commands = sync.add_subparsers(dest="sync_command", required=True)
+    from keys_keeper.cli_sync_vps import register_vps_sync
+    register_vps_sync(sync_commands)
 
     from keys_keeper.cli_catalog import register_catalog
     register_catalog(sub)
@@ -1379,11 +1381,30 @@ def build_parser() -> argparse.ArgumentParser:
     from keys_keeper.cli_devices import register as register_devices
     register_devices(sub)
 
-    # webvault — zero-knowledge web vault server
-    from keys_keeper.webvault.cli import register_webvault
-    register_webvault(sub)
-
     return p
+
+
+def _removed_legacy_command(argv: list[str]) -> str | None:
+    # Diagnose retired commands before parsing their old credential flags, so
+    # argparse never repeats values from an obsolete setup invocation.
+    position = 0
+    selectors = {"--profile", "--project", "--env"}
+    while position < len(argv) and argv[position].startswith("--"):
+        option = argv[position]
+        if option in selectors:
+            position += 2
+        elif option.split("=", 1)[0] in selectors and "=" in option:
+            position += 1
+        else:
+            return None
+    if position >= len(argv):
+        return None
+    if argv[position] == "webvault":
+        return "S3 WebVault has been removed; use the local admin with keys serve"
+    if (argv[position] == "sync" and position + 1 < len(argv)
+            and argv[position + 1] in {"setup", "push", "pull", "status", "mode", "rollback", "auto"}):
+        return "S3 synchronization has been removed; use My computers or keys sync vps"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1401,12 +1422,17 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError):
             pass
+    argv = list(sys.argv[1:] if argv is None else argv)
+    removed = _removed_legacy_command(argv)
+    if removed:
+        sys.stderr.write("error: " + removed + "\n")
+        return 2
     parser = build_parser()
     args = parser.parse_args(argv)
     # These legacy/canonical catalog writers always target the authoritative
     # root. They must never quietly operate on the root while a worker profile
     # was selected.
-    if args.command in {"folders", "projects", "sync", "webvault"}:
+    if args.command in {"folders", "projects", "sync"}:
         context = _context_or_error(args)
         if context is None:
             return 1

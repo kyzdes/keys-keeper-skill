@@ -5,12 +5,14 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
-from _sync_fakes import FakeBackend, add_entry
+from _vault_fakes import FakeBackend, add_entry
 from keys_keeper.backend import Sealed
 from keys_keeper import cli
 from keys_keeper.cli_sync_vps import _invite_trust_fingerprint
@@ -23,7 +25,7 @@ from keys_keeper.sync_protocol_v2 import (
     unwrap_vault_key_for_recipient,
     wrap_vault_key_for_recipient,
 )
-from keys_keeper.sync_server import SyncServerApp, create_http_server
+from keys_keeper.sync_server import SyncServerApp, SyncServerError, create_http_server, make_handler
 from keys_keeper.sync_vps import (
     VpsSyncConfig,
     VpsSyncEngine,
@@ -42,9 +44,26 @@ def b64(value: bytes) -> str:
 
 
 @contextmanager
-def running_syncd(tmp_path):
+def running_syncd(tmp_path, *, baseline_get_queries=None):
     app = SyncServerApp(tmp_path / "syncd.sqlite3", "admin-token-for-e2e")
     server = create_http_server(app)
+    if baseline_get_queries is not None:
+        class ReleasedGetHandler(make_handler(app)):
+            # Faithfully preserve the GET compatibility behavior at published
+            # 36df576ba403437d6352add265232bc01601cbae, sync_server.py:1105–1132:
+            # list rejects unknown hints; single get ignores its query entirely.
+            # Reuse current auth/storage/body bounds; no legacy production fork.
+            def _get(self):
+                baseline_get_queries.append(self.path)
+                split = urlsplit(self.path)
+                if re.fullmatch(r"/v1/vaults/([^/]+)/commits", split.path):
+                    query = parse_qs(split.query, keep_blank_values=True, strict_parsing=True)
+                    if set(query) - {"after_sequence", "limit"} or any(len(v) != 1 for v in query.values()):
+                        raise SyncServerError(400, "invalid_request", "invalid query")
+                if re.fullmatch(r"/v1/vaults/([^/]+)/commits/([^/]+)", split.path):
+                    self.path = split.path
+                return super()._get()
+        server.RequestHandlerClass = ReleasedGetHandler
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -71,6 +90,39 @@ def make_engine(tmp_path, name, client, config, identity, vault_key):
         paths=paths,
     )
     return engine, store, backend
+
+
+def test_released_relay_strict_list_query_and_ignored_snapshot_hint_remain_compatible(tmp_path):
+    queries = []
+    with running_syncd(tmp_path, baseline_get_queries=queries) as (endpoint, _database):
+        identity = generate_device_identity()
+        token = "synthetic-root-device-token-with-at-least-32-bytes"
+        created = VpsSyncClient(base_url=endpoint, token=Sealed("admin-token-for-e2e")).create_vault(
+            device_token=Sealed(token), sign_public_key=b64(identity.signing_public_bytes),
+            wrap_public_key=b64(identity.agreement_public_bytes),
+        )
+        config = VpsSyncConfig(
+            endpoint=endpoint, vault_id=created["vault_id"], device_id=created["device_id"],
+            root_device_id=created["device_id"], root_sign_public_key=b64(identity.signing_public_bytes),
+            sign_public_key=b64(identity.signing_public_bytes), wrap_public_key=b64(identity.agreement_public_bytes),
+        )
+        client = VpsSyncClient(base_url=endpoint, device_id=config.device_id, token=Sealed(token))
+        vault_key = generate_vault_key()
+        writer, store, backend = make_engine(tmp_path, "baseline-writer", client, config, identity, vault_key)
+        for index in range(3):
+            add_entry(type("Holder", (), {"store": store, "backend": backend})(), f"api-{index}", "synthetic")
+            assert writer.push() == 1
+        queries.clear()
+        reader, read_store, read_backend = make_engine(tmp_path, "baseline-reader", client, config, identity, vault_key)
+        assert reader.pull() == 3
+        lists = [query for query in queries if re.fullmatch(r"/v1/vaults/[^/]+/commits\?.*", query)]
+        assert len(lists) == 2
+        assert "include_commit=1" in lists[0]
+        assert "include_commit" not in lists[1]
+        historical = [query for query in queries if query.endswith("?snapshot=0")]
+        assert len(historical) == 2
+        assert len(read_store.list()) == 3
+        assert all(read_backend.get(entry.id).unseal() == "synthetic" for entry in read_store.list())
 
 
 def test_real_syncd_pairing_and_encrypted_exchange(tmp_path):

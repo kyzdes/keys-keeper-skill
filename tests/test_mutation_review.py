@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from _sync_fakes import FakeBackend
+from _vault_fakes import FakeBackend
 from keys_keeper.master_journal import MasterMutationManager, MasterRecoveryRequired
 from keys_keeper.models import Entry, EntryType, ValidationError
 from keys_keeper.operation_journal import OperationJournal

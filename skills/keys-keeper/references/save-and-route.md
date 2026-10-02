@@ -40,7 +40,7 @@ Presence, successful resolution, and external service validity are three differe
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
-- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.push`, `sync.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
+- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.vps.push`, `sync.vps.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
 - The web admin's `/audit` page has the same data plus charts; either is fine.
 
 ## Search & discovery

@@ -106,6 +106,57 @@ def test_commit_list_limit_matches_server_contract():
         _client().list_commits("vault", limit=101)
 
 
+def test_optional_history_queries_preserve_default_wire_shapes(monkeypatch):
+    captured, _ = _install_capture(monkeypatch)
+    client = _client()
+    client.get_commit("vault", "head")
+    client.get_commit("vault", "old", include_snapshot=False)
+    client.list_commits("vault", after_sequence=100, include_commit=True)
+    client.list_commits("vault", after_sequence=100)
+    assert [req.full_url for req, *_ in captured] == [
+        "https://sync.example.test/v1/vaults/vault/commits/head",
+        "https://sync.example.test/v1/vaults/vault/commits/old?snapshot=0",
+        "https://sync.example.test/v1/vaults/vault/commits?limit=100&after_sequence=100&include_commit=1",
+        "https://sync.example.test/v1/vaults/vault/commits?limit=100&after_sequence=100",
+    ]
+
+
+@pytest.mark.parametrize("option,value", [("timeout", float("nan")), ("timeout", float("inf")),
+                                        ("timeout", True), ("max_response_bytes", True),
+                                        ("max_request_bytes", 1.5), ("proxy", False)])
+def test_nonfinite_or_ambiguous_transport_limits_fail_before_network(option, value):
+    with pytest.raises(vc.VpsConfigurationError):
+        _client(**{option: value})
+
+
+def test_invalid_device_header_fails_before_token_provider(monkeypatch):
+    client = _client(device_id="malformed\nidentity", token=lambda: pytest.fail("provider was read"))
+    monkeypatch.setattr(vc, "urlopen", lambda *_args, **_kwargs: pytest.fail("network was reached"))
+    with pytest.raises(vc.VpsConfigurationError):
+        client.get_head("vault")
+
+
+def test_proxy_opener_cache_is_bounded():
+    vc._opener_for.cache_clear()
+    try:
+        for port in range(9000, 9040):
+            vc._opener_for(f"http://127.0.0.1:{port}")
+        assert vc._opener_for.cache_info().currsize == 16
+    finally:
+        vc._opener_for.cache_clear()
+
+
+def test_http400_has_typed_safe_query_fallback_error(monkeypatch):
+    body = b'{"error":{"code":"invalid_request","message":"secret-error-must-not-leak"}}'
+    def bad_request(*_args, **_kwargs):
+        raise HTTPError("https://sync.example.test", 400, "Bad Request", {}, io.BytesIO(body))
+    monkeypatch.setattr(vc, "urlopen", bad_request)
+    with pytest.raises(vc.VpsBadRequestError) as raised:
+        _client().list_commits("vault", include_commit=True)
+    assert "secret-error-must-not-leak" not in str(raised.value)
+    assert "[invalid_request]" in str(raised.value)
+
+
 def test_token_must_be_sealed_or_callback():
     with pytest.raises(vc.VpsConfigurationError):
         vc.VpsSyncClient(base_url="https://sync.example.test", token=AUTH_TOKEN)
@@ -148,7 +199,7 @@ def test_authenticated_request_uses_device_header_and_direct_proxy(monkeypatch):
 
 def test_default_opener_bypasses_environment_proxy(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9999")
-    vc._OPENERS.clear()
+    vc._opener_for.cache_clear()
     opener = vc._opener_for("direct")
     active = [
         handler
@@ -157,7 +208,7 @@ def test_default_opener_bypasses_environment_proxy(monkeypatch):
     ]
     assert active == []
     assert any(isinstance(handler, vc._NoRedirectHandler) for handler in opener.handlers)
-    vc._OPENERS.clear()
+    vc._opener_for.cache_clear()
 
 
 def test_create_vault_uses_admin_bearer_without_device_header(monkeypatch):
@@ -331,7 +382,7 @@ def test_missing_head_is_none_but_other_404s_remain_typed(monkeypatch):
         _client().get_commit("v1", "missing")
 
 
-def test_network_error_is_redacted_even_if_provider_echoes_token(monkeypatch):
+def test_network_error_details_are_omitted_even_if_provider_echoes_token(monkeypatch):
     def fail(_req, **_kwargs):
         raise URLError(f"upstream accidentally echoed {AUTH_TOKEN}")
 
@@ -339,7 +390,8 @@ def test_network_error_is_redacted_even_if_provider_echoes_token(monkeypatch):
     with pytest.raises(vc.VpsTransportError) as raised:
         _client().get_head("v1")
     assert AUTH_TOKEN not in str(raised.value)
-    assert "<redacted>" in str(raised.value)
+    assert "upstream accidentally echoed" not in str(raised.value)
+    assert "transport failure" in str(raised.value)
 
 
 @pytest.mark.parametrize(

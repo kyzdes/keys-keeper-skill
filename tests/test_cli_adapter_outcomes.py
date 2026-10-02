@@ -150,6 +150,8 @@ def test_vps_provider_failure_is_redacted_and_audited(isolated, capsys, monkeypa
 def test_vps_revoke_local_refresh_failure_reports_remote_commit(isolated, capsys, monkeypatch):
     calls = []
     engine = SimpleNamespace(verified_head=lambda: None,
+                             signing_private_key=b"x" * 32,
+                             client=SimpleNamespace(revoke_device=lambda *_args, **_kwargs: calls.append("remote-committed")),
                              refresh_trust_anchor=lambda: (_ for _ in ()).throw(RuntimeError(SENTINEL)))
     config = SimpleNamespace(device_id="root", root_device_id="root", vault_id="vault",
                              endpoint="https://example.test")
@@ -158,8 +160,6 @@ def test_vps_revoke_local_refresh_failure_reports_remote_commit(isolated, capsys
     monkeypatch.setattr(cli_sync_vps, "make_revocation_statement", lambda **_kwargs: {})
     monkeypatch.setattr(cli_sync_vps, "_unb64", lambda *_args, **_kwargs: b"x" * 32)
     monkeypatch.setattr(cli_sync_vps, "sign_revocation", lambda *_args: "synthetic-signature")
-    monkeypatch.setattr(cli_sync_vps, "_client", lambda *_: SimpleNamespace(
-        revoke_device=lambda *_args, **_kwargs: calls.append("remote-committed")))
     assert cli_sync_vps.cmd_vps_revoke(SimpleNamespace(device_id="worker")) == 1
     assert calls == ["remote-committed"]
     assert receipt(capsys.readouterr())["committed"] is True
