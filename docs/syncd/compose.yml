@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     read_only: true
     pids_limit: 64
+    cpus: 1
+    mem_limit: 768m
     environment:
       KEYS_KEEPER_SYNC_ADMIN_TOKEN: ${KEYS_KEEPER_SYNC_ADMIN_TOKEN:?set in a mode-0600 .env file}
     volumes:

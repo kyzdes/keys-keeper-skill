@@ -1,6 +1,7 @@
 name: tests
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -82,9 +83,16 @@ jobs:
       - name: Windows installer smoke
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          KEYS_KEEPER_RELEASE_REF: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
           $env:KEYS_KEEPER_HOME = Join-Path $env:RUNNER_TEMP 'keys-installer-empty-vault'
-          ./scripts/install-windows.ps1 -Source $PWD.Path -InstallRoot (Join-Path $env:RUNNER_TEMP 'Keys Keeper Install') -NoLaunch -NoPathUpdate
+          $source = $PWD.Path
+          if ($env:KEYS_KEEPER_RELEASE_REF) {
+            if ($env:KEYS_KEEPER_RELEASE_REF -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Unexpected release ref' }
+            $source = "https://github.com/kyzdes/keys-keeper-skill/archive/refs/tags/$($env:KEYS_KEEPER_RELEASE_REF).zip"
+          }
+          ./scripts/install-windows.ps1 -Source $source -InstallRoot (Join-Path $env:RUNNER_TEMP 'Keys Keeper Install') -NoLaunch -NoPathUpdate
           Remove-Item Env:KEYS_KEEPER_HOME
 
       - name: Build native menu bar app (macOS)
@@ -194,6 +202,7 @@ jobs:
           trap 'docker rm -vf keys-keeper-relay-test >/dev/null 2>&1 || true' EXIT
           docker run -d --name keys-keeper-relay-test --read-only \
             --cap-drop=ALL --security-opt no-new-privileges --pids-limit=64 \
+            --cpus=1 --memory=768m \
             -e KEYS_KEEPER_SYNC_ADMIN_TOKEN=synthetic-ci-bootstrap-token \
             -p 127.0.0.1:18787:8787 keys-keeper-relay:test
           python - <<'PYTHON'

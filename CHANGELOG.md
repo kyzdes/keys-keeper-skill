@@ -28,6 +28,20 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ### Fixed
 
+- Device revocation persists its exact signed intent before sending, resumes
+  safely after interruption and requires matching signed evidence to confirm.
+  All KK2 proof operations share a bounded per-vault lock; verified revocations
+  survive restart even before the first commit. Safe CAS retries preserve the
+  original cutoff and signature.
+- Snapshot application compares the original presence and value of every
+  affected credential under the mutation lock before starting its journal.
+  Same-second secret rotations now cause a fresh merge instead of being lost.
+- Surviving references cannot lose their target, change its immutable ID or
+  acquire a new target after being unresolved. Full import replacement removes
+  absent optional credentials; ordinary patch semantics remain unchanged.
+- CLI, HTTP and audit agree on published, failed and unconfirmed outcomes.
+  Installation probes use `--version`; instructions accurately describe the
+  local unlock-material reads performed by configured `devices status`.
 - Snapshot merges preserve credential reference identities and assign unique
   deterministic names. Ambiguous binding changes fail before mutation.
 - VPS enrollment preserves credentials when configuration was published but
