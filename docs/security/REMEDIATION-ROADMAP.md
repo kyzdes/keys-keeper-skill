@@ -1,6 +1,9 @@
 # Security remediation roadmap
 
-Status: active in the current worktree; release status is tracked separately
+Status: historical roadmap from the v0.7.8 baseline. Targets and unresolved
+items below are dated proposals, not current release commitments. Current scope
+and validation are in the [VPS refactor](../architecture/VPS-REFACTOR-2026-10-02.md)
+and [hardening](../architecture/HARDENING-2026-10-02.md) reports.
 
 Baseline: `v0.7.8`
 

@@ -26,9 +26,9 @@ def command(args):
         return 0
     except KeyboardInterrupt:
         return 130
-    except Exception:
-        print(json.dumps({"error": "Personal sync could not complete. Open Settings → My computers."}, ensure_ascii=False))
-        return 1
+    except Exception as ex:
+        from keys_keeper.cli import _operation_failure
+        return _operation_failure("devices." + args.devices_command, ex)
 
 
 def register(sub):

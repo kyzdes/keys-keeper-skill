@@ -24,7 +24,7 @@
         <input class="text-input" id="f-tags" placeholder="comma-separated" value="{{ ','.join(entry.tags) if entry else '' }}">
       </div>
       <div class="form-row">
-        <span class="label">note</span>
+        <span class="label">description · readable metadata</span>
         <textarea class="textarea-input" id="f-note">{{ entry.note if entry else '' }}</textarea>
       </div>
     </div>

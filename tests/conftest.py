@@ -4,7 +4,9 @@ import json
 import subprocess
 import sys
 import time
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 
 
@@ -66,6 +68,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "macos: requires macOS (keychain, pbcopy, etc.)")
     config.addinivalue_line("markers", "windows: requires Windows (Credential Manager, etc.)")
     config.addinivalue_line("markers", "linux: requires Linux (Secret Service, xclip, etc.)")
+    config.addinivalue_line("markers", "native_clipboard: modifies the OS clipboard; requires KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=1")
     if metrics_path := config.getoption("--test-metrics"):
         config.pluginmanager.register(TestMetricsReporter(metrics_path), "test-metrics")
 
@@ -82,6 +85,59 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_windows)
         if "linux" in item.keywords and not plat.startswith("linux"):
             item.add_marker(skip_linux)
+
+
+@pytest.fixture(autouse=True)
+def isolated_clipboard(request):
+    """Ordinary tests never read, write or later clear the human's clipboard.
+
+    Native integration requires an explicit marker *and* opt-in environment
+    variable. Provider/helper unit tests may still replace these fakes with
+    their own fault injection; neither fake starts a native timer or process.
+    """
+    if request.node.get_closest_marker("native_clipboard"):
+        if os.environ.get("KEYS_KEEPER_TEST_NATIVE_CLIPBOARD") != "1":
+            pytest.skip("native clipboard test requires explicit KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=1")
+        yield None
+        return
+    from keys_keeper import clipboard
+    state = {"value": "", "timers": []}
+    def write(value):
+        state["value"] = value
+        return True
+    real_popen = clipboard.subprocess.Popen
+    def isolated_helper(command, *args, **kwargs):
+        if (isinstance(command, (list, tuple))
+                and "keys_keeper._clipboard_clear_daemon" in command):
+            return SimpleNamespace(stdin=BytesIO())
+        return real_popen(command, *args, **kwargs)
+    # Keep this autouse isolation independent of the test's monkeypatch
+    # fixture. Sharing it would set up monkeypatch before test_keychain and
+    # leave per-test subprocess faults active during Keychain teardown.
+    with pytest.MonkeyPatch.context() as clipboard_patch:
+        clipboard_patch.setattr(clipboard, "write", write)
+        clipboard_patch.setattr(clipboard, "read", lambda: state["value"])
+        clipboard_patch.setattr(clipboard, "clear", lambda: state.update(value=""))
+        clipboard_patch.setattr(clipboard, "_clear_scheduler", SimpleNamespace(
+            schedule=lambda digest, delay: state["timers"].append((digest, delay)),
+        ))
+        clipboard_patch.setattr(clipboard.subprocess, "Popen", isolated_helper)
+        yield state
+
+
+@pytest.fixture
+def tmp_path(tmp_path):
+    """Give empty synthetic Windows roots the privacy pytest supplies on POSIX.
+
+    The same-name dependency delegates creation/cleanup to pytest's fixture.
+    Explicit unsafe-ACL tests add their own foreign grants after this setup.
+    """
+    if os.name == "nt":
+        from keys_keeper.windows_file_security import restrict_new_object, validate_path
+        assert not any(tmp_path.iterdir()), "synthetic private test root must be empty"
+        restrict_new_object(tmp_path)
+        validate_path(tmp_path, directory=True, require_protected=True)
+    return tmp_path
 
 
 @pytest.fixture

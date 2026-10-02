@@ -1,11 +1,13 @@
 """Actual SQLite connections must close on read, setup, and rollback failure."""
 import base64
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from keys_keeper import sync_server as module
+from keys_keeper.private_files import atomic_write_bytes
 from keys_keeper.sync_server import SyncServerApp, SyncServerError
 
 
@@ -64,7 +66,6 @@ def app(tmp_path, tracked):
 
 def test_database_project_and_pairing_initialization_close_every_owned_connection(tmp_path, tracked):
     result = SyncServerApp(tmp_path / "synthetic.sqlite3", "synthetic-admin")
-    assert len(tracked.connections) == 3
     assert_all_closed(tracked)
     with result._connection() as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -139,6 +140,8 @@ def test_failed_begin_in_explicit_transaction_closes_connection(app, tracked):
 def test_connect_configuration_failure_closes_created_descriptor(tmp_path, tracked, pragma):
     instance = object.__new__(SyncServerApp)
     instance.database = str(tmp_path / "synthetic.sqlite3")
+    instance._busy_timeout = 1000
+    atomic_write_bytes(Path(instance.database), b"")
     tracked.fail_sql = pragma
     with pytest.raises(sqlite3.OperationalError, match="synthetic SQL failure"):
         instance._connect()

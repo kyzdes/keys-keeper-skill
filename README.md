@@ -6,7 +6,17 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.11.1 · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.12.0 · macOS + Windows + Linux · local-first · MIT license
+
+Version 0.12.0 removes S3 and its browser WebVault, reduces VPS
+history transfer and relay resource usage, and consolidates durable mutations,
+private file IO and request validation. See the
+[VPS refactor report](docs/architecture/VPS-REFACTOR-2026-10-02.md),
+[hardening report](docs/architecture/HARDENING-2026-10-02.md) and
+[CLI sink contract](docs/CLI-SINK-CONTRACT.md). The
+[independent review corrections](docs/architecture/REVIEW-FIXES-0.12.0.md)
+map durable revocation, concurrent rotation, reference identity, replacement
+and operation outcomes to their regression tests.
 
 v0.11.1 fixes byte-faithful macOS legacy Keychain reads, including SSH private
 keys and Unicode/multiline values. Saved values and Keychain access policies
@@ -69,9 +79,12 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 
 ### 1. Install the `keys` CLI
 
+The command below targets the prepared 0.12.0 release. Until it is published,
+use the latest published tag `v0.11.1` or install the verified candidate wheel.
+
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.1'
-keys doctor                                            # smoke check
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.12.0'
+keys --version                                        # installation check
 ```
 
 No pipx? macOS: `brew install pipx && pipx ensurepath`. Windows: `python -m pip install --user pipx && python -m pipx ensurepath`.
@@ -83,7 +96,7 @@ directory; the personal Codex skill can be installed from anywhere:
 
 | Agent | Command | What it does |
 |---|---|---|
-| **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill + auto-sync hook; fallback updater disabled by default; native marketplace update policy is independent |
+| **Claude Code** | Run as **two separate** slash commands (one at a time):<br>`/plugin marketplace add kyzdes/claude-skills`<br>then `/plugin install keys-keeper@claude-skills` | Marketplace plugin: skill; fallback updater disabled by default; native marketplace update policy is independent |
 | **Cursor** | `keys init cursor` | Writes `.cursor/rules/keys-keeper.mdc` (auto-loaded) |
 | **Aider** | `keys init aider` | Writes `CONVENTIONS.md`; prints how to wire it via `aider --read` or `.aider.conf.yml` |
 | **Codex app / CLI** | `keys init codex-skill` | Installs a personal skill at `$CODEX_HOME/skills/keys-keeper` (or `~/.codex/skills/keys-keeper`), outside Codex's versioned plugin cache; project-only fallback: `keys init codex` |
@@ -161,7 +174,7 @@ keys keychain prepare NAME          # explicit one-item ACL setup
 
 Current items that already trust Keys Keeper continue working normally. For an older item whose decrypt ACL explicitly trusts Apple's fixed `/usr/bin/security`, bypass first verifies that ACL and that the Keychain is unlocked, then uses that already-authorized path for the read. The original item is not rewritten. Unknown, locked, or untrusted ACLs fail cleanly before any compatibility process starts, so they cannot open a system window. Nothing is exported, copied, migrated, or moved. Restore the standard interactive policy with `keys keychain prompt`.
 
-Admin, WebVault-adapter, and automatic sync operations use a stricter
+Admin and automatic sync operations use a stricter
 background context: Keychain UI and the compatibility bridge are both
 disabled, regardless of the persistent prompt/bypass preference. A background
 access problem therefore returns one error instead of opening an authorization
@@ -237,35 +250,27 @@ No invitation files or SSH access on the new computer are needed. Each connected
 computer can read keys offline and submit new entries; the main computer owns
 edits, deletions and device approval. It must be running to accept new entries.
 
-The installer enables a per-user background job on macOS, Windows and Linux.
+Personal sync setup enables a per-user background job on macOS, Windows and Linux.
 Use **Sync now**, the automatic-sync switch and **Disconnect** in the same panel.
 Operational commands are `keys devices status`, `keys devices sync` and
-`keys devices autostart on`. See [setup, recovery and protocol details](docs/PERSONAL-SYNC.md).
+`keys devices autostart on`. Status returns public metadata but may read local
+unlock material to open configured sync state; use `keys --version` for a
+credential-free installation check. See [setup, recovery and protocol details](docs/PERSONAL-SYNC.md).
 
-## Legacy S3 sync
+## Removed S3 integration
 
-S3 is retained for older vaults and is collapsed under **Settings → Legacy · S3
-sync**. It does not support schema-3 catalogs. New personal setups use VPS sync.
+Version 0.12 removes S3 sync, the S3-backed browser WebVault, and their
+SessionStart synchronization hook. Existing local S3 configuration, saved
+credentials and remote bucket objects are left untouched. The old commands
+report that the feature was removed; no automatic migration or cleanup of
+vault data occurs. Use the local `keys serve` admin and VPS personal/project
+sync for supported workflows. Existing encrypted KK1 exports remain readable.
 
-`keys sync setup / push / pull / status / mode / rollback` — back up and sync your vault across machines. Connect any S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi); the whole vault is encrypted into a single AES-256-GCM blob (the same format as `keys export`) before it ever leaves the machine.
+## Legacy private VPS sync (KK2)
 
-- **Git-like versioned snapshots.** Each push writes an immutable snapshot and a plaintext commit (`{version, parent, device, ts, …}` — never an entry field or secret), with a `HEAD` cache. `keys sync rollback <version>` restores any earlier snapshot and republishes it so peers converge.
-- **Id-keyed merge, no duplicates.** Entries merge by their UUID `id` (not name) with last-write-wins on `updated_at`, so re-pulling is idempotent and two machines converge without dupes. Deletes propagate via soft-delete tombstones.
-- **Optional auto-sync.** `keys sync mode auto` enables a non-interactive SessionStart hook that pulls+pushes in a debounced, backgrounded, **fail-open** worker — any missing credential or network error exits 0 and never blocks a session. The passphrase is read from the OS keychain (set once at setup).
-
-Zero new dependencies — AWS Signature V4 is hand-rolled over the stdlib (no boto3). First-time setup (which stores the S3 access key id, secret key, and passphrase in the OS keychain) stays in the CLI; the web `/settings` Sync panel exposes status, the mode toggle, and Pull / "Sync now".
-
-### Legacy private VPS sync (KK2)
-
-`keys sync vps init / push / pull / status / invite / join / approve / finish / devices / revoke` provides a separate S3-free transport through `keys-keeper-syncd`. The VPS stores an SQLite CAS log containing only opaque AES-256-GCM snapshots, signed hash-chain commits, public device keys, and hashed bearer/invite tokens. A random VaultKey and device private keys remain in each device's OS credential store.
+`keys sync vps init / push / pull / status / invite / join / approve / finish / devices / revoke` provides the schema-2 compatibility transport through `keys-keeper-syncd`. The VPS stores an SQLite CAS log containing only opaque AES-256-GCM snapshots, signed hash-chain commits, public device keys, and hashed bearer/invite tokens. A random VaultKey and device private keys remain in each device's OS credential store.
 
 New devices use a short-lived one-time invitation, an out-of-band fingerprint comparison, an Ed25519-signed membership statement, and an X25519-wrapped VaultKey. The client pins the root device key and verifies the full chain before decrypting; device enrollment and revocation are root-only. See [the deployment and threat-model guide](docs/architecture/VPS-SYNC-KK2.md). Revocation currently blocks future server access but does not erase data already downloaded or rotate the VaultKey; the CLI reports that limitation explicitly. A malicious VPS split view still requires independent device gossip/witnessing to detect.
-
-## Zero-knowledge web vault
-
-`keys webvault serve` — open your vault from a browser. Because the cloud copy is a self-contained encrypted blob (`PBKDF2-600k → AES-256-GCM`, all native to WebCrypto), the browser fetches it and decrypts it in-page. Under the shipped, unmodified client code, the passphrase and plaintext are not sent to the server. As with any browser-delivered cryptographic app, a compromised server that can replace the JavaScript is outside that guarantee.
-
-v1 is **read-only** (unlock → view/search → reveal/copy → idle auto-lock); add/edit stay in the CLI and local admin. Self-host it via [`docs/webvault/Dockerfile`](docs/webvault/Dockerfile), or fall back to your local `keys sync` config for a quick demo.
 
 ## Architecture
 
@@ -276,7 +281,7 @@ v1 is **read-only** (unlock → view/search → reveal/copy → idle auto-lock);
 └──────────────────┘           │  add list info reveal copy      │
                                │  inject resolve rm edit ssh     │
 ┌──────────────────┐   exec    │  serve export import audit      │
-│  Shell / scripts │ ────────► │  doctor sync webvault           │
+│  Shell / scripts │ ────────► │  doctor devices project-sync    │
 └──────────────────┘           └────┬────────────┬───────────────┘
                                     │            │
                                     ▼            ▼
@@ -306,8 +311,6 @@ Open source, accepting PRs.
 - [x] ~~**Linux backend** via `secret-tool` (libsecret), with an encrypted-file fallback for headless servers~~ — shipped in v0.5
 - [x] ~~**Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)~~ — shipped in v0.2
 - [x] ~~**Cursor / Aider / Codex / Cline rule-file generators** beyond the Claude skill format~~ — shipped in v0.3 (`keys init <target>`)
-- [x] ~~**Cloud sync** to any S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi), whole vault encrypted into one blob, git-like versioned snapshots, id-keyed merge~~ — shipped in v0.6 (`keys sync setup/push/pull/status/mode/rollback`)
-- [x] ~~**Browser-decrypted web vault** — the reviewed client decrypts the blob in-page and the normal server request path handles ciphertext only (read-only v1)~~ — shipped in v0.7 (`keys webvault serve`)
 - [x] ~~**Native macOS Keychain bypass** — in-process Security.framework access with a persistent no-dialog policy~~ — shipped in v0.7.5 (`keys keychain status/bypass/prompt`)
 - [ ] **MCP stdio server** (`keys mcp`) — typed-tool surface for any MCP-compatible client (Cursor / Cline / Codex have native MCP)
 - [ ] **Touch ID-gated reveal in admin** with auto-wipe from DOM after 10s
@@ -322,8 +325,7 @@ See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers
 ## Honest limitations
 
 - **macOS, Windows, Linux.** On a headless Linux server without a keyring daemon, the encrypted-file backend needs `KEYS_KEEPER_MASTER_KEY` in the environment to unlock.
-- **Single user.** No team / multi-user / sharing. Cloud sync (v0.6) keeps your *own* vault in step across machines via an S3 bucket; it is not a way to share secrets with someone else.
-- **Web vault is read-only (v1).** `keys webvault serve` lets you view/search/reveal/copy from a browser; adding and editing still happen in the CLI or local admin.
+- **Single user.** No team / multi-user / sharing. Personal VPS sync keeps your own computers in step. Project scopes explicitly deliver selected entries to enrolled workers.
 - **Bulk paste cleanly handles `api_key` only.** Other types need their type-specific fields filled by hand or via `+ New` in the admin.
 - **The `caller_path` in audit log** is a best-effort executable identity without argv; useful context, not forensic proof.
 - **Same-user shell access is outside the current boundary.** A process running as you can set the reveal environment variable, read clipboard/file sinks, or invoke OS credential tooling directly.

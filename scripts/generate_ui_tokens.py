@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the shared admin/WebVault theme-token CSS prefixes."""
+"""Generate the admin theme-token CSS prefixes."""
 
 from __future__ import annotations
 

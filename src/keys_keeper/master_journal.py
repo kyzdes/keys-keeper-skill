@@ -1,4 +1,4 @@
-"""Durable schema-v3 mutations for the existing master vault.
+"""One durable mutation pipeline for standalone and project master vaults.
 
 The OS credential backends are not transactional.  This module therefore
 records encrypted before/after images before touching a secret account and
@@ -8,15 +8,18 @@ delete and recreate an item, preserving native item identity and ACL semantics.
 """
 from __future__ import annotations
 
+import base64
 import copy
 import re
+import secrets as random_secrets
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from keys_keeper.backend import KeychainBackend
-from keys_keeper.models import Entry
+from keys_keeper.models import (Entry, ValidationError, entry_requires_secret,
+                               validate_entry_id, validate_name, validate_tombstone)
 from keys_keeper.operation_journal import (
     JournalNotFound,
     OperationJournal,
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
 
 
 MASTER_MUTATION_KIND = "master_mutation"
+MASTER_UNLOCK_ACCOUNT = "kk:project-runtime-key"
 _STATE_SCHEMA = 1
 
 
@@ -42,6 +46,33 @@ class MasterMutationRequired(RuntimeError):
 
 class MasterRecoveryRequired(RuntimeError):
     """A pending master mutation cannot be safely completed automatically."""
+
+
+def master_unlock_material(paths: Paths, backend: KeychainBackend, *, create=False) -> str:
+    """One reserved authority key for standalone and project mutations."""
+    with profile_lock(Paths(paths.root / "registry-lock")):
+        if MASTER_UNLOCK_ACCOUNT not in backend.list_ids():
+            if not create:
+                raise MasterRecoveryRequired("master project runtime is not initialized")
+            backend.set(MASTER_UNLOCK_ACCOUNT, base64.urlsafe_b64encode(
+                random_secrets.token_bytes(32)).rstrip(b"=").decode("ascii"))
+        raw = backend.get(MASTER_UNLOCK_ACCOUNT).unseal()
+        try:
+            if not isinstance(raw, str) or len(raw) != 43:
+                raise ValueError("invalid material")
+            decoded = base64.b64decode(raw + "=", altchars=b"-_", validate=True)
+            if (len(decoded) != 32
+                    or base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != raw):
+                raise ValueError("invalid material")
+        except (ValueError, UnicodeError):
+            raise MasterRecoveryRequired("master unlock material is invalid") from None
+        return raw
+
+
+def compose_master_mutations(store: MetadataStore, backend: KeychainBackend):
+    journal = OperationJournal(paths=store.paths, password_provider=lambda:
+        master_unlock_material(store.paths, backend, create=True))
+    return MasterMutationManager(store, backend, journal)
 
 
 def assert_no_pending(paths: Paths) -> None:
@@ -94,130 +125,177 @@ class MasterMutationManager:
     def assert_projection_ready(self) -> None:
         assert_no_pending(self.journal.paths)
 
-    def create_entry(
-        self,
-        entry: Entry,
-        *,
-        secrets: "SecretInput | None" = None,
-        replace: bool = False,
-    ) -> Entry:
+    def _transact(self, prepare):
+        """One journal/metadata/backend pipeline for every mutation shape."""
         with self.journal.locked():
-            with self.store.transaction() as tx:
-                catalog_before = _require_catalog(tx)
-                existing = tx.get_by_name(entry.name)
-                if existing is not None and not replace:
-                    raise NameConflict(
-                        f"entry with name {entry.name!r} already exists "
-                        f"(use --replace to overwrite or --rename to pick a new name)"
-                    )
-                if existing is not None:
-                    entry.id = existing.id
-                    _preserve_catalog_attributes(entry, existing)
-                elif entry.provenance is None:
-                    # Match the schema-v3 store's persisted normalization so
-                    # recovery can recognize the committed after-image.
+            record = None
+            try:
+                with self.store.transaction() as tx:
+                    state, result = prepare(tx)
+                    state = _validate_state(state)
+                    _validate_required_secrets(state, self.backend)
+                    # Prepare the entire metadata change in memory first.
+                    # Name, folder and catalog failures must be known before
+                    # either a durable pending marker or backend writes exist.
+                    _apply_metadata(tx, state)
+                    tx._commit()
+                    state["after_revision"] = tx.revision()
+                    record = self.journal.begin(MASTER_MUTATION_KIND, state=state)
+                    self._execute_inside_transaction(record, tx)
+            except BaseException as cause:
+                if record is not None:
+                    latest = self.journal.read(record.operation_id)
+                    if not latest.finished:
+                        state = _validate_state(latest.state)
+                        # A metadata write can report failure after replacement.
+                        # Restore only when the old revision is still proven.
+                        if self.store.snapshot().revision == state["before_revision"]:
+                            failures = _restore_accounts(self.backend, state["accounts_before"])
+                            if failures:
+                                from keys_keeper.service import IncompleteRollback
+                                raise IncompleteRollback(failures) from cause
+                            self.journal.fail(record.operation_id, error_code="operation_failed")
+                raise
+            self._commit_record(record.operation_id)
+            return result
+
+    def create_entry(self, entry: Entry, *, secrets=None, replace: bool = False) -> Entry:
+        def prepare(tx):
+            catalog = _require_catalog(tx)
+            existing = tx.get_by_name(entry.name)
+            if existing is not None and not replace:
+                raise NameConflict("entry name already exists; use --replace or a different name")
+            if existing is None and tx.get_by_id(entry.id) is not None:
+                raise NameConflict("entry id already exists; choose a new entry identity")
+            if existing is not None:
+                entry.id = existing.id
+                _preserve_catalog_attributes(entry, existing)
+            if catalog is not None:
+                if entry.provenance is None:
                     entry.provenance = {"source": "local"}
                 entry.content_revision = str(uuid.uuid4())
-                catalog_after = _catalog_with_intents(
-                    catalog_before,
-                    entry,
-                    reason="entry_replaced" if existing is not None else None,
-                )
-                accounts_after = _writes_for(entry.id, secrets)
-                state = self._state(
-                    action="create",
-                    before_revision=tx.revision(),
-                    entry_before=None if existing is None else existing,
-                    entry_after=entry,
-                    dependents_before=[],
-                    dependents_after=[],
-                    catalog_before=catalog_before,
-                    catalog_after=catalog_after,
-                    accounts_after=accounts_after,
-                )
-                record = self.journal.begin(MASTER_MUTATION_KIND, state=state)
-                self._execute_inside_transaction(record, tx)
-            self._commit_record(record.operation_id)
-        return entry
+            return self._state(
+                action="create", before_revision=tx.revision(),
+                entry_before=existing, entry_after=entry,
+                dependents_before=[], dependents_after=[],
+                catalog_before=catalog, catalog_after=_catalog_with_intents(
+                    catalog, entry, reason="entry_replaced" if existing else None),
+                accounts_after=_writes_for(entry.id, secrets)), entry
+        return self._transact(prepare)
 
-    def update_entry(
-        self,
-        entry: Entry,
-        *,
-        secrets: "SecretInput | None" = None,
-    ) -> Entry:
-        with self.journal.locked():
-            with self.store.transaction() as tx:
-                catalog_before = _require_catalog(tx)
-                existing = tx.get_by_id(entry.id)
-                if existing is None:
-                    raise NotFound(f"no entry with id {entry.id}")
-                _preserve_catalog_attributes(entry, existing)
+    def update_entry(self, entry: Entry, *, secrets=None) -> Entry:
+        def prepare(tx):
+            catalog = _require_catalog(tx)
+            existing = tx.get_by_id(entry.id)
+            if existing is None:
+                raise NotFound("entry does not exist")
+            tx.assert_rename_safe(entry)
+            _preserve_catalog_attributes(entry, existing)
+            if catalog is not None:
                 entry.content_revision = str(uuid.uuid4())
-                catalog_after = _catalog_with_intents(
-                    catalog_before, entry, reason="entry_updated"
-                )
-                state = self._state(
-                    action="update",
-                    before_revision=tx.revision(),
-                    entry_before=existing,
-                    entry_after=entry,
-                    dependents_before=[],
-                    dependents_after=[],
-                    catalog_before=catalog_before,
-                    catalog_after=catalog_after,
-                    accounts_after=_writes_for(entry.id, secrets),
-                )
-                record = self.journal.begin(MASTER_MUTATION_KIND, state=state)
-                self._execute_inside_transaction(record, tx)
-            self._commit_record(record.operation_id)
-        return entry
+            return self._state(
+                action="update", before_revision=tx.revision(),
+                entry_before=existing, entry_after=entry,
+                dependents_before=[], dependents_after=[],
+                catalog_before=catalog, catalog_after=_catalog_with_intents(
+                    catalog, entry, reason="entry_updated"),
+                accounts_after=_writes_for(entry.id, secrets)), entry
+        return self._transact(prepare)
 
-    def delete_entry(self, name_or_id: str, *, cascade: bool = False) -> "DeleteResult":
+    def delete_entry(self, name_or_id: str, *, cascade: bool = False):
         from keys_keeper.service import DeleteResult, HasDependents
+        def prepare(tx):
+            catalog = _require_catalog(tx)
+            entry = tx.get_by_id(name_or_id) or tx.get_by_name(name_or_id)
+            if entry is None:
+                raise NotFound("entry does not exist")
+            before = [candidate for candidate in tx.list()
+                      if any(ref.get("name") == entry.name for ref in candidate.refs)]
+            if before and not cascade:
+                raise HasDependents([item.name for item in before])
+            after = [copy.deepcopy(item) for item in before]
+            updated_catalog = _catalog_after_delete(catalog, entry)
+            for dependent in after:
+                dependent.refs = [ref for ref in dependent.refs if ref.get("name") != entry.name]
+                if catalog is not None:
+                    dependent.content_revision = str(uuid.uuid4())
+                    updated_catalog = _catalog_with_intents(updated_catalog, dependent, reason="entry_updated")
+            return self._state(
+                action="delete", before_revision=tx.revision(),
+                entry_before=entry, entry_after=None,
+                dependents_before=before, dependents_after=after,
+                catalog_before=catalog, catalog_after=updated_catalog,
+                accounts_after={entry.id: {"present": False},
+                                entry.id + ":passphrase": {"present": False}}), DeleteResult(entry, [item.name for item in before])
+        return self._transact(prepare)
 
-        with self.journal.locked():
-            with self.store.transaction() as tx:
-                catalog_before = _require_catalog(tx)
-                entry = tx.get_by_id(name_or_id) or tx.get_by_name(name_or_id)
-                if entry is None:
-                    raise NotFound(f"no entry named {name_or_id!r}")
-                dependents_before = [
-                    candidate
-                    for candidate in tx.list()
-                    if any(ref.get("name") == entry.name for ref in candidate.refs)
-                ]
-                if dependents_before and not cascade:
-                    raise HasDependents([item.name for item in dependents_before])
-                dependents_after = [copy.deepcopy(item) for item in dependents_before]
-                for dependent in dependents_after:
-                    dependent.refs = [
-                        ref for ref in dependent.refs if ref.get("name") != entry.name
-                    ]
-                catalog_after = _catalog_after_delete(catalog_before, entry)
-                state = self._state(
-                    action="delete",
-                    before_revision=tx.revision(),
-                    entry_before=entry,
-                    entry_after=None,
-                    dependents_before=dependents_before,
-                    dependents_after=dependents_after,
-                    catalog_before=catalog_before,
-                    catalog_after=catalog_after,
-                    accounts_after={
-                        entry.id: {"present": False},
-                        entry.id + ":passphrase": {"present": False},
-                    },
-                )
-                record = self.journal.begin(MASTER_MUTATION_KIND, state=state)
-                self._execute_inside_transaction(record, tx)
-            self._commit_record(record.operation_id)
-        return DeleteResult(entry, [item.name for item in dependents_before])
+    def bulk_create(self, items):
+        prepared = list(items)
+        def prepare(tx):
+            from keys_keeper.store import MetadataTransaction
+            before = _metadata_image(tx)
+            staged = MetadataTransaction(copy.deepcopy(before))
+            writes = {}
+            for entry, secret in prepared:
+                if tx.schema_version >= 3:
+                    entry.provenance = entry.provenance or {"source": "local"}
+                    entry.content_revision = str(uuid.uuid4())
+                staged.add(entry)
+                writes.update(_writes_for(entry.id, secret))
+            return self._replacement_state(tx, before, _metadata_image(staged), writes), [entry for entry, _ in prepared]
+        return self._transact(prepare)
+
+    def apply_snapshot(self, entries, tombstones, *, secret_writes, secret_deletes,
+                       expected_revision, expected_accounts):
+        # Capture caller-owned input before acquiring the mutation boundary.
+        # These preimages come from the prepared snapshot, never a fresh read.
+        try:
+            expected_accounts = _validate_account_images(dict(expected_accounts))
+        except (TypeError, ValueError, MasterRecoveryRequired):
+            raise ValueError("snapshot account preconditions are invalid") from None
+
+        def prepare(tx):
+            from keys_keeper.service import ConcurrentMutation
+            from keys_keeper.store import MetadataTransaction
+            if tx.schema_version >= 3:
+                raise MasterMutationRequired("legacy snapshot apply is disabled for catalog schema 3")
+            if tx.revision() != expected_revision:
+                raise ConcurrentMutation("local metadata changed while preparing the snapshot")
+            before = _metadata_image(tx)
+            staged = MetadataTransaction(copy.deepcopy(before))
+            staged.replace_all(entries, tombstones)
+            writes = {account: {"present": True, "value": value} for account, value in secret_writes.items()}
+            deletes = set(secret_deletes)
+            if deletes.intersection(writes):
+                raise ValueError("an account cannot be written and deleted in the same snapshot")
+            writes.update({account: {"present": False} for account in deletes})
+            if set(expected_accounts) != set(writes):
+                raise ValueError("snapshot account preconditions must cover exactly the changed accounts")
+            state = self._replacement_state(tx, before, _metadata_image(staged), writes)
+            # _replacement_state already reads these values for recovery, under
+            # both locks. Reuse that read before _transact can begin a journal
+            # record or change metadata/backend state. Timestamp precision is
+            # irrelevant, including for schema-2 secret-only rotations.
+            if state["accounts_before"] != expected_accounts:
+                raise ConcurrentMutation("local secrets changed while preparing the snapshot")
+            return state, None
+        return self._transact(prepare)
+
+    def _replacement_state(self, tx, before, after, accounts_after):
+        state = {"schema_version": 2, "action": "replace_all",
+                 "before_revision": tx.revision(), "after_revision": None,
+                 "metadata_before": before, "metadata_after": after,
+                 "accounts_before": _snapshot_accounts(self.backend, accounts_after),
+                 "accounts_after": accounts_after}
+        return _validate_state(state)
 
     def recover(self) -> list[OperationRecord]:
         """Complete every indexed master mutation before sync or UI starts."""
         recovered: list[OperationRecord] = []
         with self.journal.locked():
+            # Apply type/count/aggregate ceilings before indexed records can
+            # derive a key or replay a backend side effect.
+            self.journal._recovery_snapshot(migration=True)
             refs = self.journal.pending_refs(kind=MASTER_MUTATION_KIND)
             for ref in refs:
                 try:
@@ -261,8 +339,8 @@ class MasterMutationManager:
         entry_after: Entry | None,
         dependents_before: list[Entry],
         dependents_after: list[Entry],
-        catalog_before: dict,
-        catalog_after: dict,
+        catalog_before: dict | None,
+        catalog_after: dict | None,
         accounts_after: dict[str, dict[str, object]],
     ) -> dict:
         accounts_before = _snapshot_accounts(self.backend, accounts_after)
@@ -286,10 +364,6 @@ class MasterMutationManager:
         try:
             _apply_accounts(self.backend, state["accounts_after"])
             self.journal.stage(record.operation_id, "backend_applied")
-            _apply_metadata(tx, state)
-            # Store normalization of safe v3 defaults happens at commit.  The
-            # exact durable revision is recorded by _commit_record afterwards.
-            state["after_revision"] = None
             self.journal.stage(
                 record.operation_id, "metadata_prepared", state=state
             )
@@ -313,12 +387,20 @@ class MasterMutationManager:
         # after revision before closing it.
         record = self.journal.read(operation_id)
         state = _validate_state(record.state)
-        state["after_revision"] = self.store.snapshot().revision
-        self.journal.stage(operation_id, "metadata_committed", state=state)
-        return self.journal.finish(operation_id, result={"status": "applied"})
+        with self.store.read_transaction() as tx:
+            if (not _metadata_matches_after(tx, state)
+                    or (state["after_revision"] is not None
+                        and tx.revision() != state["after_revision"])):
+                raise MasterRecoveryRequired("master metadata diverged after mutation commit")
+            # Older pending records did not store a prepared revision. They can
+            # be bound only after their complete after images have been proven.
+            state["after_revision"] = tx.revision()
+            self.journal.stage(operation_id, "metadata_committed", state=state)
+            return self.journal.finish(operation_id, result={"status": "applied"})
 
     def _recover_record(self, record: OperationRecord) -> OperationRecord:
         state = _validate_state(record.state)
+        _validate_required_secrets(state, self.backend)
         with self.store.transaction() as tx:
             current_revision = tx.revision()
             after_revision = state["after_revision"]
@@ -327,10 +409,11 @@ class MasterMutationManager:
             ) or _metadata_matches_after(tx, state):
                 _apply_accounts(self.backend, state["accounts_after"])
             elif current_revision == state["before_revision"]:
+                _apply_metadata(tx, state)
+                tx._commit()
+                state["after_revision"] = tx.revision()
                 _apply_accounts(self.backend, state["accounts_after"])
                 self.journal.stage(record.operation_id, "backend_applied")
-                _apply_metadata(tx, state)
-                state["after_revision"] = None
                 self.journal.stage(
                     record.operation_id, "metadata_prepared", state=state
                 )
@@ -341,15 +424,8 @@ class MasterMutationManager:
         return self._commit_record(record.operation_id)
 
 
-def _require_catalog(tx) -> dict:
-    try:
-        return tx.catalog_state()
-    except StoreError as ex:
-        if "explicit schema-v3 migration" in str(ex):
-            raise MasterMutationRequired(
-                "durable master mutations require catalog schema 3"
-            ) from ex
-        raise
+def _require_catalog(tx) -> dict | None:
+    return tx.catalog_state() if tx.schema_version >= 3 else None
 
 
 def _preserve_catalog_attributes(entry: Entry, existing: Entry) -> None:
@@ -359,7 +435,9 @@ def _preserve_catalog_attributes(entry: Entry, existing: Entry) -> None:
     entry.content_revision = existing.content_revision
 
 
-def _catalog_with_intents(catalog: dict, entry: Entry, *, reason: str | None) -> dict:
+def _catalog_with_intents(catalog: dict | None, entry: Entry, *, reason: str | None) -> dict | None:
+    if catalog is None:
+        return None
     result = copy.deepcopy(catalog)
     if reason is None:
         return result
@@ -378,7 +456,9 @@ def _catalog_with_intents(catalog: dict, entry: Entry, *, reason: str | None) ->
     return result
 
 
-def _catalog_after_delete(catalog: dict, entry: Entry) -> dict:
+def _catalog_after_delete(catalog: dict | None, entry: Entry) -> dict | None:
+    if catalog is None:
+        return None
     result = copy.deepcopy(catalog)
     affected = [item for item in result["bindings"] if item["entry_id"] == entry.id]
     result["bindings"] = [item for item in result["bindings"] if item["entry_id"] != entry.id]
@@ -401,14 +481,33 @@ def _writes_for(entry_id: str, secrets: "SecretInput | None") -> dict[str, dict[
     result: dict[str, dict[str, object]] = {}
     if secrets is None:
         return result
-    if secrets.value is not None:
-        result[entry_id] = {"present": True, "value": secrets.value}
-    if secrets.passphrase is not None:
-        result[entry_id + ":passphrase"] = {
-            "present": True,
-            "value": secrets.passphrase,
-        }
+    for account, value in ((entry_id, secrets.value),
+                           (entry_id + ":passphrase", secrets.passphrase)):
+        if value is not None:
+            result[account] = {"present": True, "value": value}
+        elif secrets.mode == "replace":
+            result[account] = {"present": False}
     return result
+
+
+def _validate_required_secrets(state: dict, backend: KeychainBackend) -> None:
+    """Reject incomplete new/updated entries before a pending journal exists."""
+    entries = (state["metadata_after"]["entries"] if state["action"] == "replace_all"
+               else [state["entry_after"]] if state["entry_after"] is not None else [])
+    required = [entry.id for raw in entries if entry_requires_secret(entry := _entry(raw))]
+    if not required:
+        return
+    existing = None
+    for account in required:
+        desired = state["accounts_after"].get(account)
+        if desired is not None:
+            present = desired["present"]
+        else:
+            if existing is None:
+                existing = set(backend.list_ids())
+            present = account in existing
+        if not present:
+            raise ValidationError("entry requires a secret value")
 
 
 def _snapshot_accounts(
@@ -459,12 +558,26 @@ def _entry_dict(entry: Entry | None) -> dict | None:
     return None if entry is None else copy.deepcopy(entry.to_dict())
 
 
-def _entry(value: object, *, optional: bool = False) -> Entry | None:
+def _entry(value: object, *, optional: bool = False, legacy: bool = False) -> Entry | None:
     if value is None and optional:
         return None
     if not isinstance(value, dict):
         raise MasterRecoveryRequired("master mutation entry image is invalid")
     try:
+        if legacy:
+            # A before image describes existing data, not a new publication.
+            # Permit explicit repair of old field shapes while retaining the
+            # identity/container checks needed for exact source comparisons.
+            validate_entry_id(value.get("id"))
+            validate_name(value.get("name"))
+            if (not isinstance(value.get("fields", {}), dict)
+                    or not isinstance(value.get("tags", []), list)
+                    or not isinstance(value.get("refs", []), list)
+                    or any(not isinstance(ref, dict) for ref in value.get("refs", []))
+                    or not isinstance(value.get("created_at"), str)
+                    or not isinstance(value.get("updated_at"), str)):
+                raise ValueError("invalid legacy container")
+            return Entry.from_dict(value)
         return Entry.from_untrusted_dict(value, allow_project_fields=True)
     except Exception as ex:
         raise MasterRecoveryRequired("master mutation entry image is invalid") from ex
@@ -491,6 +604,8 @@ def _validate_account_images(value: object) -> dict[str, dict[str, object]]:
 
 
 def _validate_state(value: Mapping[str, object]) -> dict:
+    if isinstance(value, Mapping) and value.get("schema_version") == 2:
+        return _validate_replacement_state(value)
     expected = {
         "schema_version", "action", "before_revision", "after_revision",
         "entry_before", "entry_after", "dependents_before", "dependents_after",
@@ -513,16 +628,16 @@ def _validate_state(value: Mapping[str, object]) -> dict:
         or not re.fullmatch(r"[0-9a-f]{64}", state["after_revision"])
     ):
         raise MasterRecoveryRequired("master mutation revision is invalid")
-    before = _entry(state["entry_before"], optional=True)
+    before = _entry(state["entry_before"], optional=True, legacy=True)
     after = _entry(state["entry_after"], optional=True)
     for field in ("dependents_before", "dependents_after"):
         if not isinstance(state[field], list):
             raise MasterRecoveryRequired("master mutation dependent image is invalid")
         for item in state[field]:
-            _entry(item)
-    if not isinstance(state["catalog_before"], dict) or not isinstance(
-        state["catalog_after"], dict
-    ):
+            _entry(item, legacy=field == "dependents_before")
+    if not ((state["catalog_before"] is None and state["catalog_after"] is None)
+            or (isinstance(state["catalog_before"], dict)
+                and isinstance(state["catalog_after"], dict))):
         raise MasterRecoveryRequired("master mutation catalog image is invalid")
     state["accounts_before"] = _validate_account_images(state["accounts_before"])
     state["accounts_after"] = _validate_account_images(state["accounts_after"])
@@ -544,7 +659,7 @@ def _validate_state(value: Mapping[str, object]) -> dict:
         if before is None or after is not None:
             raise MasterRecoveryRequired("master delete journal state is invalid")
         dependent_before = [
-            _entry(item) for item in state["dependents_before"]
+            _entry(item, legacy=True) for item in state["dependents_before"]
         ]
         dependent_after = [
             _entry(item) for item in state["dependents_after"]
@@ -564,7 +679,15 @@ def _validate_state(value: Mapping[str, object]) -> dict:
 
 
 def _apply_metadata(tx, state: dict) -> None:
-    before = _entry(state["entry_before"], optional=True)
+    if state["action"] == "replace_all":
+        if _metadata_image(tx) != state["metadata_before"]:
+            raise MasterRecoveryRequired("master snapshot source changed")
+        after = state["metadata_after"]
+        tx.replace_all([_entry(item) for item in after["entries"]], after["tombstones"])
+        if after["schema_version"] >= 3:
+            tx.set_catalog_state(after["catalog"])
+        return
+    before = _entry(state["entry_before"], optional=True, legacy=True)
     after = _entry(state["entry_after"], optional=True)
     action = state["action"]
     if action == "create":
@@ -593,7 +716,7 @@ def _apply_metadata(tx, state: dict) -> None:
         for dependent_before_raw, dependent_after_raw in zip(
             state["dependents_before"], state["dependents_after"], strict=True
         ):
-            dependent_before = _entry(dependent_before_raw)
+            dependent_before = _entry(dependent_before_raw, legacy=True)
             dependent_after = _entry(dependent_after_raw)
             assert dependent_before is not None and dependent_after is not None
             current_dependent = tx.get_by_id(dependent_before.id)
@@ -604,12 +727,15 @@ def _apply_metadata(tx, state: dict) -> None:
                 raise MasterRecoveryRequired("master delete dependent changed")
             tx.update(dependent_after)
         tx.delete_by_name(before.name)
-    tx.set_catalog_state(state["catalog_after"])
+    if state["catalog_after"] is not None:
+        tx.set_catalog_state(state["catalog_after"])
 
 
 def _metadata_matches_after(tx, state: dict) -> bool:
+    if state["action"] == "replace_all":
+        return _metadata_image(tx) == state["metadata_after"]
     after = _entry(state["entry_after"], optional=True)
-    before = _entry(state["entry_before"], optional=True)
+    before = _entry(state["entry_before"], optional=True, legacy=True)
     if state["action"] == "delete":
         assert before is not None
         if tx.get_by_id(before.id) is not None:
@@ -626,6 +752,68 @@ def _metadata_matches_after(tx, state: dict) -> bool:
         if current is None or current.to_dict() != after.to_dict():
             return False
     try:
-        return tx.catalog_state() == state["catalog_after"]
+        return _require_catalog(tx) == state["catalog_after"]
     except StoreError:
         return False
+
+
+def _metadata_image(tx) -> dict:
+    result = {"schema_version": tx.schema_version,
+              "entries": [entry.to_dict() for entry in tx.list()],
+              "tombstones": tx.tombstones()}
+    if tx.schema_version >= 3:
+        result["catalog"] = tx.catalog_state()
+    return result
+
+
+def _validate_metadata_image(value, *, legacy: bool = False) -> dict:
+    if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+            or value["schema_version"] not in {2, 3}):
+        raise MasterRecoveryRequired("master metadata image is invalid")
+    expected = {"schema_version", "entries", "tombstones"}
+    if value["schema_version"] == 3:
+        expected.add("catalog")
+    if (set(value) != expected or not isinstance(value["entries"], list)
+            or len(value["entries"]) > 10_000 or not isinstance(value["tombstones"], list)
+            or len(value["tombstones"]) > 20_000):
+        raise MasterRecoveryRequired("master metadata image is invalid")
+    entries = [_entry(item, legacy=legacy) for item in value["entries"]]
+    if (len({entry.id for entry in entries}) != len(entries)
+            or len({entry.name for entry in entries}) != len(entries)):
+        raise MasterRecoveryRequired("master metadata image has ambiguous identities")
+    try:
+        for item in value["tombstones"]:
+            validate_tombstone(item)
+        if value["schema_version"] == 3:
+            from keys_keeper.project_models import CatalogState
+            CatalogState.from_dict(value["catalog"], entry_ids={entry.id for entry in entries})
+    except ValueError:
+        raise MasterRecoveryRequired("master metadata image is invalid") from None
+    return copy.deepcopy(value)
+
+
+def _validate_replacement_state(value: Mapping) -> dict:
+    expected = {"schema_version", "action", "before_revision", "after_revision",
+                "metadata_before", "metadata_after", "accounts_before", "accounts_after"}
+    if set(value) != expected or value["action"] != "replace_all":
+        raise MasterRecoveryRequired("master snapshot journal state is invalid")
+    state = copy.deepcopy(dict(value))
+    for field in ("before_revision", "after_revision"):
+        if field == "after_revision" and state[field] is None:
+            continue
+        if not isinstance(state[field], str) or not re.fullmatch(r"[0-9a-f]{64}", state[field]):
+            raise MasterRecoveryRequired("master mutation revision is invalid")
+    state["metadata_before"] = _validate_metadata_image(state["metadata_before"], legacy=True)
+    state["metadata_after"] = _validate_metadata_image(state["metadata_after"])
+    if state["metadata_before"]["schema_version"] != state["metadata_after"]["schema_version"]:
+        raise MasterRecoveryRequired("snapshot cannot migrate the metadata schema")
+    state["accounts_before"] = _validate_account_images(state["accounts_before"])
+    state["accounts_after"] = _validate_account_images(state["accounts_after"])
+    if set(state["accounts_before"]) != set(state["accounts_after"]):
+        raise MasterRecoveryRequired("master snapshot account images are incomplete")
+    ids = {item["id"] for side in ("metadata_before", "metadata_after")
+           for item in state[side]["entries"] + state[side]["tombstones"]}
+    allowed = ids | {identifier + ":passphrase" for identifier in ids}
+    if not set(state["accounts_after"]).issubset(allowed):
+        raise MasterRecoveryRequired("master snapshot account identity is invalid")
+    return state

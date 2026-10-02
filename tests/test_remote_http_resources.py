@@ -9,8 +9,6 @@ from unittest.mock import Mock
 import pytest
 
 from keys_keeper.sync_server import SyncServerApp, create_http_server
-from keys_keeper.webvault.server import WebVaultServer
-from keys_keeper.webvault import server as webvault_module
 
 
 @contextmanager
@@ -49,20 +47,13 @@ def test_v1_preflight_rejects_no_body_requests_immediately(tmp_path, path, heade
             connection.close()
 
 
-@pytest.mark.parametrize("kind", ["sync", "webvault"])
 @pytest.mark.parametrize("part", ["headers", "body"])
-def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, monkeypatch, kind, part):
+def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, monkeypatch, part):
     app_work = Mock(side_effect=AssertionError("incomplete input reached application work"))
-    if kind == "sync":
-        app = SyncServerApp(tmp_path / "relay.sqlite3", "synthetic-admin")
-        monkeypatch.setattr(app, "create_vault", app_work)
-        server = create_http_server(app)
-        path, auth = "/v1/vaults", b"Authorization: Bearer synthetic-admin\r\n"
-    else:
-        app = WebVaultServer(data_dir=tmp_path / "web", port=0)
-        monkeypatch.setattr(app.accounts, "get", app_work)
-        server = app.create_http_server()
-        path, auth = "/auth/params", b""
+    app = SyncServerApp(tmp_path / "relay.sqlite3", "synthetic-admin")
+    monkeypatch.setattr(app, "create_vault", app_work)
+    server = create_http_server(app)
+    path, auth = "/v1/vaults", b"Authorization: Bearer synthetic-admin\r\n"
     server.request_timeout = .2
     handler_done = threading.Event()
     process_request_thread = server.process_request_thread
@@ -114,39 +105,3 @@ def test_real_handlers_cumulative_input_deadline_defeats_drip(tmp_path, monkeypa
             response.read()
         finally:
             connection.close()
-
-
-@pytest.mark.parametrize("extra", [b"Content-Length: 2\r\nContent-Length: 2\r\n",
-                                   b"Transfer-Encoding: chunked\r\n",
-                                   b"Content-Length: -1\r\n"])
-def test_webvault_ambiguous_framing_closes_without_body(tmp_path, extra):
-    app = WebVaultServer(data_dir=tmp_path / "web", port=0)
-    with listener(app.create_http_server()) as server, socket.create_connection(server.server_address, timeout=1) as peer:
-        peer.sendall(b"POST /auth/params HTTP/1.1\r\nHost: synthetic\r\n" + extra + b"\r\n")
-        received = b""
-        while chunk := peer.recv(1024):
-            received += chunk
-        assert b"400 Bad Request" in received
-
-
-@pytest.mark.parametrize("phase", ["load_cert_chain", "wrap_socket"])
-def test_webvault_tls_configuration_failure_closes_all_bound_sockets(tmp_path, monkeypatch, phase):
-    owned = []
-    constructor = webvault_module.BoundedThreadingHTTPServer
-    failure = OSError("synthetic TLS configuration failure")
-    def capture_server(*args, **kwargs):
-        server = constructor(*args, **kwargs)
-        owned.append(server)
-        return server
-    context = Mock()
-    getattr(context, phase).side_effect = failure
-    monkeypatch.setattr(webvault_module, "BoundedThreadingHTTPServer", capture_server)
-    monkeypatch.setattr(webvault_module.ssl, "SSLContext", Mock(return_value=context))
-    app = WebVaultServer(data_dir=tmp_path / "web", port=0,
-                         certfile="synthetic.pem", keyfile="synthetic-key.pem")
-    with pytest.raises(OSError) as caught:
-        app.create_http_server()
-    assert caught.value is failure and len(owned) == 1
-    server = owned[0]
-    assert server.socket.fileno() == server._cancel_reader.fileno() == server._cancel_writer.fileno() == -1
-    assert not server._connections

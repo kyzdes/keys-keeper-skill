@@ -118,6 +118,7 @@ def test_api_entries_returns_seeded_data(admin, monkeypatch):
 
 
 @pytest.mark.macos
+@pytest.mark.native_clipboard
 def test_api_copy_writes_clipboard_and_audits(admin, monkeypatch):
     _seed(monkeypatch, "copy-target", value="copy-secret-v")
     entries = json.loads(_get(admin, "/api/entries").read())["entries"]

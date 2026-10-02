@@ -580,8 +580,8 @@ def test_connections_are_bounded_before_header_worker_creation(tmp_path, monkeyp
         finally:
             second.close()
         first.close()
-        assert server._connections.acquire(timeout=3)
-        server._connections.release()
+        assert server._capacity.acquire(timeout=3)
+        server._capacity.release()
         assert request(server.server_address, "GET", "/healthz")[0] == 200
     finally:
         first.close()

@@ -7,7 +7,6 @@ complete or close it during recovery.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -36,6 +35,15 @@ _MAX_JOURNAL_BYTES = 160 * 1024 * 1024
 _MAX_INDEX_BYTES = 1024 * 1024
 _MAX_RECOVERY_RECORDS = 10_000
 _MAX_RECOVERY_BYTES = 512 * 1024 * 1024
+_RECEIPTS_NAME = "terminal-receipts.kk1"
+_MAX_RECEIPTS = 64
+_MAX_RECEIPTS_BYTES = 1024 * 1024
+_MAX_MIGRATION_RECORDS = _MAX_RECOVERY_RECORDS + _MAX_RECEIPTS
+_MAX_MIGRATION_BYTES = _MAX_RECOVERY_BYTES + _MAX_JOURNAL_BYTES
+_JOURNAL_TEMP = re.compile(
+    r"\.(?:([a-f0-9-]{36})\.enc|terminal-receipts\.kk1|pending-index\.json)"
+    r"\.[A-Za-z0-9_-]{1,64}\.tmp\Z"
+)
 
 
 class JournalError(RuntimeError):
@@ -67,6 +75,15 @@ PasswordProvider = Callable[[], str | bytes | Sealed]
 RecoveryHandler = Callable[[OperationRecord], Mapping[str, object] | None]
 
 
+def _record_data(record: OperationRecord) -> dict:
+    return {"schema": _SCHEMA, "operation_id": str(record.operation_id),
+            "kind": record.kind, "stage": record.stage, "status": record.status,
+            "created_at": record.created_at, "updated_at": record.updated_at,
+            "state": dict(record.state),
+            "result": None if record.result is None else dict(record.result),
+            "error_code": record.error_code}
+
+
 class OperationJournal:
     """Encrypted, atomic, replayable records under one profile's Paths."""
 
@@ -81,10 +98,7 @@ class OperationJournal:
         # avoid repeated PBKDF2 work. Never serialize, log, or share this cache;
         # every read still loads fresh file bytes and authenticates with GCM.
         self._derived_key_cache: tuple[bytes, bytes] | None = None
-        # One digest of an entirely authenticated terminal directory. It is
-        # only reused after rereading every secure ciphertext byte; neither
-        # pending plaintext nor file metadata can authorize a cache hit.
-        self._terminal_manifest: bytes | None = None
+        self._receipt_key_cache: tuple[bytes, bytes] | None = None
         self._thread_lock = threading.RLock()
         self._lock_depth = 0
 
@@ -136,8 +150,14 @@ class OperationJournal:
             state=_freeze_mapping(state),
         )
         with self.locked():
-            if self._record_path(op_id).exists():
+            if self._record_path(op_id).exists() or any(
+                item.operation_id == op_id for item in self._read_receipts_unlocked()
+            ):
                 raise JournalError("operation_id already exists")
+            # Key creation/authorization precedes the pending marker. Dying
+            # during reserved-key initialization cannot strand an operation
+            # whose recovery image has never been prepared.
+            self._password()
             # Publish a metadata-only pending marker first.  A process death
             # between this write and the encrypted record therefore fails
             # closed instead of allowing a projection to miss an operation
@@ -146,7 +166,14 @@ class OperationJournal:
             try:
                 self._write_unlocked(record)
             except BaseException:
-                self._remove_pending_unlocked(op_id)
+                # A parent-fsync error may follow a committed atomic replace.
+                # Keep its marker whenever any record object was published;
+                # recovery must inspect it instead of treating preparation as
+                # rolled back. Only a definitely absent image is safe to clear.
+                try:
+                    self._record_path(op_id).lstat()
+                except FileNotFoundError:
+                    self._remove_pending_unlocked(op_id)
                 raise
         return record
 
@@ -204,7 +231,10 @@ class OperationJournal:
                 if current.status == status:
                     # Reconcile a crash after the terminal encrypted record was
                     # durable but before its metadata-only marker was removed.
-                    self._remove_pending_unlocked(op_id)
+                    if self._record_path(op_id).exists():
+                        self._archive_finished_unlocked(current)
+                    else:
+                        self._remove_pending_unlocked(op_id)
                     return current
                 raise JournalError("operation is already closed")
             updated = replace(
@@ -215,81 +245,195 @@ class OperationJournal:
                 result=None if result is None else _freeze_mapping(result),
                 error_code=error_code,
             )
+            # Reject an unsupported result before terminalization or clearing
+            # its recovery marker. Also authenticate the existing ledger before
+            # any durable state change, so corruption cannot strand this close.
+            _receipt_payload([updated])
+            self._read_receipts_unlocked()
             self._write_unlocked(updated)
-            self._remove_pending_unlocked(op_id)
+            self._archive_finished_unlocked(updated)
             return updated
 
     def list_unfinished(self) -> list[OperationRecord]:
+        """Authenticate active state and compact a bounded legacy/crash tail.
+
+        The cheap migration preflight runs before any KDF. Finished history is
+        retained as at most64 small encrypted receipts, never before/after state.
+        Unindexed pending records are still discovered and consume active caps.
+        """
         with self.locked():
             try:
-                snapshot, paths = self._recovery_snapshot()
-                cached = self._terminal_manifest
-                if cached is not None:
-                    digest, _ = self._scan_recovery(paths, authenticate=False)
-                    if self._recovery_snapshot()[0] != snapshot:
-                        raise JournalError("journal directory changed during recovery scan")
-                    if digest == cached:
-                        return []
-                self._terminal_manifest = None
-                digest, records = self._scan_recovery(paths, authenticate=True)
-                if self._recovery_snapshot()[0] != snapshot:
+                snapshot, paths = self._recovery_snapshot(migration=True)
+                pending = _read_pending_index(self.paths)
+                if len(pending) > _MAX_RECOVERY_RECORDS:
+                    raise JournalError("journal recovery scan exceeds resource limit")
+                receipts = self._read_receipts_unlocked()
+                records, terminal, active_bytes = [], [], 0
+                by_id = {str(item.operation_id): item for item in receipts}
+                for path in paths:
+                    record = self._read_unlocked(UUID(path.stem))
+                    by_id[str(record.operation_id)] = record
+                    if record.finished:
+                        _receipt_payload([record])
+                        terminal.append(record)
+                    else:
+                        records.append(record)
+                        active_bytes += path.lstat().st_size
+                        if len(records) > _MAX_RECOVERY_RECORDS or active_bytes > _MAX_RECOVERY_BYTES:
+                            raise JournalError("journal recovery scan exceeds resource limit")
+                # No writes or deletion occur until every legacy record and the
+                # unchanged directory have been authenticated/inspected.
+                if self._recovery_snapshot(migration=True)[0] != snapshot:
                     raise JournalError("journal directory changed during recovery scan")
-                if not records:
-                    self._terminal_manifest = digest
+                for item in pending:
+                    record = by_id.get(item["operation_id"])
+                    if record is None or record.kind != item["kind"]:
+                        raise JournalError("pending index references unavailable operation state")
+                finished_ids = {identifier for identifier, record in by_id.items() if record.finished}
+                kept = [item for item in pending if item["operation_id"] not in finished_ids]
+                orphan_temps = [] if snapshot is None else [
+                    self.paths.operations_dir / item[0] for item in snapshot[-1]
+                    if item[0].endswith(".tmp")
+                ]
+                if terminal:
+                    receipt_map = {str(item.operation_id): item for item in receipts}
+                    receipt_map.update({str(item.operation_id): item for item in terminal})
+                    ordered = sorted(receipt_map.values(), key=lambda item: (item.updated_at, str(item.operation_id)))
+                    self._write_receipts_unlocked(ordered)
+                if kept != pending:
+                    _write_pending_index(self.paths, kept)
+                if terminal or orphan_temps:
+                    # Receipt durability and index cleanup precede removal.
+                    for record in terminal:
+                        self._record_path(record.operation_id).unlink()
+                    # Atomic writes killed before replace can leave encrypted
+                    # image temps. All durable state was just authenticated;
+                    # under the profile lock no valid writer owns these temps.
+                    # Missing/invalid indexed state fails before this cleanup.
+                    for path in orphan_temps:
+                        path.unlink()
+                    private_files.fsync_parent(self.paths.operations_dir)
                 return records
             except OSError:
-                self._terminal_manifest = None
                 raise JournalError("journal directory unavailable during recovery scan") from None
-            except BaseException:
-                self._terminal_manifest = None
-                raise
 
-    def _recovery_snapshot(self):
+    def _read_receipts_unlocked(self) -> list[OperationRecord]:
+        try:
+            blob = _secure_read(self.paths.operations_dir / _RECEIPTS_NAME,
+                                max_bytes=_MAX_RECEIPTS_BYTES)
+        except FileNotFoundError:
+            return []
+        try:
+            salt = crypto._blob_salt(blob)
+            cached = self._receipt_key_cache
+            key = cached[1] if cached is not None and cached[0] == salt else crypto._derive_key(self._password(), salt)
+            raw = json.loads(crypto._decrypt_blob_with_key(blob, key=key))
+            if (not isinstance(raw, dict) or set(raw) != {"schema", "kind", "records"}
+                    or raw["schema"] != 1 or raw["kind"] != "terminal_receipts"
+                    or not isinstance(raw["records"], list) or len(raw["records"]) > _MAX_RECEIPTS):
+                raise ValueError("invalid receipts")
+            result = []
+            seen = set()
+            for value in raw["records"]:
+                if not isinstance(value, dict):
+                    raise ValueError("invalid receipt")
+                identifier = _canonical_uuid(value.get("operation_id"), field_name="operation_id")
+                item = _decode_record(value, expected_id=identifier)
+                if not item.finished or item.state or identifier in seen:
+                    raise ValueError("invalid receipt")
+                _receipt_payload([item])
+                seen.add(identifier)
+                result.append(item)
+        except (crypto.BadPassword, UnicodeError, ValueError, JournalError, TypeError):
+            self._receipt_key_cache = None
+            raise JournalError("terminal operation receipts are corrupt") from None
+        self._receipt_key_cache = (salt, key)
+        return result
+
+    def _write_receipts_unlocked(self, records: list[OperationRecord]) -> None:
+        records = records[-_MAX_RECEIPTS:]
+        while True:
+            try:
+                plaintext = _receipt_payload(records)
+                break
+            except JournalError:
+                if len(records) <= 1:
+                    raise
+                records = records[1:]
+        blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
+        _atomic_write_bytes(self.paths.operations_dir / _RECEIPTS_NAME, blob)
+        self._receipt_key_cache = (crypto._blob_salt(blob), key)
+
+    def _archive_finished_unlocked(self, record: OperationRecord) -> None:
+        if not record.finished:
+            raise JournalError("cannot archive a pending operation")
+        records = [item for item in self._read_receipts_unlocked()
+                   if item.operation_id != record.operation_id]
+        records.append(record)
+        self._write_receipts_unlocked(records)
+        # Crash before deletion leaves an authenticated terminal active record.
+        # A receipt is durable before its pending marker/recovery image goes away.
+        self._remove_pending_unlocked(record.operation_id)
+        try:
+            self._record_path(record.operation_id).unlink()
+        except FileNotFoundError:
+            pass
+        private_files.fsync_parent(self.paths.operations_dir)
+
+    def _recovery_snapshot(self, *, migration: bool = False):
+        """Cheap no-follow/type/owner/resource preflight; never derives a key."""
         try:
             directory = self.paths.operations_dir.lstat()
         except FileNotFoundError:
             return None, ()
-        if not stat.S_ISDIR(directory.st_mode):
+        if (not stat.S_ISDIR(directory.st_mode) or stat.S_ISLNK(directory.st_mode)
+                or getattr(directory, "st_file_attributes", 0) & 0x400):
             raise JournalError("journal directory must be a non-symlink directory")
-        if os.name == "posix" and (directory.st_uid != os.getuid() or directory.st_mode & 0o077):
+        if os.name == "posix" and (directory.st_uid != os.geteuid() or directory.st_mode & 0o077):
             raise JournalError("journal directory has unsafe ownership or permissions")
-        entries, total = [], 0
+        if os.name == "nt":
+            from keys_keeper.windows_file_security import validate_path
+            validate_path(self.paths.operations_dir, directory=True)
+        entries, total, operation_files = [], 0, 0
+        maximum_records = _MAX_MIGRATION_RECORDS if migration else _MAX_RECOVERY_RECORDS
+        maximum_bytes = _MAX_MIGRATION_BYTES if migration else _MAX_RECOVERY_BYTES
         with os.scandir(self.paths.operations_dir) as iterator:
             for item in iterator:
-                if not item.name.endswith(".enc"):
+                bookkeeping = item.name in {_PENDING_INDEX_NAME, _RECEIPTS_NAME}
+                if not bookkeeping:
+                    operation_files += 1
+                    if operation_files > maximum_records:
+                        raise JournalError("journal recovery scan exceeds resource limit")
+                temporary = _JOURNAL_TEMP.fullmatch(item.name)
+                if not (bookkeeping or temporary or item.name.endswith(".enc")):
                     continue
                 try:
-                    _canonical_uuid(item.name[:-4], field_name="operation_id")
+                    if item.name.endswith(".enc"):
+                        _canonical_uuid(item.name[:-4], field_name="operation_id")
+                    elif temporary and temporary.group(1):
+                        _canonical_uuid(temporary.group(1), field_name="operation_id")
                 except ValueError:
                     raise JournalError("invalid journal filename") from None
                 info = item.stat(follow_symlinks=False)
-                total += info.st_size
-                if len(entries) >= _MAX_RECOVERY_RECORDS or total > _MAX_RECOVERY_BYTES:
+                if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                        or getattr(info, "st_file_attributes", 0) & 0x400):
+                    raise JournalError("journal record must be a regular non-symlink file")
+                if os.name == "posix" and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
+                    raise JournalError("journal record has unsafe ownership or permissions")
+                if os.name == "nt":
+                    validate_path(self.paths.operations_dir / item.name)
+                if not bookkeeping:
+                    total += info.st_size
+                maximum_file = (_MAX_INDEX_BYTES if item.name == _PENDING_INDEX_NAME else
+                                _MAX_RECEIPTS_BYTES if item.name == _RECEIPTS_NAME else _MAX_JOURNAL_BYTES)
+                if total > maximum_bytes or info.st_size > maximum_file:
                     raise JournalError("journal recovery scan exceeds resource limit")
                 entries.append((item.name, info.st_dev, info.st_ino, info.st_size,
                                 info.st_mtime_ns, info.st_ctime_ns, info.st_mode))
         entries.sort()
         stamp = (directory.st_dev, directory.st_ino, directory.st_mtime_ns,
                  directory.st_ctime_ns, tuple(entries))
-        return stamp, tuple(self.paths.operations_dir / item[0] for item in entries)
-
-    def _scan_recovery(self, paths, *, authenticate):
-        digest = hashlib.sha256(b"keys-keeper/terminal-journal-directory/v1\0")
-        records = []
-        total = 0
-        for path in paths:
-            blob = _secure_read(path, max_bytes=min(_MAX_JOURNAL_BYTES, _MAX_RECOVERY_BYTES - total))
-            total += len(blob)
-            name = path.name.encode("ascii")
-            digest.update(len(name).to_bytes(4, "big"))
-            digest.update(name)
-            digest.update(len(blob).to_bytes(8, "big"))
-            digest.update(blob)
-            if authenticate:
-                record = self._decode_blob_unlocked(UUID(path.stem), blob)
-                if not record.finished:
-                    records.append(record)
-        return digest.digest(), records
+        return stamp, tuple(self.paths.operations_dir / item[0] for item in entries if item[0].endswith(".enc"))
 
     def pending_refs(self, *, kind: str | None = None) -> tuple[dict[str, str], ...]:
         """Read the metadata-only pending index through this reentrant lock."""
@@ -304,8 +448,11 @@ class OperationJournal:
     def recover(self, handlers: Mapping[str, RecoveryHandler]) -> list[OperationRecord]:
         """Replay pending records once, closing handler failures safely.
 
-        Handlers run without the profile lock and must be idempotent.  A missing
-        handler leaves its record pending for a component that understands it.
+        Handlers run without the profile lock and must be idempotent. Before
+        raising they must finish compensating any partial effects: failure
+        closes the operation and erases its recovery images. A missing handler
+        leaves its record pending for a component that understands it. Persist
+        failures after a successful handler propagate without marking failure.
         Exception text is never persisted because it may contain secret data.
         """
         recovered: list[OperationRecord] = []
@@ -315,9 +462,10 @@ class OperationJournal:
                 continue
             try:
                 result = handler(record)
-                recovered.append(self.finish(record.operation_id, result=result))
             except Exception:
                 recovered.append(self.fail(record.operation_id, error_code="recovery_error"))
+            else:
+                recovered.append(self.finish(record.operation_id, result=result))
         return recovered
 
     def _password(self) -> str:
@@ -350,6 +498,8 @@ class OperationJournal:
 
     def _add_pending_unlocked(self, operation_id: UUID, kind: str) -> None:
         entries = _read_pending_index(self.paths)
+        if len(entries) >= _MAX_RECOVERY_RECORDS:
+            raise JournalError("journal recovery scan exceeds resource limit")
         identifier = str(operation_id)
         if any(item["operation_id"] == identifier for item in entries):
             raise JournalError("operation_id already exists in pending index")
@@ -364,31 +514,19 @@ class OperationJournal:
             _write_pending_index(self.paths, kept)
 
     def _write_unlocked(self, record: OperationRecord) -> None:
-        data = {
-            "schema": _SCHEMA,
-            "operation_id": str(record.operation_id),
-            "kind": record.kind,
-            "stage": record.stage,
-            "status": record.status,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-            "state": dict(record.state),
-            "result": None if record.result is None else dict(record.result),
-            "error_code": record.error_code,
-        }
+        data = _record_data(record)
         try:
             plaintext = json.dumps(
-                data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode("utf-8")
-        except (TypeError, ValueError) as ex:
-            raise JournalError("journal state is not JSON serializable") from ex
+        except (TypeError, ValueError, UnicodeError, RecursionError):
+            raise JournalError("journal state is not JSON serializable") from None
         # The fixed KK1 header/tag adds 48 bytes. Refuse a state that this
         # journal could not read back, before spending PBKDF2 or replacing it.
         if len(plaintext) + 48 > _MAX_JOURNAL_BYTES:
             raise JournalError("journal record exceeds size limit")
         blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
         _atomic_write_bytes(self._record_path(record.operation_id), blob)
-        self._terminal_manifest = None
         # Only a successful durable local write replaces the previous key.
         self._derived_key_cache = (crypto._blob_salt(blob), key)
 
@@ -397,6 +535,9 @@ class OperationJournal:
         try:
             blob = _secure_read(path, max_bytes=_MAX_JOURNAL_BYTES)
         except FileNotFoundError as ex:
+            for record in self._read_receipts_unlocked():
+                if record.operation_id == operation_id:
+                    return record
             raise JournalNotFound("journal operation not found") from ex
         return self._decode_blob_unlocked(operation_id, blob)
 
@@ -438,8 +579,8 @@ def profile_lock(paths: Paths, *, timeout=None) -> Iterator[None]:
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(lock_path, flags, 0o600)
-    except OSError as ex:
+        fd = private_files.open_private_file(lock_path, flags)
+    except (OSError, private_files.PrivateFileError) as ex:
         raise JournalError("cannot open profile lock") from ex
     try:
         info = os.fstat(fd)
@@ -581,6 +722,20 @@ def _decode_record(raw: object, *, expected_id: UUID) -> OperationRecord:
         result=None if result is None else MappingProxyType(dict(result)),
         error_code=error_code,
     )
+
+
+def _receipt_payload(records: list[OperationRecord]) -> bytes:
+    try:
+        payload = {"schema": 1, "kind": "terminal_receipts", "records": [
+            _record_data(replace(record, state=_freeze_mapping({}))) for record in records
+        ]}
+        plaintext = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise JournalError("terminal operation result is not JSON serializable") from None
+    if len(plaintext) + 48 > _MAX_RECEIPTS_BYTES:
+        raise JournalError("terminal operation result exceeds receipt limit")
+    return plaintext
 
 
 def _freeze_mapping(value: Mapping[str, object] | None) -> Mapping[str, object]:

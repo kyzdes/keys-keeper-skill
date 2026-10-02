@@ -12,7 +12,6 @@ import pytest
 
 from keys_keeper import auto_worker as worker
 from keys_keeper.paths import Paths
-from keys_keeper.project_runtime import ProjectRuntime
 
 
 def test_timeout_reaps_worker_before_return_and_prevents_late_writes(tmp_path, monkeypatch):
@@ -229,32 +228,14 @@ def test_windows_job_reaps_descendants_on_every_supervisor_exit(tmp_path, ending
 def test_detached_entry_runs_supervisor_and_preserves_explicit_root(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(worker.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))
-    worker.start_auto_worker("s3", Paths(tmp_path))
+    worker.start_auto_worker("personal", Paths(tmp_path))
     argv = calls[0][0][0]
-    assert argv[1:4] == ["-m", "keys_keeper.auto_worker", "s3"]
+    assert argv[1:4] == ["-m", "keys_keeper.auto_worker", "personal"]
     assert argv[-3:] == ["--home", str(tmp_path), "--supervise"]
 
 
-def test_s3_worker_rechecks_replica_role_before_master_backend(tmp_path, monkeypatch):
-    from keys_keeper import cli_sync
-    runtime = ProjectRuntime(Paths(tmp_path))
-    item = {"id": "00000000-0000-4000-8000-000000000001", "kind": "replica",
-            "scope_id": "00000000-0000-4000-8000-000000000002",
-            "vault_id": "00000000-0000-4000-8000-000000000003",
-            "device_id": "00000000-0000-4000-8000-000000000004",
-            "project": "synthetic", "environment": "test", "endpoint": "https://relay.example", "status": "active"}
-    runtime.registry.put(item)
-    runtime.registry.set_default(item["id"])
-    monkeypatch.setattr(cli_sync, "_run_auto_worker", lambda _paths: pytest.fail("replica opened master sync"))
-    assert worker.main(["s3", "--home", str(tmp_path)]) == 1
-
-
 def test_disabled_auto_is_rechecked_before_expensive_worker_setup(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from keys_keeper import cli_sync, personal_sync
-    monkeypatch.setattr(cli_sync, "load_sync_config", lambda _paths: SimpleNamespace(mode="off"))
-    monkeypatch.setattr(cli_sync, "_build_engine", lambda *_a, **_kw: pytest.fail("disabled S3 opened backend"))
-    assert worker.main(["s3", "--home", str(tmp_path)]) == 0
+    from keys_keeper import personal_sync
     monkeypatch.setattr(personal_sync, "read_settings", lambda _paths: {"auto": False})
     monkeypatch.setattr(personal_sync.PersonalSync, "sync", lambda *_a: pytest.fail("disabled personal read state"))
     assert worker.main(["personal", "--home", str(tmp_path)]) == 0

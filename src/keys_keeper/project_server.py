@@ -35,13 +35,16 @@ class ProjectRelayLimits:
     control_relay_bytes: int = 128 * 1024 * 1024
     control_scope_records: int = 2_000
     control_relay_records: int = 10_000
-    concurrent_requests: int = 4
+    concurrent_requests: int = 2
     concurrent_connections: int = 32
     socket_timeout: int = 10
 
     def __post_init__(self):
         if any(type(value) is not int or value < 1 for value in vars(self).values()):
             raise ValueError("project relay limits must be positive integers")
+        if (self.concurrent_connections > 128 or self.concurrent_requests > 128
+                or self.socket_timeout > 300):
+            raise ValueError("relay request limits exceed supported resource bounds")
 
 
 _STORAGE_COLUMNS = {
@@ -144,6 +147,11 @@ class ProjectRelay:
             """)
         from keys_keeper.pairing_server import PairingRelay
         self.pairings = PairingRelay(self)
+        from keys_keeper.relay_storage import RelayStorage
+        with app._transaction(immediate=True) as connection:
+            self.storage = RelayStorage(connection, "kk3", {
+                table: ("scope_id", columns) for table, columns in _STORAGE_COLUMNS.items()
+            })
 
     @contextmanager
     def request_slot(self):
@@ -200,27 +208,10 @@ class ProjectRelay:
                     _error(400, "ambiguous_authentication")
 
     def storage_usage(self, connection, scope_id: str | None = None) -> tuple[int, int]:
-        total_bytes, total_records = 0, 0
-        for table, columns in _STORAGE_COLUMNS.items():
-            expression = " + ".join(f"COALESCE(length(CAST({name} AS BLOB)),0)" for name in columns)
-            where = "" if scope_id is None else " WHERE scope_id=?"
-            # Include a fixed per-row metadata allowance. Physical SQLite pages,
-            # indexes and WAL need additional filesystem headroom in operations.
-            row = connection.execute(f"SELECT COUNT(*),COALESCE(SUM(256 + {expression}),0) FROM {table}{where}",
-                                     () if scope_id is None else (scope_id,)).fetchone()
-            total_records += row[0]
-            total_bytes += row[1]
-        return total_bytes, total_records
+        return self.storage.usage(connection, scope_id)
 
     def _storage_budget(self, connection, scope_id: str, *, control: bool = False) -> None:
-        limits = self.limits
-        for scope, byte_limit, record_limit, extra_bytes, extra_records in (
-            (scope_id, limits.scope_bytes, limits.scope_records, limits.control_scope_bytes, limits.control_scope_records),
-            (None, limits.relay_bytes, limits.relay_records, limits.control_relay_bytes, limits.control_relay_records),
-        ):
-            used_bytes, used_records = self.storage_usage(connection, scope)
-            if used_bytes > byte_limit + (extra_bytes if control else 0) or used_records > record_limit + (extra_records if control else 0):
-                _error(429, "storage_full")
+        self.storage.budget(connection, scope_id, self.limits, control=control)
 
     def _scope(self, connection, scope_id: str):
         row = connection.execute("SELECT * FROM kk3_scopes WHERE scope_id=?", (scope_id,)).fetchone()
@@ -485,7 +476,7 @@ class ProjectRelay:
                 _error(403, "master_required")
             # Bounded page by both count and bytes. Receipted rows leave this queue.
             rows = connection.execute("SELECT record,policy_hash FROM kk3_submissions WHERE scope_id=? AND receipt IS NULL ORDER BY created,device_id,request_id LIMIT 25",
-                                      (scope_id,)).fetchall()
+                                      (scope_id,))
             records = []
             total = 0
             for row in rows:

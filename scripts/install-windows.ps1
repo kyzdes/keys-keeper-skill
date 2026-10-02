@@ -5,7 +5,7 @@ No vault contents, connection codes or credential values are read by this script
 #>
 [CmdletBinding()]
 param(
-    [string]$Source = 'https://github.com/kyzdes/keys-keeper-skill/archive/refs/tags/v0.11.1.zip',
+    [string]$Source = 'https://github.com/kyzdes/keys-keeper-skill/archive/refs/tags/v0.12.0.zip',
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'KeysKeeper'),
     [switch]$NoLaunch,
     [switch]$NoPathUpdate
@@ -59,7 +59,7 @@ if (-not $NoPathUpdate) {
     $env:Path = "$scripts;$env:Path"
 }
 Invoke-Checked $venvPython @('-m', 'keys_keeper', 'app', 'install', '--force')
-Invoke-Checked $venvPython @('-m', 'keys_keeper', 'devices', 'status')
+Invoke-Checked $venvPython @('-m', 'keys_keeper', '--version')
 Write-Host 'Keys Keeper is installed. Open Settings -> My computers and paste the connection code from your main computer.'
 if (-not $NoLaunch) {
     Start-Process -FilePath $venvPython -ArgumentList @('-m', 'keys_keeper', 'serve') -WindowStyle Hidden

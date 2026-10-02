@@ -202,6 +202,14 @@ def _validate_fields(type_: EntryType, fields: Any) -> dict[str, Any]:
             max_length=16_384,
             allow_linebreaks=True,
         )
+    elif type_ is EntryType.NOTE:
+        if type(fields["secret_body"]) is not bool:
+            raise ValidationError("note secret_body must be a boolean")
+        if fields["secret_body"] and "body" in fields:
+            raise ValidationError("sensitive note body must not be public metadata")
+        if "body" in fields:
+            _validate_text(fields["body"], "note body", max_length=65_536,
+                           allow_linebreaks=True)
     return dict(fields)
 
 
@@ -408,6 +416,13 @@ class Entry:
         )
 
 
+def entry_requires_secret(entry: Entry) -> bool:
+    """The shared storage/publication contract for a primary credential."""
+    return entry.type in (EntryType.API_KEY, EntryType.SSH_KEY) or (
+        entry.type is EntryType.NOTE and entry.fields.get("secret_body") is True
+    ) or (entry.type is EntryType.SERVER and entry.fields.get("auth") == "password")
+
+
 def validate_tombstone(d: Any) -> dict[str, str]:
     if not isinstance(d, dict) or set(d) != {"id", "name", "deleted_at"}:
         raise ValidationError("tombstone must contain exactly id, name, deleted_at")
@@ -443,6 +458,9 @@ def validate_snapshot_payload(
         Entry.from_untrusted_dict(record, allow_secret_fields=True)
         for record in records
     ]
+    if any(entry_requires_secret(entry) and record.get("_secret") is None
+           for entry, record in zip(entries, records)):
+        raise ValidationError("snapshot is missing a required secret")
     ids = [entry.id for entry in entries]
     if len(ids) != len(set(ids)):
         raise ValidationError("snapshot contains duplicate entry ids")

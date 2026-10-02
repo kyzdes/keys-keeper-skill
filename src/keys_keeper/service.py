@@ -1,25 +1,19 @@
-"""Application service for coordinated metadata and secret mutations.
+"""One durable mutation facade for standalone and project master vaults.
 
-The OS backends do not expose transactions. ``VaultService`` therefore holds
-the metadata lock, snapshots only the secret accounts it is about to change,
-and compensates backend writes when a later step fails. This is the strongest
-coherent boundary available before versioned physical secret generations land:
-successful calls are consistent, and ordinary failures restore the prior
-state. A backend that fails both the write and its compensation is reported as
-an explicit incomplete rollback rather than being presented as atomic.
+VaultService delegates every ordinary mutation to MasterMutationManager.
+The small compensating-write helper remains for the separately journaled
+project importer; it is never a fallback for ordinary vault writes.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from keys_keeper.backend import KeychainBackend
 from keys_keeper.models import Entry
-from keys_keeper.store import MetadataStore, NameConflict, NotFound
-from keys_keeper.store import StoreError
+from keys_keeper.store import MetadataStore
 
 if TYPE_CHECKING:
     from keys_keeper.master_journal import MasterMutationManager
@@ -43,13 +37,20 @@ class IncompleteRollback(RuntimeError):
 
 
 class ConcurrentMutation(RuntimeError):
-    """Metadata changed after a caller computed a replacement snapshot."""
+    """Metadata or a touched secret changed after snapshot preparation."""
 
 
 @dataclass(frozen=True)
 class SecretInput:
+    """Patch leaves None untouched; replacement removes accounts represented by None."""
+
     value: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
+    mode: Literal["patch", "replace"] = "patch"
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"patch", "replace"}:
+            raise ValueError("secret input mode must be patch or replace")
 
 
 @dataclass(frozen=True)
@@ -148,260 +149,34 @@ class VaultService:
         ):
             raise ValueError("master mutation manager must own this store and backend")
 
-    def create_entry(
-        self,
-        entry: Entry,
-        *,
-        secrets: SecretInput | None = None,
-        replace: bool = False,
-    ) -> Entry:
-        manager = self._catalog_mutation_manager()
-        if manager is not None:
-            return manager.create_entry(entry, secrets=secrets, replace=replace)
-        undo = _BackendUndo(self.backend)
-        try:
-            with self.store.transaction() as tx:
-                existing = tx.get_by_name(entry.name)
-                if existing is not None and not replace:
-                    raise NameConflict(
-                        f"entry with name {entry.name!r} already exists "
-                        f"(use --replace to overwrite or --rename to pick a new name)"
-                    )
-                if existing is not None:
-                    entry.id = existing.id
-                    self._preserve_catalog_entry_attributes(entry, existing)
-                    self._bump_content_revision_if_catalog(tx, entry)
-                    tx.replace_by_name(entry)
-                    self._mark_entry_publication_intents(tx, entry, reason="entry_replaced")
-                else:
-                    tx.add(entry)
-                self._write_secrets(undo, entry.id, secrets)
-            return entry
-        except BaseException as ex:
-            self._rollback_or_raise(undo, ex)
-            raise
-
-    def update_entry(
-        self,
-        entry: Entry,
-        *,
-        secrets: SecretInput | None = None,
-    ) -> Entry:
-        manager = self._catalog_mutation_manager()
-        if manager is not None:
-            return manager.update_entry(entry, secrets=secrets)
-        undo = _BackendUndo(self.backend)
-        try:
-            with self.store.transaction() as tx:
-                existing = tx.get_by_id(entry.id)
-                if existing is None:
-                    raise NotFound(f"no entry with id {entry.id}")
-                self._preserve_catalog_entry_attributes(entry, existing)
-                self._bump_content_revision_if_catalog(tx, entry)
-                tx.update(entry)
-                self._mark_entry_publication_intents(tx, entry, reason="entry_updated")
-                self._write_secrets(undo, entry.id, secrets)
-            return entry
-        except BaseException as ex:
-            self._rollback_or_raise(undo, ex)
-            raise
-
-    def bulk_create(
-        self,
-        items: Iterable[tuple[Entry, SecretInput | None]],
-    ) -> list[Entry]:
-        if self._catalog_mutation_manager() is not None:
-            from keys_keeper.master_journal import MasterMutationRequired
-
-            raise MasterMutationRequired(
-                "schema-v3 bulk create requires a durable bulk operation"
-            )
-        prepared = list(items)
-        undo = _BackendUndo(self.backend)
-        try:
-            with self.store.transaction() as tx:
-                seen: set[str] = set()
-                for entry, _ in prepared:
-                    if entry.name in seen or tx.get_by_name(entry.name) is not None:
-                        raise NameConflict(f"entry with name {entry.name!r} already exists")
-                    seen.add(entry.name)
-                for entry, secrets in prepared:
-                    tx.add(entry)
-                    self._write_secrets(undo, entry.id, secrets)
-            return [entry for entry, _ in prepared]
-        except BaseException as ex:
-            self._rollback_or_raise(undo, ex)
-            raise
-
-    def delete_entry(self, name_or_id: str, *, cascade: bool = False) -> DeleteResult:
-        manager = self._catalog_mutation_manager()
-        if manager is not None:
-            return manager.delete_entry(name_or_id, cascade=cascade)
-        undo = _BackendUndo(self.backend)
-        try:
-            with self.store.transaction() as tx:
-                entry = tx.get_by_id(name_or_id) or tx.get_by_name(name_or_id)
-                if entry is None:
-                    raise NotFound(f"no entry named {name_or_id!r}")
-                dependents = [
-                    candidate
-                    for candidate in tx.list()
-                    if any(ref.get("name") == entry.name for ref in candidate.refs)
-                ]
-                if dependents and not cascade:
-                    raise HasDependents([dependent.name for dependent in dependents])
-                for dependent in dependents:
-                    dependent.refs = [
-                        ref for ref in dependent.refs if ref.get("name") != entry.name
-                    ]
-                    tx.update(dependent)
-                undo.delete(entry.id)
-                undo.delete(entry.id + ":passphrase")
-                tx.delete_by_name(entry.name)
-                self._remove_deleted_entry_from_catalog(tx, entry)
-            return DeleteResult(entry, [dependent.name for dependent in dependents])
-        except BaseException as ex:
-            self._rollback_or_raise(undo, ex)
-            raise
-
-    def apply_snapshot(
-        self,
-        entries: list[Entry],
-        tombstones: list[dict],
-        *,
-        secret_writes: Mapping[str, str],
-        secret_deletes: Iterable[str],
-        expected_revision: str,
-    ) -> None:
-        """Atomically apply sync metadata with compensating secret writes.
-
-        The physical backend is not transactional, so every touched account is
-        snapshotted first. This preserves overwritten local values as well as
-        newly-created values when a later write, delete, or metadata commit
-        fails.
-        """
-        if self._catalog_mutation_manager() is not None:
-            from keys_keeper.master_journal import MasterMutationRequired
-
-            raise MasterMutationRequired(
-                "legacy snapshot apply is disabled for catalog schema 3"
-            )
-        deletes = tuple(secret_deletes)
-        overlap = set(secret_writes).intersection(deletes)
-        if overlap:
-            raise ValueError(
-                "secret accounts cannot be written and deleted in one snapshot apply"
-            )
-        undo = _BackendUndo(self.backend)
-        try:
-            with self.store.transaction() as tx:
-                if tx.revision() != expected_revision:
-                    raise ConcurrentMutation(
-                        "local metadata changed while the snapshot was being prepared"
-                    )
-                for account, value in secret_writes.items():
-                    undo.set(account, value)
-                for account in deletes:
-                    undo.delete(account)
-                tx.replace_all(entries, tombstones)
-        except BaseException as ex:
-            self._rollback_or_raise(undo, ex)
-            raise
-
-    @staticmethod
-    def _write_secrets(
-        undo: _BackendUndo,
-        entry_id: str,
-        secrets: SecretInput | None,
-    ) -> None:
-        if secrets is None:
-            return
-        if secrets.value is not None:
-            undo.set(entry_id, secrets.value)
-        if secrets.passphrase is not None:
-            undo.set(entry_id + ":passphrase", secrets.passphrase)
-
-    @staticmethod
-    def _catalog_state_or_none(tx) -> dict | None:
-        """Return v3 catalog data without turning a legacy vault into v3."""
-        try:
-            return tx.catalog_state()
-        except StoreError as ex:
-            if "explicit schema-v3 migration" in str(ex):
-                return None
-            raise
-
-    def _catalog_mutation_manager(self) -> "MasterMutationManager | None":
-        """Require durable composition for every schema-v3 write path."""
-        try:
-            self.store.catalog_state()
-        except StoreError as ex:
-            if "explicit schema-v3 migration" in str(ex):
-                return None
-            raise
+    def _manager(self):
         if self.master_mutations is None:
-            from keys_keeper.master_journal import MasterMutationRequired
-
-            raise MasterMutationRequired(
-                "catalog schema 3 requires a durable master mutation manager"
-            )
+            from keys_keeper.master_journal import compose_master_mutations
+            self.master_mutations = compose_master_mutations(self.store, self.backend)
+        self.master_mutations.recover()
         return self.master_mutations
 
-    @staticmethod
-    def _preserve_catalog_entry_attributes(entry: Entry, existing: Entry) -> None:
-        """A master replace/edit cannot silently discard project access metadata."""
-        entry.folder_id = existing.folder_id
-        entry.distribution = existing.distribution
-        entry.provenance = existing.provenance
-        entry.content_revision = existing.content_revision
+    def create_entry(self, entry: Entry, *, secrets: SecretInput | None = None,
+                     replace: bool = False) -> Entry:
+        return self._manager().create_entry(entry, secrets=secrets, replace=replace)
 
-    @classmethod
-    def _bump_content_revision_if_catalog(cls, tx, entry: Entry) -> None:
-        if cls._catalog_state_or_none(tx) is not None:
-            entry.content_revision = str(uuid.uuid4())
+    def update_entry(self, entry: Entry, *, secrets: SecretInput | None = None) -> Entry:
+        return self._manager().update_entry(entry, secrets=secrets)
 
-    @classmethod
-    def _mark_entry_publication_intents(cls, tx, entry: Entry, *, reason: str) -> None:
-        catalog = cls._catalog_state_or_none(tx)
-        if catalog is None:
-            return
-        scopes = sorted({
-            binding["scope_id"]
-            for binding in catalog["bindings"]
-            if binding["entry_id"] == entry.id
-        })
-        if not scopes:
-            return
-        intents = catalog["publication_intents"]
-        for scope_id in scopes:
-            intents.append({
-                "scope_id": scope_id,
-                "entry_id": entry.id,
-                "reason": reason,
-                "desired_content_revision": entry.content_revision,
-            })
-        tx.set_catalog_state(catalog)
+    def bulk_create(self, items: Iterable[tuple[Entry, SecretInput | None]]) -> list[Entry]:
+        return self._manager().bulk_create(items)
 
-    @classmethod
-    def _remove_deleted_entry_from_catalog(cls, tx, entry: Entry) -> None:
-        catalog = cls._catalog_state_or_none(tx)
-        if catalog is None:
-            return
-        affected = [binding for binding in catalog["bindings"] if binding["entry_id"] == entry.id]
-        catalog["bindings"] = [binding for binding in catalog["bindings"] if binding["entry_id"] != entry.id]
-        for scope_id in sorted({binding["scope_id"] for binding in affected}):
-            catalog["publication_intents"].append({
-                "scope_id": scope_id,
-                "entry_id": entry.id,
-                "reason": "entry_deleted",
-                "desired_content_revision": entry.content_revision,
-            })
-        # The durable ledger outlives metadata and secret deletion. A future
-        # project importer must consult this record before accepting an old
-        # create request for this canonical entry ID.
-        if not any(item.get("entry_id") == entry.id and item.get("reason") == "entry_deleted" for item in catalog["dedup"]):
-            catalog["dedup"].append({"entry_id": entry.id, "reason": "entry_deleted"})
-        tx.set_catalog_state(catalog)
+    def delete_entry(self, name_or_id: str, *, cascade: bool = False) -> DeleteResult:
+        return self._manager().delete_entry(name_or_id, cascade=cascade)
+
+    def apply_snapshot(self, entries: list[Entry], tombstones: list[dict], *,
+                       secret_writes: Mapping[str, str], secret_deletes: Iterable[str],
+                       expected_revision: str,
+                       expected_accounts: Mapping[str, Mapping[str, object]]) -> None:
+        self._manager().apply_snapshot(
+            entries, tombstones, secret_writes=secret_writes,
+            secret_deletes=secret_deletes, expected_revision=expected_revision,
+            expected_accounts=expected_accounts)
 
     @staticmethod
     def _rollback_or_raise(undo: _BackendUndo, cause: BaseException) -> None:

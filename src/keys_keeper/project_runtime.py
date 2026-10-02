@@ -26,6 +26,7 @@ from keys_keeper.auto_schedule import AutoScheduleError, claim_auto_sync
 from keys_keeper.auto_worker import AutoWorkerError, run_auto_worker
 from keys_keeper.backend import KeychainBackend, KeychainError, Sealed
 from keys_keeper.composition import AccessContext, build_backend
+from keys_keeper.master_journal import MASTER_UNLOCK_ACCOUNT as _MASTER_KEY
 from keys_keeper.models import Entry, now_iso
 from keys_keeper.operation_journal import JournalError, OperationJournal, _atomic_write_bytes, _secure_read, profile_lock
 from keys_keeper.paths import Paths
@@ -42,7 +43,6 @@ class RuntimeErrorSafe(RuntimeError):
     pass
 
 
-_MASTER_KEY = "kk:project-runtime-key"
 _REGISTRY_FIELDS = {"schema_version", "default_profile", "profiles"}
 _PROFILE_FIELDS = {"id", "kind", "scope_id", "vault_id", "project", "environment", "endpoint", "device_id", "status"}
 _MAX_BUNDLE = 32 * 1024 * 1024
@@ -267,12 +267,22 @@ class _ReadView:
 class _ReadBackend(KeychainBackend):
     def __init__(self, view):
         self.view = view
+        self._values = None
+
+    def _operation_values(self):
+        # A backend instance belongs to one command/request. Resolve several
+        # accounts from one authenticated generation instead of decrypting it
+        # for each lookup. RuntimeContext.backend creates a fresh instance for
+        # the next operation, so sync/create changes cannot become stale here.
+        if self._values is None:
+            self._values = self.view._read()[1]
+        return self._values
 
     def list_ids(self):
-        return list(self.view._read()[1])
+        return list(self._operation_values())
 
     def get(self, account):
-        values = self.view._read()[1]
+        values = self._operation_values()
         if account not in values:
             raise KeychainError("secret is unavailable in the selected profile")
         return Sealed(values[account])
@@ -348,8 +358,6 @@ class RuntimeContext:
         if self.kind == "master_scope":
             raise ReplicaReadOnlyError("select the master profile to edit the canonical catalog")
         from keys_keeper.service import VaultService
-        if self.store._read().get("schema_version", 2) < 3:
-            return VaultService(self.store, self.backend)
         manager = self.runtime.mutations()
         manager.recover()
         return VaultService(self.store, self.backend, master_mutations=manager)
@@ -426,15 +434,11 @@ class ProjectRuntime:
         return RuntimeContext(self, item)
 
     def _master_password(self, *, create=False):
-        with profile_lock(self.registry.lock_paths):
-            backend = self.master_backend
-            if _MASTER_KEY not in backend.list_ids():
-                if not create:
-                    raise RuntimeErrorSafe("master project runtime is not initialized")
-                backend.set(_MASTER_KEY, wire.encode_key(wire.generate_key()))
-            raw = backend.get(_MASTER_KEY).unseal()
-            wire.decode_key(raw)
-            return raw
+        from keys_keeper.master_journal import master_unlock_material, MasterRecoveryRequired
+        try:
+            return master_unlock_material(self.paths, self.master_backend, create=create)
+        except MasterRecoveryRequired as ex:
+            raise RuntimeErrorSafe(str(ex)) from None
 
     def mutations(self):
         from keys_keeper.master_journal import MasterMutationManager

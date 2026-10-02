@@ -4,6 +4,7 @@ import argparse
 import errno
 import getpass
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -12,12 +13,14 @@ import webbrowser
 from pathlib import Path
 
 from keys_keeper import __version__, clipboard
-from keys_keeper.audit import AuditLog
+from keys_keeper.audit import AuditLog, normalize_outcome, record_outcome
+from keys_keeper.backend import SecretAccessDenied, SecretNotFound, SecretUnavailable
 from keys_keeper.composition import build_backend
 from keys_keeper.models import (
     Entry,
     EntryType,
     ValidationError,
+    entry_requires_secret,
     now_iso,
     validate_snapshot_payload,
 )
@@ -25,6 +28,49 @@ from keys_keeper.paths import Paths
 from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
 from keys_keeper.service import HasDependents, SecretInput, VaultService
 from keys_keeper.store import MetadataStore, NameConflict, StoreError
+
+
+def _audit_outcome(audit, *, committed=..., **event) -> str:
+    """Audit is observational: never conceal an already committed side effect."""
+    status = record_outcome(audit, committed=committed, **event)
+    if status != "recorded":
+        sys.stderr.write(json.dumps({
+            "operation": event["op"],
+            **normalize_outcome(committed=event.get("success", True) if committed is ... else committed,
+                                audit_status=status),
+        }, separators=(",", ":")) + "\n")
+    return status
+
+
+def _secret_read_error(error: Exception) -> str:
+    if isinstance(error, SecretNotFound):
+        return "secret is missing"
+    if isinstance(error, SecretAccessDenied):
+        return "secret access denied"
+    if isinstance(error, SecretUnavailable):
+        return "secret provider unavailable"
+    return "secret read failed"
+
+
+def _operation_failure(operation: str, error: Exception | None = None, *,
+                       committed: bool | None = None, audit_status: str = "unknown") -> int:
+    """One value-free adapter receipt, preserving typed publication outcomes."""
+    receipt = normalize_outcome(committed=committed, audit_status=audit_status, error=error)
+    sys.stderr.write(json.dumps({"operation": operation, **receipt},
+                              separators=(",", ":")) + "\n")
+    if receipt["committed"] is False:
+        sys.stderr.write("error: operation failed before a confirmed change\n")
+    else:
+        sys.stderr.write("error: operation did not return a verified receipt; inspect state before retrying\n")
+    return 1
+
+
+def _mutation_failure(audit, *, op: str, entry: Entry, error: Exception | None = None) -> int:
+    """An unexpected durable mutation failure may require forward recovery."""
+    receipt = normalize_outcome(error=error)
+    status = record_outcome(audit, op=op, name=entry.name, id_=entry.id,
+                            success=False, committed=receipt["committed"])
+    return _operation_failure(op, error, committed=receipt["committed"], audit_status=status)
 
 
 def _profile_selector(args: argparse.Namespace) -> str | None:
@@ -65,11 +111,23 @@ def _context_or_error(args: argparse.Namespace, *, access=None):
     try:
         return _context(args, access=access)
     except (ValueError, RuntimeError) as ex:
-        sys.stderr.write(f"error: {ex}\n")
+        _operation_failure(getattr(args, "command", "context"), ex, committed=False)
         return None
 
 
 # ----- input source resolution -----
+
+_MAX_INPUT_CHARS = 1_048_576
+
+
+def _field_value(key: str, value: str):
+    if key == "port":
+        return int(value)
+    if key == "secret_body":
+        if value.lower() not in ("1", "true", "yes", "0", "false", "no"):
+            raise ValueError("secret_body must be true or false")
+        return value.lower() in ("1", "true", "yes")
+    return value
 
 def _read_input(args: argparse.Namespace) -> str:
     sources = [
@@ -85,17 +143,25 @@ def _read_input(args: argparse.Namespace) -> str:
         )
         return ""
     if args.from_clipboard:
-        return clipboard.read().lstrip("﻿")
-    if args.from_file:
+        value = clipboard.read().lstrip("﻿")
+    elif args.from_file:
         # PowerShell on Windows defaults to writing UTF-8 with BOM; strip it
         # so the stored secret doesn't carry an invisible ﻿ at the start.
-        return Path(args.from_file).read_text(encoding="utf-8-sig")
-    if args.stdin:
-        return sys.stdin.read().lstrip("﻿").rstrip("\n")
-    if args.web:
+        value = read_secure_text(Path(args.from_file), missing_ok=False,
+                                 encoding="utf-8-sig", max_bytes=4 * _MAX_INPUT_CHARS + 3).text
+    elif args.stdin:
+        value = sys.stdin.read(_MAX_INPUT_CHARS + 1)
+        if len(value) > _MAX_INPUT_CHARS:
+            raise ValueError("secret input exceeds size limit")
+        value = value.lstrip("﻿").rstrip("\n")
+    elif args.web:
         sys.stderr.write("--web flag is implemented in admin UI; not supported here yet\n")
         return ""
-    return ""
+    else:
+        return ""
+    if len(value) > _MAX_INPUT_CHARS:
+        raise ValueError("secret input exceeds size limit")
+    return value
 
 
 # ----- subcommand handlers -----
@@ -121,12 +187,11 @@ def cmd_add(args: argparse.Namespace) -> int:
         if not _:
             sys.stderr.write(f"--field expects KEY=VALUE, got {kv!r}\n")
             return 2
-        # numeric coercion for known int fields
-        if k == "port":
-            v = int(v)
-        elif k == "secret_body":
-            v = v.lower() in ("1", "true", "yes")
-        fields[k] = v
+        try:
+            fields[k] = _field_value(k, v)
+        except ValueError:
+            sys.stderr.write("error: port must be an integer and secret_body must be true or false\n")
+            return 2
 
     # parse --ref flags
     refs = []
@@ -137,17 +202,6 @@ def cmd_add(args: argparse.Namespace) -> int:
             return 2
         refs.append({"role": role, "name": name})
 
-    # determine if this entry type stores a secret
-    needs_secret = type_ in (EntryType.API_KEY, EntryType.SSH_KEY) or (
-        type_ == EntryType.NOTE and fields.get("secret_body", False)
-    ) or (type_ == EntryType.SERVER and fields.get("auth") == "password")
-
-    value = ""
-    if needs_secret:
-        value = _read_input(args)
-        if not value and not args.from_file:
-            return 2
-
     try:
         entry = Entry.new(
             name=args.name, type=type_, fields=fields,
@@ -157,9 +211,19 @@ def cmd_add(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {e}\n")
         return 2
 
-    service = ctx.service
+    needs_secret = entry_requires_secret(entry)
+    value = ""
+    if needs_secret:
+        try:
+            value = _read_input(args)
+        except Exception:
+            _audit_outcome(audit, op="add", name=entry.name, id_=entry.id, success=False)
+            sys.stderr.write("error: secret input is unavailable, unsafe, or exceeds the size limit\n")
+            return 2
+        if not value and not args.from_file:
+            return 2
     try:
-        entry = service.create_entry(
+        entry = ctx.service.create_entry(
             entry,
             secrets=SecretInput(value=value) if needs_secret else None,
             replace=args.replace,
@@ -167,11 +231,12 @@ def cmd_add(args: argparse.Namespace) -> int:
     except NameConflict as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
-    except Exception as e:
-        audit.record(op="add", name=entry.name, id_=entry.id, success=False, error=str(e))
-        sys.stderr.write(f"error: failed to add {entry.name!r}: {e}\n")
-        return 1
-    audit.record(op="add", name=entry.name, id_=entry.id, success=True)
+    except ValidationError:
+        sys.stderr.write("error: invalid entry or secret input\n")
+        return 2
+    except Exception as ex:
+        return _mutation_failure(audit, op="add", entry=entry, error=ex)
+    _audit_outcome(audit, op="add", name=entry.name, id_=entry.id, success=True)
     print(f"added {entry.type.value} '{entry.name}' (id={entry.id})")
     return 0
 
@@ -258,12 +323,15 @@ def cmd_reveal(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = ctx.backend
+    env_name = e.name.upper().replace("-", "_").replace(".", "_")
+    if args.as_env and not _ENV_NAME_RE.fullmatch(env_name):
+        sys.stderr.write("error: entry name cannot be used as an environment identifier\n")
+        return 2
     try:
-        sealed = backend.get(e.id)
+        sealed = ctx.backend.get(e.id)
     except Exception as ex:
-        audit.record(op="reveal", name=e.name, id_=e.id, success=False, error=str(ex))
-        sys.stderr.write(f"failed to read keychain: {ex}\n")
+        _audit_outcome(audit, op="reveal", name=e.name, id_=e.id, success=False)
+        sys.stderr.write(f"error: {_secret_read_error(ex)}\n")
         return 1
     # ⚠️  load-bearing: this is the only stdout-bound .unseal() in the codebase.
     # The env gate above is the structural guarantee; .unseal() here is the
@@ -271,13 +339,12 @@ def cmd_reveal(args: argparse.Namespace) -> int:
     value = sealed.unseal()
     if args.as_env:
         # NAME=value format for `eval $(keys reveal X --as-env)`
-        env_name = e.name.upper().replace("-", "_").replace(".", "_")
         print(f"{env_name}={_shell_quote(value)}")
     else:
         sys.stdout.write(value)
         if not value.endswith("\n"):
             sys.stdout.write("\n")
-    audit.record(op="reveal", name=e.name, id_=e.id, success=True)
+    _audit_outcome(audit, op="reveal", name=e.name, id_=e.id, success=True)
     return 0
 
 
@@ -298,12 +365,11 @@ def cmd_copy(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = ctx.backend
     try:
-        sealed = backend.get(e.id)
+        sealed = ctx.backend.get(e.id)
     except Exception as ex:
-        audit.record(op="copy", name=e.name, id_=e.id, success=False, error=str(ex))
-        sys.stderr.write(f"failed to read keychain: {ex}\n")
+        _audit_outcome(audit, op="copy", name=e.name, id_=e.id, success=False)
+        sys.stderr.write(f"error: {_secret_read_error(ex)}\n")
         return 1
 
     # Clipboard is a controlled (non-transcript) sink. Unwrap is local; the
@@ -311,24 +377,69 @@ def cmd_copy(args: argparse.Namespace) -> int:
     value = sealed.unseal()
     try:
         written = clipboard.write(value)
-    except clipboard.ClipboardUnavailable:
+    except Exception:
         written = False
     if not written:
-        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="clipboard write failed")
+        _audit_outcome(audit, op="copy", name=e.name, id_=e.id, success=False)
         sys.stderr.write("clipboard write failed\n")
         return 1
 
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    print(f"copied {e.name} to clipboard · auto-clear in {args.clear_after}s")
-    audit.record(op="copy", name=e.name, id_=e.id, success=True)
+    audit_status = _audit_outcome(audit, op="copy", name=e.name, id_=e.id, success=True)
 
     if args.clear_after > 0:
-        clipboard.spawn_clear_after(written_hash, args.clear_after)
+        try:
+            clipboard.spawn_clear_after(written_hash, args.clear_after)
+        except Exception:
+            sys.stderr.write(json.dumps({"operation": "copy", "auto_clear": "unavailable",
+                                        **normalize_outcome(committed=True, audit_status=audit_status)},
+                                       separators=(",", ":")) + "\n")
+            sys.stderr.write("error: clipboard was written but automatic clearing could not be scheduled\n")
+            return 1
+    print(f"copied {e.name} to clipboard · auto-clear in {args.clear_after}s")
     return 0
 
 
 # inject
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_BARE_ENV_VALUE_RE = re.compile(r"[A-Za-z0-9_./:@%+,-]*\Z")
+
+
+def _dotenv_literal(value: str) -> str:
+    """The supported dotenv subset: one literal line, no dialect escapes.
+
+    Bare portable tokens preserve existing output. Other literals are quoted
+    once; line breaks, interpolation and dialect-dependent escaping are
+    rejected instead of silently transforming a credential.
+    """
+    if any(ord(ch) < 32 or ord(ch) == 127 or ch in "\x85\u2028\u2029" for ch in value) or any(
+        marker in value for marker in ("'", "\\", "$")
+    ):
+        raise ValueError("unsupported dotenv literal")
+    return value if _BARE_ENV_VALUE_RE.fullmatch(value) else "'" + value + "'"
+
+
+def _dotenv_matches(text: str, env_name: str) -> tuple[list[str], list[int]]:
+    lines = text.splitlines(keepends=True)
+    assignment = re.compile(r"^\s*(?:export\s+)?" + re.escape(env_name) + r"\s*=")
+    indices = [i for i, line in enumerate(lines) if assignment.match(line)]
+    return lines, indices
+
+
+def _single_line_assignment(line: str) -> bool:
+    """Do not replace just the first physical line of a multiline value."""
+    value = line.split("=", 1)[1].strip()
+    if value.startswith("'"):
+        return re.fullmatch(r"'[^']*'\s*(?:#.*)?", value) is not None
+    if value.startswith('"'):
+        return re.fullmatch(r'"(?:[^"\\]|\\.)*"\s*(?:#.*)?', value) is not None
+    return not value.endswith("\\")
+
+
 def cmd_inject(args: argparse.Namespace) -> int:
+    if not _ENV_NAME_RE.fullmatch(args.as_env):
+        sys.stderr.write("error: --as requires an environment identifier (letters, digits, underscore)\n")
+        return 2
     ctx = _context_or_error(args)
     if ctx is None:
         return 1
@@ -345,41 +456,49 @@ def cmd_inject(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {ex}\n")
         return 1
 
-    backend = ctx.backend
-    # File exposure sink (not printed, but readable by processes with access).
-    value = backend.get(e.id).unseal()
     existing = target_state.text
-    if target_state.identity is not None:
-        existing_lines = existing.splitlines()
-        match_idx = None
-        for i, line in enumerate(existing_lines):
-            if line.startswith(f"{args.as_env}="):
-                match_idx = i
-                break
-        if match_idx is not None:
-            if not args.replace:
-                sys.stderr.write(
-                    f"error: {args.as_env} already exists in {target} "
-                    f"(use --replace to overwrite)\n"
-                )
-                return 1
-            existing_lines[match_idx] = f"{args.as_env}={value}"
-            new_content = "\n".join(existing_lines) + ("\n" if existing.endswith("\n") else "")
-        else:
-            sep = "" if existing.endswith("\n") or not existing else "\n"
-            new_content = existing + sep + f"{args.as_env}={value}\n"
+    lines, matches = _dotenv_matches(existing, args.as_env)
+    if len(matches) > 1:
+        sys.stderr.write(f"error: duplicate {args.as_env} assignments; resolve the ambiguity before injection\n")
+        return 1
+    if matches and (not args.replace or not _single_line_assignment(lines[matches[0]])):
+        sys.stderr.write(f"error: {args.as_env} already exists; --replace requires one single-line assignment\n")
+        return 1
+    try:
+        # This is a file exposure sink; neither value nor provider diagnostics
+        # enter the receipt. Stop after one failed provider read.
+        value = ctx.backend.get(e.id).unseal()
+    except Exception as ex:
+        _audit_outcome(audit, op="inject", name=e.name, id_=e.id,
+                       file_target=str(target), success=False)
+        sys.stderr.write(f"error: {_secret_read_error(ex)}\n")
+        return 1
+    try:
+        literal = _dotenv_literal(value)
+    except ValueError:
+        _audit_outcome(audit, op="inject", name=e.name, id_=e.id,
+                       file_target=str(target), success=False)
+        sys.stderr.write("error: inject supports literal single-line dotenv values without escapes or interpolation\n")
+        return 1
+    assignment = f"{args.as_env}={literal}"
+    if matches:
+        index = matches[0]
+        ending = "\r\n" if lines[index].endswith("\r\n") else "\n" if lines[index].endswith("\n") else ""
+        lines[index] = assignment + ending
+        new_content = "".join(lines)
     else:
-        new_content = f"{args.as_env}={value}\n"
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        new_content = existing + separator + assignment + "\n"
     try:
         replace_secure_text(target_state, new_content)
     except SecureFileError as ex:
-        audit.record(
+        _audit_outcome(audit,
             op="inject", name=e.name, id_=e.id, file_target=str(target),
             success=False, error="secure file write failed",
         )
         sys.stderr.write(f"error: {ex}\n")
         return 1
-    audit.record(op="inject", name=e.name, id_=e.id, file_target=str(target), success=True)
+    _audit_outcome(audit, op="inject", name=e.name, id_=e.id, file_target=str(target), success=True)
     print(f"injected {e.name} → {target} as {args.as_env}")
     return 0
 
@@ -394,7 +513,6 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         return 1
     store = ctx.store
     audit = ctx.audit
-    backend = ctx.backend
     target = Path(args.file)
     try:
         target_state = read_secure_text(target, missing_ok=False)
@@ -402,51 +520,61 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         sys.stderr.write(f"error: {ex}\n")
         return 1
     content = target_state.text
-    errors = []
-    count = 0
-
-    def replace(match: re.Match) -> str:
-        nonlocal count
-        name = match.group(1)
-        field_name = match.group(2)
-        e = store.get_by_name(name)
+    matches = list(_RESOLVE_RE.finditer(content))
+    keys = list(dict.fromkeys((m.group(1), m.group(2)) for m in matches))
+    entries = {e.name: e for e in store.list()}  # one metadata-only preflight
+    replacements: dict[tuple[str, str | None], str] = {}
+    secret_entries: dict[str, Entry] = {}
+    affected_ids = list(dict.fromkeys(entries[name].id for name, _ in keys if name in entries))
+    error = None
+    if "__KEYS:" in _RESOLVE_RE.sub("", content):
+        error = "invalid placeholder syntax"
+    for name, field_name in keys:
+        e = entries.get(name)
         if e is None:
-            errors.append(f"unknown entry: {name}")
-            return match.group(0)
+            error = f"unknown entry: {name}"
+            break
         if field_name:
-            v = e.fields.get(field_name)
-            if v is None:
-                errors.append(f"entry {name} has no field {field_name}")
-                return match.group(0)
-            count += 1
-            return str(v)
+            if e.fields.get(field_name) is None:
+                error = f"entry {name} has no field {field_name}"
+                break
+            replacements[name, field_name] = str(e.fields[field_name])
+        elif not entry_requires_secret(e):
+            error = f"entry {name} does not declare a secret"
+            break
         else:
-            count += 1
-            try:
-                # File-substitution sink (controlled, not transcript).
-                return backend.get(e.id).unseal()
-            except Exception as ex:
-                errors.append(f"keychain miss for {name}: {ex}")
-                return match.group(0)
-
-    new_content = _RESOLVE_RE.sub(replace, content)
-    if errors:
-        sys.stderr.write("error: resolve failed:\n")
-        for err in errors:
-            sys.stderr.write(f"  - {err}\n")
+            secret_entries[name] = e
+    if error:
+        _audit_outcome(audit, op="resolve", name="<file>", id_=str(target),
+                       file_target=str(target), affected_entry_ids=affected_ids, success=False)
+        sys.stderr.write(f"error: resolve failed: {error}\n")
         return 1
+    try:
+        for name, e in secret_entries.items():
+            replacements[name, None] = ctx.backend.get(e.id).unseal()
+    except Exception as ex:
+        _audit_outcome(audit, op="resolve", name="<file>", id_=str(target),
+                       file_target=str(target), affected_entry_ids=affected_ids, success=False)
+        sys.stderr.write(f"error: resolve failed: {_secret_read_error(ex)}\n")
+        return 1
+    if not matches:
+        print(f"resolved 0 placeholder(s) in {target}")
+        return 0
+    new_content = _RESOLVE_RE.sub(lambda m: replacements[m.group(1), m.group(2)], content)
     try:
         replace_secure_text(target_state, new_content)
     except SecureFileError as ex:
-        audit.record(
+        _audit_outcome(audit,
             op="resolve", name="<file>", id_=str(target),
             file_target=str(target), success=False,
             error="secure file write failed",
+            affected_entry_ids=affected_ids,
         )
         sys.stderr.write(f"error: {ex}\n")
         return 1
-    audit.record(op="resolve", name="<file>", id_=str(target), file_target=str(target), success=True)
-    print(f"resolved {count} placeholder(s) in {target}")
+    _audit_outcome(audit, op="resolve", name="<file>", id_=str(target), file_target=str(target),
+                   affected_entry_ids=affected_ids, success=True)
+    print(f"resolved {len(matches)} placeholder(s) in {target}")
     return 0
 
 
@@ -461,9 +589,8 @@ def cmd_rm(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    service = ctx.service
     try:
-        service.delete_entry(e.id, cascade=args.cascade)
+        ctx.service.delete_entry(e.id, cascade=args.cascade)
     except HasDependents as ex:
         sys.stderr.write(
             f"error: {e.name} is referenced by: {ex.dependents}. "
@@ -471,10 +598,8 @@ def cmd_rm(args: argparse.Namespace) -> int:
         )
         return 1
     except Exception as ex:
-        audit.record(op="delete", name=e.name, id_=e.id, success=False, error=str(ex))
-        sys.stderr.write(f"error: failed to remove {e.name!r}: {ex}\n")
-        return 1
-    audit.record(op="delete", name=e.name, id_=e.id, success=True)
+        return _mutation_failure(audit, op="delete", entry=e, error=ex)
+    _audit_outcome(audit, op="delete", name=e.name, id_=e.id, success=True)
     print(f"removed {e.name}")
     return 0
 
@@ -504,7 +629,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
             if not _:
                 sys.stderr.write(f"--field expects KEY=VALUE, got {kv!r}\n")
                 return 2
-            e.fields[k] = v
+            try:
+                e.fields[k] = _field_value(k, v)
+            except ValueError:
+                sys.stderr.write("error: port must be an integer and secret_body must be true or false\n")
+                return 2
     if args.ref:
         for kv in args.ref:
             role, _, name = kv.partition("=")
@@ -530,11 +659,12 @@ def cmd_edit(args: argparse.Namespace) -> int:
     except NameConflict as ex:
         sys.stderr.write(f"error: {ex}\n")
         return 1
+    except ValidationError:
+        sys.stderr.write("error: invalid entry metadata\n")
+        return 2
     except Exception as ex:
-        audit.record(op="update", name=e.name, id_=e.id, success=False, error=str(ex))
-        sys.stderr.write(f"error: failed to update {e.name!r}: {ex}\n")
-        return 1
-    audit.record(op="update", name=e.name, id_=e.id, success=True)
+        return _mutation_failure(audit, op="update", entry=e, error=ex)
+    _audit_outcome(audit, op="update", name=e.name, id_=e.id, success=True)
     print(f"updated {e.name}")
     return 0
 
@@ -544,15 +674,60 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ctx = _context_or_error(args)
     if ctx is None:
         return 1
+    recover = getattr(args, "recover", False)
+    # A projected or replica context must never obtain the authority backend
+    # merely because recovery was requested for its selected profile.
+    if recover and ctx.kind != "master":
+        sys.stderr.write("error: doctor --recover is available only to the master profile\n")
+        return 1
     paths = ctx.paths
     paths.ensure()
     print(f"keys-keeper {__version__}")
     print(f"config dir: {paths.root}")
     print(f"  data.json:    {'exists' if paths.data_json.exists() else 'will be created on first add'}")
     print(f"  audit.jsonl:  {'exists' if paths.audit_jsonl.exists() else '(none yet)'}")
-    print(f"  config.toml:  {'exists' if paths.config_toml.exists() else '(default)'}")
-    # keychain access probe
-    backend = None
+    if paths.config_toml.exists() or paths.config_toml.is_symlink():
+        print("  config.toml:  legacy S3 config retained; S3 synchronization has been removed")
+    from keys_keeper.master_journal import MASTER_MUTATION_KIND, compose_master_mutations
+    from keys_keeper.operation_journal import pending_operation_refs
+
+    pending = None
+    if ctx.kind == "master":
+        try:
+            pending = pending_operation_refs(paths, kind=MASTER_MUTATION_KIND)
+            if pending:
+                print(f"recovery:     ⚠ {len(pending)} pending mutation(s); run `keys doctor --recover`")
+            else:
+                print("recovery:     ✓ no pending mutations")
+        except Exception:
+            print("recovery:     ✗ pending state is unavailable or unsafe")
+            if recover:
+                print(json.dumps({"operation": "recover", "status": "blocked",
+                                  "recovered_count": 0, **normalize_outcome(committed=False)},
+                                 separators=(",", ":")))
+                return 1
+    if recover:
+        try:
+            manager = compose_master_mutations(ctx.store, ctx.backend)
+            recovered = manager.recover()
+        except Exception as ex:
+            receipt = normalize_outcome(error=ex)
+            status = record_outcome(ctx.audit, op="recover", name="master", id_="",
+                                    success=False, committed=receipt["committed"])
+            print(json.dumps({"operation": "recover", "status": "unconfirmed",
+                              "recovered_count": None,
+                              **normalize_outcome(committed=receipt["committed"], audit_status=status, error=ex)},
+                             separators=(",", ":")))
+            sys.stderr.write("error: recovery did not return a verified receipt; inspect pending state before retrying\n")
+            return 1
+        status = record_outcome(ctx.audit, op="recover", name="master", id_="")
+        print(json.dumps({"operation": "recover", "status": "completed",
+                          "recovered_count": len(recovered), "pending_count": 0,
+                          **normalize_outcome(committed=True, audit_status=status)},
+                         separators=(",", ":")))
+
+    # Presence-only diagnostics: one enumeration, no entry credential reads.
+    kc_ids = None
     try:
         backend = ctx.backend
         print(f"backend:      {type(backend).__name__}")
@@ -563,11 +738,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if os.environ.get("KEYS_KEEPER_MASTER_KEY"):
                 print("  KEYS_KEEPER_MASTER_KEY: ✓ set (file backend unlockable)")
             else:
-                print("  KEYS_KEEPER_MASTER_KEY: ⚠ not set — file backend can't decrypt/store")
-        backend.list_ids()
+                print("  KEYS_KEEPER_MASTER_KEY: not set (another configured unlock source may apply)")
+        kc_ids = set(backend.list_ids())
         print("keychain:     ✓ accessible")
     except Exception as ex:
-        print(f"keychain:     ✗ ERROR — {ex}")
+        print(f"keychain:     ✗ {_secret_read_error(ex)}")
     if os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") == "1":
         print("KEYS_KEEPER_ALLOW_REVEAL: ✓ set")
     else:
@@ -582,8 +757,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         store = ctx.store
         entries = store.list()
         print(f"data.json:    ✓ {len(entries)} entries")
-    except Exception as ex:
-        print(f"data.json:    ✗ ERROR — {ex}")
+    except Exception:
+        print("data.json:    ✗ metadata is unavailable or invalid")
         return 0
 
     # ref integrity
@@ -591,8 +766,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     try:
         detect_cycles(entries)
         print("refs:         ✓ no cycles")
-    except RefCycleError as ex:
-        print(f"refs:         ✗ {ex}")
+    except RefCycleError:
+        print("refs:         ✗ reference cycle detected")
 
     # orphan refs (target missing)
     by_name = {e.name for e in entries}
@@ -602,23 +777,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if r.get("name") not in by_name:
                 orphans.append((e.name, r.get("name")))
     if orphans:
-        print(f"refs:         ⚠ {len(orphans)} orphan ref(s):")
-        for src, tgt in orphans:
-            print(f"   {src} → {tgt} (missing)")
+        print(f"refs:         ⚠ {len(orphans)} orphan ref(s)")
     else:
         print("refs:         ✓ all targets exist")
 
     # keychain orphans (account exists but no metadata) and missing (metadata but no keychain)
-    try:
-        kc_ids = set((backend or ctx.backend).list_ids())
-    except Exception:
-        kc_ids = None
     if kc_ids is not None:
         meta_ids = {e.id for e in entries}
         # passphrase variants
         meta_ids |= {e.id + ":passphrase" for e in entries if e.type.value == "ssh_key"}
-        kc_orphans = kc_ids - meta_ids
-        meta_orphans = {e.id for e in entries if e.type.value in ("api_key", "ssh_key", "note") and e.id not in kc_ids}
+        reserved_prefixes = ("kk:sync-", "kk:project-", "kk:personal-")
+        kc_orphans = {account for account in kc_ids - meta_ids
+                      if not account.startswith(reserved_prefixes)}
+        meta_orphans = {e.id for e in entries if entry_requires_secret(e) and e.id not in kc_ids}
         if kc_orphans:
             print(f"keychain:     ⚠ {len(kc_orphans)} keychain entry/entries without metadata")
         if meta_orphans:
@@ -641,7 +812,7 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
         n = 0
 
     print("┌─ keys-keeper · quickstart ──────────────────────────────┐")
-    print("│ A secrets vault your AI agent can use but never read.    │")
+    print("│ A secrets vault that routes secrets to explicit sinks.   │")
     print("└─────────────────────────────────────────────────────────┘")
     print()
     print(f"  version:    keys-keeper {__version__}")
@@ -687,10 +858,15 @@ def cmd_ssh(args: argparse.Namespace) -> int:
         return 1
     try:
         rc = run_ssh(store=store, backend=backend, server_name=args.name, extra_cmd=args.cmd)
-    except ValueError as ex:
-        sys.stderr.write(f"error: {ex}\n")
+    except ValueError:
+        _audit_outcome(audit, op="ssh", name=e.name, id_=e.id, success=False)
+        sys.stderr.write("error: SSH target or configuration is unsafe or unavailable\n")
         return 1
-    audit.record(op="ssh", name=e.name, id_=e.id, success=(rc == 0))
+    except Exception as ex:
+        status = _audit_outcome(audit, op="ssh", name=e.name, id_=e.id,
+                               success=False, committed=None)
+        return _operation_failure("ssh", ex, audit_status=status)
+    _audit_outcome(audit, op="ssh", name=e.name, id_=e.id, success=(rc == 0), committed=True)
     return rc
 
 
@@ -738,13 +914,9 @@ def _write_serve_url(paths: Paths, url: str) -> None:
     """Persist the live admin URL (with token) so the macOS quick-launch app can
     re-open the running server's tab. Best-effort; 0600; removed on shutdown."""
     try:
-        f = paths.serve_url_file
-        f.write_text(url, encoding="utf-8")
-        try:
-            f.chmod(0o600)
-        except OSError:
-            pass
-    except OSError:
+        from keys_keeper.private_files import atomic_write_bytes, PrivateFileError
+        atomic_write_bytes(paths.serve_url_file, url.encode("utf-8"))
+    except (OSError, PrivateFileError):
         pass
 
 
@@ -772,7 +944,7 @@ def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
     """Refuse legacy writers before a prompt or a credential-backend access.
 
     Schema v3 has catalog bindings which the old encrypted backup format cannot
-    represent.  Reading ``catalog_state`` is intentionally side-effect free;
+    represent. Reading the validated schema version is side-effect free;
     it does not migrate legacy metadata.
     """
     ctx = _context_or_error(args)
@@ -781,15 +953,8 @@ def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
     if ctx.kind != "master":
         sys.stderr.write(f"error: legacy {operation} is only available to the master profile\n")
         return None
-    paths = ctx.paths
-    store = ctx.store
-    try:
-        store.catalog_state()
-    except StoreError as ex:
-        if "explicit schema-v3 migration" in str(ex):
-            return paths, store
-        sys.stderr.write(f"error: cannot verify legacy {operation} compatibility: {ex}\n")
-        return None
+    if ctx.store.schema_version < 3:
+        return ctx
     sys.stderr.write(
         f"error: legacy {operation} is disabled for catalog schema v3 because it "
         "cannot preserve project scopes. Use project-scoped recovery, or restore "
@@ -799,76 +964,104 @@ def _legacy_full_vault_preflight(args: argparse.Namespace, operation: str):
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    preflight = _legacy_full_vault_preflight(args, "export")
-    if preflight is None:
-        return 1
-    paths, store = preflight
-
-    ctx = _context_or_error(args)
+    ctx = _legacy_full_vault_preflight(args, "export")
     if ctx is None:
         return 1
-    backend = ctx.backend
+    from keys_keeper.private_files import (
+        PrivateFileCommitError, PrivateFileError,
+        atomic_write_bytes, secure_read, secure_read_state,
+    )
+    from keys_keeper.vault_snapshot import MAX_SNAPSHOT_BLOB_BYTES, build_snapshot_payload, encrypt_snapshot
+    target = Path(args.file)
+    replace_existing = getattr(args, "replace", False)
+    try:
+        state = secure_read_state(target, max_bytes=MAX_SNAPSHOT_BLOB_BYTES,
+                                  require_private=False, missing_ok=True)
+        if state.identity is not None and not replace_existing:
+            sys.stderr.write("error: backup already exists; use --replace to overwrite it\n")
+            return 1
+    except (PrivateFileError, OSError):
+        sys.stderr.write("error: backup target is not a safe regular file\n")
+        return 1
     audit = ctx.audit
     pw = getpass.getpass("Export password: ")
     pw2 = getpass.getpass("Confirm: ")
-    if pw != pw2:
-        sys.stderr.write("passwords do not match\n")
+    if pw != pw2 or not pw:
+        sys.stderr.write("passwords do not match or are empty\n")
         return 1
-    payload = {
-        "schema_version": 1,
-        "entries": [],
-    }
-    for e in store.list():
-        rec = e.to_dict()
-        rec["_secret"] = None
-        rec["_secret_passphrase"] = None
-        try:
-            # AES-GCM-encrypted blob sink (controlled, not transcript).
-            rec["_secret"] = backend.get(e.id).unseal()
-        except Exception:
-            pass
-        try:
-            rec["_secret_passphrase"] = backend.get(e.id + ":passphrase").unseal()
-        except Exception:
-            pass
-        payload["entries"].append(rec)
-    from keys_keeper.crypto import encrypt_blob
-    import json as _json
-    blob = encrypt_blob(_json.dumps(payload).encode("utf-8"), password=pw)
-    Path(args.file).write_bytes(blob)
-    audit.record(op="export", name="<all>", id_="-", file_target=args.file, success=True)
-    print(f"exported {len(payload['entries'])} entries to {args.file}")
+    try:
+        # Export and KK1/KK2 use one complete-snapshot contract. No partial
+        # backup can appear after a denied/unavailable credential read.
+        payload = build_snapshot_payload(ctx.store, ctx.backend)
+        blob = encrypt_snapshot(payload, passphrase=pw)
+    except Exception:
+        _audit_outcome(audit, op="export", name="<all>", id_="-",
+                       file_target=str(target), success=False)
+        sys.stderr.write("error: complete encrypted backup could not be prepared; no backup was written\n")
+        return 1
+    try:
+        atomic_write_bytes(target, blob, replace_existing=replace_existing,
+                           expected=state, ensure_parent_private=False)
+    except PrivateFileCommitError:
+        status = record_outcome(audit, op="export", name="<all>", id_="-",
+                                file_target=str(target), committed=True)
+        sys.stderr.write(json.dumps({"operation": "export", "durability": "unconfirmed",
+                                    **normalize_outcome(committed=True, audit_status=status)},
+                                   separators=(",", ":")) + "\n")
+        sys.stderr.write("error: backup was published but directory durability could not be confirmed; inspect before retrying\n")
+        return 1
+    except (PrivateFileError, OSError):
+        _audit_outcome(audit, op="export", name="<all>", id_="-",
+                       file_target=str(target), success=False)
+        sys.stderr.write("error: backup publication failed; target may have changed\n")
+        return 1
+    try:
+        verified = secure_read(target, max_bytes=MAX_SNAPSHOT_BLOB_BYTES) == blob
+    except (PrivateFileError, OSError):
+        verified = False
+    if not verified:
+        status = record_outcome(audit, op="export", name="<all>", id_="-",
+                                file_target=str(target), committed=True)
+        sys.stderr.write(json.dumps({"operation": "export", "verification": "failed",
+                                    **normalize_outcome(committed=True, audit_status=status)},
+                                   separators=(",", ":")) + "\n")
+        sys.stderr.write("error: backup was published but verification failed; inspect before retrying\n")
+        return 1
+    _audit_outcome(audit, op="export", name="<all>", id_="-", file_target=str(target), success=True)
+    print(f"exported {len(payload['entries'])} entries to {target}")
     return 0
 
 
 def cmd_import(args: argparse.Namespace) -> int:
-    preflight = _legacy_full_vault_preflight(args, "import")
-    if preflight is None:
+    ctx = _legacy_full_vault_preflight(args, "import")
+    if ctx is None:
         return 1
-    paths, store = preflight
-    from keys_keeper.crypto import decrypt_blob, BadPassword
-    import json as _json
-    paths.ensure()
-    pw = getpass.getpass("Import password: ")
-    blob = Path(args.file).read_bytes()
+    from keys_keeper.crypto import BadPassword
+    from keys_keeper.private_files import PrivateFileError, secure_read
+    from keys_keeper.vault_snapshot import MAX_SNAPSHOT_BLOB_BYTES, decrypt_snapshot
     try:
-        raw = decrypt_blob(blob, password=pw)
+        blob = secure_read(Path(args.file), max_bytes=MAX_SNAPSHOT_BLOB_BYTES,
+                           require_private=False)
+    except (PrivateFileError, OSError):
+        sys.stderr.write("error: backup source is unsafe, unavailable, or exceeds the size limit\n")
+        return 1
+    if len(blob) < 48 or blob[:4] != b"KK1\x00":
+        sys.stderr.write("error: not a keys-keeper encrypted backup\n")
+        return 1
+    pw = getpass.getpass("Import password: ")
+    try:
+        payload = decrypt_snapshot(blob, passphrase=pw)
     except BadPassword as ex:
         sys.stderr.write(f"error: {ex}\n")
         return 1
     try:
-        payload = _json.loads(raw)
         validated_entries, _ = validate_snapshot_payload(payload)
-    except (_json.JSONDecodeError, UnicodeDecodeError, ValidationError) as ex:
-        sys.stderr.write(f"error: invalid import payload: {ex}\n")
+    except ValidationError:
+        sys.stderr.write("error: invalid or incomplete import payload\n")
         return 1
-    ctx = _context_or_error(args)
-    if ctx is None:
-        return 1
-    backend = ctx.backend
     service = ctx.service
     audit = ctx.audit
-    existing = {e.name for e in store.list()}
+    existing = {e.name for e in ctx.store.list()}
     imported = 0
     for rec, e in zip(payload["entries"], validated_entries):
         secret = rec.get("_secret")
@@ -879,25 +1072,28 @@ def cmd_import(args: argparse.Namespace) -> int:
         try:
             service.create_entry(
                 e,
-                secrets=SecretInput(value=secret, passphrase=passphrase),
+                secrets=SecretInput(value=secret, passphrase=passphrase, mode="replace"),
                 replace=not fresh,
             )
         except Exception as ex:
-            # ``VaultService`` has already compensated metadata and secret
-            # writes. Stop after the first failure so a rerun can resume at the
-            # same entry without a flood of repeated backend errors.
-            audit.record(op="import", name=e.name, id_=e.id,
-                         file_target=args.file, success=False)
+            # Completed earlier rows remain published. The failing row can
+            # require forward recovery, so a rerun must inspect state first.
+            receipt = normalize_outcome(committed=True if imported else None, error=ex)
+            status = record_outcome(audit, op="import", name=e.name, id_=e.id,
+                                    file_target=args.file, success=False,
+                                    committed=receipt["committed"])
+            sys.stderr.write(json.dumps({"operation": "import", "stored_entries": imported,
+                                        **normalize_outcome(committed=receipt["committed"], audit_status=status, error=ex)},
+                                       separators=(",", ":")) + "\n")
             sys.stderr.write(
                 f"error: stored {imported} entr{'y' if imported == 1 else 'ies'}, "
-                f"then failed on {e.name!r}:\n{ex}\n"
-                f"Fix the cause, then re-run `keys import` — already-stored "
-                f"entries are skipped and the rest resume.\n"
+                f"then stopped on {e.name!r}. Check vault recovery before continuing; "
+                f"already-stored entries are skipped by a merge import.\n"
             )
             return 1
         existing.add(e.name)
         imported += 1
-    audit.record(op="import", name="<all>", id_="-", file_target=args.file, success=True)
+    _audit_outcome(audit, op="import", name="<all>", id_="-", file_target=args.file, success=True)
     print(f"imported {imported} entries")
     return 0
 
@@ -922,9 +1118,12 @@ def cmd_audit(args: argparse.Namespace) -> int:
         unit = args.since[-1]
         delta = {"h": "hours", "d": "days"}[unit]
         since = datetime.now(timezone.utc) - timedelta(**{delta: amount})
-    events = list(audit.search(op=args.op, name=args.name, since=since, limit=args.limit))
+    entry = ctx.store.get_by_name(args.name) if args.name else None
+    selector = {"entry_id": entry.id} if entry is not None else {"name": args.name}
+    events = list(audit.search(op=args.op, since=since, limit=args.limit,
+                               newest_first=True, **selector))
     if args.tail:
-        events = events[-args.limit:]
+        events.reverse()  # newest N, displayed in chronological log order
     for ev in events:
         print(f"{ev['ts']}  {ev['op']:8s}  {ev['name']:24s}  {ev.get('file_target') or '-'}")
     return 0
@@ -1093,6 +1292,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # doctor
     dr = sub.add_parser("doctor", help="health check + paths")
+    dr.add_argument("--recover", action="store_true",
+                    help="explicitly recover pending master mutations; may read and write secrets")
     dr.set_defaults(func=cmd_doctor)
 
     # keychain — native macOS prompt/bypass policy
@@ -1114,6 +1315,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ex = sub.add_parser("export", help="encrypted backup to file")
     ex.add_argument("file")
+    ex.add_argument("--replace", action="store_true", help="explicitly replace an existing backup")
     ex.set_defaults(func=cmd_export)
 
     im = sub.add_parser("import", help="restore from encrypted backup")
@@ -1159,9 +1361,10 @@ def build_parser() -> argparse.ArgumentParser:
     app_uninstall.add_argument("--system", action="store_true", help="remove from /Applications (macOS only)")
     app_uninstall.set_defaults(func=cmd_app_uninstall)
 
-    # sync — S3 cloud backup/sync
-    from keys_keeper.cli_sync import register_sync
-    register_sync(sub)
+    sync = sub.add_parser("sync", help="private VPS synchronization")
+    sync_commands = sync.add_subparsers(dest="sync_command", required=True)
+    from keys_keeper.cli_sync_vps import register_vps_sync
+    register_vps_sync(sync_commands)
 
     from keys_keeper.cli_catalog import register_catalog
     register_catalog(sub)
@@ -1171,11 +1374,30 @@ def build_parser() -> argparse.ArgumentParser:
     from keys_keeper.cli_devices import register as register_devices
     register_devices(sub)
 
-    # webvault — zero-knowledge web vault server
-    from keys_keeper.webvault.cli import register_webvault
-    register_webvault(sub)
-
     return p
+
+
+def _removed_legacy_command(argv: list[str]) -> str | None:
+    # Diagnose retired commands before parsing their old credential flags, so
+    # argparse never repeats values from an obsolete setup invocation.
+    position = 0
+    selectors = {"--profile", "--project", "--env"}
+    while position < len(argv) and argv[position].startswith("--"):
+        option = argv[position]
+        if option in selectors:
+            position += 2
+        elif option.split("=", 1)[0] in selectors and "=" in option:
+            position += 1
+        else:
+            return None
+    if position >= len(argv):
+        return None
+    if argv[position] == "webvault":
+        return "S3 WebVault has been removed; use the local admin with keys serve"
+    if (argv[position] == "sync" and position + 1 < len(argv)
+            and argv[position + 1] in {"setup", "push", "pull", "status", "mode", "rollback", "auto"}):
+        return "S3 synchronization has been removed; use My computers or keys sync vps"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1193,19 +1415,29 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError):
             pass
+    argv = list(sys.argv[1:] if argv is None else argv)
+    removed = _removed_legacy_command(argv)
+    if removed:
+        sys.stderr.write("error: " + removed + "\n")
+        return 2
     parser = build_parser()
     args = parser.parse_args(argv)
     # These legacy/canonical catalog writers always target the authoritative
     # root. They must never quietly operate on the root while a worker profile
     # was selected.
-    if args.command in {"folders", "projects", "sync", "webvault"}:
+    if args.command in {"folders", "projects", "sync"}:
         context = _context_or_error(args)
         if context is None:
             return 1
         if context.kind != "master":
             sys.stderr.write("error: this command is available only to the master profile\n")
             return 1
-    return args.func(args)
+    try:
+        return args.func(args)
+    except Exception as ex:
+        # A last-resort adapter boundary must neither print provider data nor
+        # promise rollback for an operation whose receipt was never returned.
+        return _operation_failure(args.command, ex)
 
 
 if __name__ == "__main__":

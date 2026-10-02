@@ -11,15 +11,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from keys_keeper.audit import AuditLog
-from keys_keeper.backend import KeychainError, Sealed
+from keys_keeper.audit import AuditLog, normalize_outcome
+from keys_keeper.backend import Sealed
 from keys_keeper.composition import build_backend
 from keys_keeper.paths import Paths
-from keys_keeper.secure_io import SecureFileError, read_secure_text, replace_secure_text
+from keys_keeper.secure_io import SecureFileCommitError, SecureFileError, read_secure_text, replace_secure_text
 from keys_keeper.service import compensating_secret_update
 from keys_keeper.store import MetadataStore
 from keys_keeper.sync_protocol_v2 import (
-    KK2Error,
     canonical_json_bytes,
     generate_device_identity,
     generate_recovery_secret,
@@ -41,14 +40,12 @@ from keys_keeper.sync_vps import (
     invite_secret_hash,
     load_vps_config,
     make_membership_statement,
-    make_revocation_statement,
     new_device_token,
     save_vps_config,
     sign_membership,
-    sign_revocation,
     verify_membership,
 )
-from keys_keeper.sync_vps_client import VpsClientError, VpsSyncClient
+from keys_keeper.sync_vps_client import VpsProtocolError, VpsSyncClient, _decode_json
 
 
 def _b64(value: bytes) -> str:
@@ -134,8 +131,8 @@ def _bootstrap_admin_token(args: argparse.Namespace, paths: Paths, backend):
 
 def _read_json_file(path: str, *, expected_type: str) -> dict[str, Any]:
     try:
-        payload = json.loads(read_secure_text(Path(path).expanduser(), missing_ok=False).text)
-    except (ValueError, OSError, SecureFileError) as exc:
+        payload = _decode_json(read_secure_text(Path(path).expanduser(), missing_ok=False).text.encode("utf-8"))
+    except (ValueError, OSError, SecureFileError, VpsProtocolError) as exc:
         raise VpsSyncError(f"cannot read a valid {expected_type} file") from exc
     if not isinstance(payload, dict) or payload.get("protocol") != "KK2" or payload.get("type") != expected_type:
         raise VpsTrustError(f"file is not a KK2 {expected_type}")
@@ -149,6 +146,29 @@ def _client(config: VpsSyncConfig, backend) -> VpsSyncClient:
         device_id=config.device_id,
         proxy=config.proxy,
     )
+
+
+def _save_enrollment(config: VpsSyncConfig, paths: Paths, backend, secrets: dict[str, str]) -> None:
+    """Keep credentials when the matching enrollment was already published."""
+    completion_error = None
+    credentials_staged = False
+    try:
+        with compensating_secret_update(backend, secrets):
+            credentials_staged = True
+            try:
+                save_vps_config(config, paths)
+            except SecureFileCommitError as exc:
+                # Only the config writer can establish this publication outcome.
+                # Let the compensation scope finish normally, then report it.
+                completion_error = exc
+    except Exception as exc:
+        if not credentials_staged and getattr(exc, "committed", None) is True:
+            # The backend write was subsequently restored by compensation.
+            # Its original marker does not describe the enrollment's outcome.
+            raise VpsSyncError("enrollment credential update failed; previous credentials were restored") from None
+        raise
+    if completion_error is not None:
+        raise completion_error
 
 
 def _engine(paths: Paths):
@@ -175,13 +195,27 @@ def _engine(paths: Paths):
     )
 
 
+def _audit(paths: Paths, **event) -> str:
+    from keys_keeper.cli import _audit_outcome
+    return _audit_outcome(AuditLog(paths), **event)
+
+
 def _handled(fn):
     def wrapped(args):
         try:
             return fn(args)
-        except (VpsSyncError, VpsClientError, KK2Error, KeychainError, SecureFileError) as exc:
-            sys.stderr.write(f"error: {exc}\n")
-            return 1
+        except KeyboardInterrupt:
+            return 130
+        except Exception as exc:
+            from keys_keeper.cli import _operation_failure
+            operation = "sync.vps." + fn.__name__.removeprefix("cmd_vps_")
+            committed = normalize_outcome(
+                committed=False if fn.__name__ in {"cmd_vps_status", "cmd_vps_devices"} else None,
+                error=exc,
+            )["committed"]
+            status = _audit(Paths(), op=operation, name="<all>", id_="-",
+                            success=committed is True, committed=committed)
+            return _operation_failure(operation, exc, committed=committed, audit_status=status)
 
     return wrapped
 
@@ -232,19 +266,18 @@ def cmd_vps_init(args: argparse.Namespace) -> int:
         wrap_public_key=_b64(identity.agreement_public_bytes),
         proxy=args.proxy,
     )
-    with compensating_secret_update(
-        backend,
+    _save_enrollment(
+        config, paths, backend,
         {
             SYNC_VPS_TOKEN: device_token,
             SYNC_VPS_VAULT_KEY: _b64(vault_key),
             SYNC_VPS_SIGNING_PRIVATE: _b64(identity.signing_private_bytes),
             SYNC_VPS_WRAPPING_PRIVATE: _b64(identity.agreement_private_bytes),
         },
-    ):
-        save_vps_config(config, paths)
-    AuditLog(paths).record(op="sync.vps.init", name="<all>", id_="-", file_target=args.endpoint)
+    )
+    _audit(paths, op="sync.vps.init", name="<all>", id_="-", file_target=args.endpoint)
     if admin_entry is not None:
-        AuditLog(paths).record(
+        _audit(paths,
             op="sync.vps.bootstrap",
             name=admin_entry.name,
             id_=admin_entry.id,
@@ -260,7 +293,7 @@ def cmd_vps_push(args: argparse.Namespace) -> int:
     paths = Paths()
     engine, config, _backend = _engine(paths)
     changed = engine.push()
-    AuditLog(paths).record(op="sync.vps.push", name=f"<+{changed}>", id_="-", file_target=config.endpoint)
+    _audit(paths, op="sync.vps.push", name=f"<+{changed}>", id_="-", file_target=config.endpoint)
     print(f"pushed — {changed} change(s) synchronized through the VPS")
     return 0
 
@@ -270,7 +303,7 @@ def cmd_vps_pull(args: argparse.Namespace) -> int:
     paths = Paths()
     engine, config, _backend = _engine(paths)
     changed = engine.pull()
-    AuditLog(paths).record(op="sync.vps.pull", name=f"<+{changed}>", id_="-", file_target=config.endpoint)
+    _audit(paths, op="sync.vps.pull", name=f"<+{changed}>", id_="-", file_target=config.endpoint)
     print(f"pulled — {changed} change(s) merged from the VPS")
     return 0
 
@@ -292,10 +325,10 @@ def cmd_vps_status(args: argparse.Namespace) -> int:
 def cmd_vps_invite(args: argparse.Namespace) -> int:
     paths = Paths()
     _require_new_secret_file(args.out)
-    engine, config, backend = _engine(paths)
+    engine, config, _backend = _engine(paths)
     if config.device_id != config.root_device_id:
         raise VpsSyncError("only the pinned root device can create an invitation")
-    client = _client(config, backend)
+    client = engine.client
     secret = invite_secret()
     created = client.create_invite(
         config.vault_id,
@@ -323,7 +356,7 @@ def cmd_vps_invite(args: argparse.Namespace) -> int:
             "checkpoint_sequence": 0 if verified_head is None else verified_head.sequence,
     }
     _safe_json_file(args.out, bundle)
-    AuditLog(paths).record(op="sync.vps.invite", name="<device>", id_=invite_id, file_target=config.endpoint)
+    _audit(paths, op="sync.vps.invite", name="<device>", id_=invite_id, file_target=config.endpoint)
     print(f"one-time device invitation written to {Path(args.out).expanduser()}")
     print(f"invite id: {invite_id}")
     print(f"trust fingerprint: {_invite_trust_fingerprint(bundle)}")
@@ -384,15 +417,14 @@ def cmd_vps_join(args: argparse.Namespace) -> int:
         # Persist the retry identity before consuming the one-time invite. If
         # the response is lost, rerunning join sends the exact same id, keys,
         # and token and the server returns the original claim.
-        with compensating_secret_update(
-            backend,
+        _save_enrollment(
+            config, paths, backend,
             {
                 SYNC_VPS_TOKEN: token,
                 SYNC_VPS_SIGNING_PRIVATE: _b64(identity.signing_private_bytes),
                 SYNC_VPS_WRAPPING_PRIVATE: _b64(identity.agreement_private_bytes),
             },
-        ):
-            save_vps_config(config, paths)
+        )
     else:
         config = load_vps_config(paths)
         pinned = {
@@ -434,7 +466,7 @@ def cmd_vps_join(args: argparse.Namespace) -> int:
 @_handled
 def cmd_vps_approve(args: argparse.Namespace) -> int:
     paths = Paths()
-    engine, config, backend = _engine(paths)
+    engine, config, _backend = _engine(paths)
     if config.device_id != config.root_device_id:
         raise VpsSyncError("only the pinned root device can approve an invitation")
     invite_bundle = _read_json_file(args.invite, expected_type="device-invite")
@@ -452,12 +484,12 @@ def cmd_vps_approve(args: argparse.Namespace) -> int:
     checkpoint_sequence = invite_bundle.get("checkpoint_sequence")
     checkpoint_commit_id = invite_bundle.get("checkpoint_commit_id")
     checkpoint_manifest_hash = invite_bundle.get("checkpoint_manifest_hash")
-    if not isinstance(checkpoint_sequence, int):
+    if type(checkpoint_sequence) is not int:
         raise VpsTrustError("invitation file has no valid checkpoint")
     engine.require_checkpoint(
         checkpoint_sequence, checkpoint_commit_id, checkpoint_manifest_hash
     )
-    client = _client(config, backend)
+    client = engine.client
     invite = client.get_invite(config.vault_id, args.invite_id)
     claimant = invite.get("claimant") if isinstance(invite, dict) else None
     if not isinstance(claimant, dict):
@@ -480,11 +512,9 @@ def cmd_vps_approve(args: argparse.Namespace) -> int:
         checkpoint_manifest_hash=checkpoint_manifest_hash,
         checkpoint_sequence=checkpoint_sequence,
     )
-    signing_private = _unb64(
-        backend.get(SYNC_VPS_SIGNING_PRIVATE).unseal(), label="local signing key", length=32
-    )
+    signing_private = engine.signing_private_key
     wrapped = wrap_vault_key_for_recipient(
-        _unb64(backend.get(SYNC_VPS_VAULT_KEY).unseal(), label="local vault key", length=32),
+        engine.vault_key,
         recipient_public_key=_unb64(wrap_public_key, label="claimant wrapping key", length=32),
         vault_id=config.vault_id,
         recipient_device_id=device_id,
@@ -497,7 +527,7 @@ def cmd_vps_approve(args: argparse.Namespace) -> int:
         membership_statement=canonical_json_bytes(statement).decode("utf-8"),
         membership_signature=sign_membership(statement, signing_private),
     )
-    AuditLog(paths).record(op="sync.vps.approve", name="<device>", id_=device_id, file_target=config.endpoint)
+    _audit(paths, op="sync.vps.approve", name="<device>", id_=device_id, file_target=config.endpoint)
     print(f"approved device {device_id}")
     return 0
 
@@ -575,21 +605,20 @@ def cmd_vps_finish(args: argparse.Namespace) -> int:
         expected_recipient_device_id=config.device_id,
         context=canonical_json_bytes(checked),
     )
-    with compensating_secret_update(backend, {SYNC_VPS_VAULT_KEY: _b64(vault_key)}):
-        save_vps_config(
-            replace(
-                config,
-                status="active",
-                invite_id="",
-                inviter_device_id="",
-                inviter_sign_public_key="",
-                trusted_checkpoint_commit_id=checked["checkpoint_commit_id"] or "",
-                trusted_checkpoint_manifest_hash=checked["checkpoint_manifest_hash"] or "",
-                trusted_checkpoint_sequence=checked["checkpoint_sequence"],
-            ),
-            paths,
-        )
-    AuditLog(paths).record(op="sync.vps.finish", name="<device>", id_=config.device_id, file_target=config.endpoint)
+    _save_enrollment(
+        replace(
+            config,
+            status="active",
+            invite_id="",
+            inviter_device_id="",
+            inviter_sign_public_key="",
+            trusted_checkpoint_commit_id=checked["checkpoint_commit_id"] or "",
+            trusted_checkpoint_manifest_hash=checked["checkpoint_manifest_hash"] or "",
+            trusted_checkpoint_sequence=checked["checkpoint_sequence"],
+        ),
+        paths, backend, {SYNC_VPS_VAULT_KEY: _b64(vault_key)},
+    )
+    _audit(paths, op="sync.vps.finish", name="<device>", id_=config.device_id, file_target=config.endpoint)
     print("device approved; run `keys sync vps pull`")
     return 0
 
@@ -614,33 +643,9 @@ def cmd_vps_devices(args: argparse.Namespace) -> int:
 @_handled
 def cmd_vps_revoke(args: argparse.Namespace) -> int:
     paths = Paths()
-    engine, config, backend = _engine(paths)
-    if config.device_id != config.root_device_id:
-        raise VpsSyncError("only the pinned root device can revoke another device")
-    if args.device_id in (config.device_id, config.root_device_id):
-        raise VpsSyncError("refusing to revoke this device or the pinned root device")
-    verified_head = engine.verified_head()
-    statement = make_revocation_statement(
-        vault_id=config.vault_id,
-        device_id=args.device_id,
-        revoked_by_device_id=config.device_id,
-        checkpoint_commit_id=None if verified_head is None else verified_head.commit_id,
-        checkpoint_manifest_hash=None if verified_head is None else verified_head.manifest_hash,
-        checkpoint_sequence=0 if verified_head is None else verified_head.sequence,
-    )
-    signature = sign_revocation(
-        statement,
-        _unb64(backend.get(SYNC_VPS_SIGNING_PRIVATE).unseal(), label="local signing key", length=32),
-    )
-    _client(config, backend).revoke_device(
-        config.vault_id,
-        args.device_id,
-        expected_head=None if verified_head is None else verified_head.commit_id,
-        revocation_statement=canonical_json_bytes(statement).decode("utf-8"),
-        revocation_signature=signature,
-    )
-    engine.refresh_trust_anchor()
-    AuditLog(paths).record(op="sync.vps.revoke", name="<device>", id_=args.device_id, file_target=config.endpoint)
+    engine, config, _backend = _engine(paths)
+    engine.revoke_device(args.device_id)
+    _audit(paths, op="sync.vps.revoke", name="<device>", id_=args.device_id, file_target=config.endpoint)
     print(f"revoked server access for device {args.device_id}")
     print("important: this does not erase snapshots or VaultKey material already held by that device")
     return 0

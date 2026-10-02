@@ -1,5 +1,6 @@
 """Filesystem paths for keys-keeper config + data."""
 import os
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +42,7 @@ class Paths:
 
     @property
     def config_toml(self) -> Path:
+        # Retired S3 settings: diagnosed by doctor, never read or rewritten.
         return self.root / "config.toml"
 
     @property
@@ -60,12 +62,6 @@ class Paths:
         # Encrypted secret blob for the Linux headless (no-keyring) backend.
         # AES-256-GCM, unlocked by KEYS_KEEPER_MASTER_KEY. See backend_file.py.
         return self.root / "secrets.enc"
-
-    @property
-    def sync_state_json(self) -> Path:
-        # Non-secret sync bookkeeping (last-synced version, last-sync/auto times)
-        # for `keys sync status` + the auto-hook debounce. Never holds secrets.
-        return self.root / "sync-state.json"
 
     @property
     def profiles_dir(self) -> Path:
@@ -119,18 +115,53 @@ class Paths:
 
 
 def ensure_private_dir(directory: Path) -> None:
-    """Create ``directory`` (and parents) with 0700 on POSIX.
+    """Create private app state; validate existing Windows ACLs without repair.
 
-    ``mkdir(mode=...)`` is masked by the process umask, so it cannot be
-    relied on to produce 0700 — we mkdir, then explicitly chmod to 0o700.
-    On Windows POSIX mode bits are meaningless; we skip the chmod there so
-    we don't break the platform. On POSIX a chmod failure is surfaced
-    (not swallowed) because a world-accessible config dir would leak the
-    audit log and other per-user state.
+    Newly created parents are private too. This function is only for app-owned
+    state directories; secret sinks in arbitrary user directories do not use it.
     """
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = Path(directory)
+    _mkdir_private(directory)
+    info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & 0x400):
+        raise OSError("private state directory must not be a symlink or reparse point")
     if os.name == "posix":
-        os.chmod(directory, 0o700)
+        if info.st_uid != os.geteuid():
+            raise OSError("private state directory must be owned by this user")
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        try:
+            opened = os.fstat(fd)
+            if ((opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+                    or not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.geteuid()):
+                raise OSError("private state directory changed while opening")
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+    elif os.name == "nt":
+        from keys_keeper.windows_file_security import validate_path
+        validate_path(directory, directory=True)
+
+
+def _mkdir_private(directory: Path) -> None:
+    try:
+        directory.lstat()
+        return
+    except FileNotFoundError:
+        pass
+    try:
+        if os.name == "nt":
+            from keys_keeper.windows_file_security import create_private_directory
+            create_private_directory(directory)
+        else:
+            directory.mkdir(mode=0o700)
+    except FileNotFoundError:
+        _mkdir_private(directory.parent)
+        _mkdir_private(directory)
+    except FileExistsError:
+        # Another creator won. The final caller still validates this object.
+        pass
 
 
 def _canonical_uuid(value: UUID | str, *, field_name: str) -> UUID:

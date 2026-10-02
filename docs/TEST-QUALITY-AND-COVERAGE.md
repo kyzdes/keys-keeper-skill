@@ -1,5 +1,10 @@
 # Test quality and performance evidence
 
+The 0.12 development candidate removes S3/WebVault code and its feature tests.
+The dated 0.11 measurements below are historical. Current scope, resource
+regressions and final validation are recorded in
+[the VPS refactor report](architecture/VPS-REFACTOR-2026-10-02.md).
+
 Audit baseline: source commit `61a081e8466559f544a0f641b1131d0e60f362fa`
 (0.10.1). This document distinguishes static inventory, executable regression
 contracts, measured CI coverage, and installed application measurements.

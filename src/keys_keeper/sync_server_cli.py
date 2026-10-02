@@ -40,86 +40,24 @@ class BackupError(RuntimeError):
     """Metadata-only backup failure; never includes database contents."""
 
 
-def _windows_private_acl(path: Path, *, restrict: bool = False) -> None:
-    """Validate a protected DACL using the process token, never environment names.
+class BackupCommitError(BackupError):
+    """The complete backup was published; durability or cleanup is uncertain."""
+    committed = True
 
-    Only the invoking user and the privileged SYSTEM/Administrators principals
-    may receive access. `restrict` is only used for newly-created private temp
-    objects, never to silently change an operator's existing backup directory.
-    """
-    import ctypes
-    from ctypes import wintypes as w
-    api = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    pointer = ctypes.c_void_p
-    def bind(library, name, args, result):
-        function = getattr(library, name)
-        function.argtypes, function.restype = args, result
-        return function
-    process = bind(kernel, "GetCurrentProcess", [], w.HANDLE)
-    close = bind(kernel, "CloseHandle", [w.HANDLE], w.BOOL)
-    free = bind(kernel, "LocalFree", [pointer], pointer)
-    open_token = bind(api, "OpenProcessToken", [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)], w.BOOL)
-    token_info = bind(api, "GetTokenInformation", [w.HANDLE, ctypes.c_int, pointer, w.DWORD, ctypes.POINTER(w.DWORD)], w.BOOL)
-    sid_text = bind(api, "ConvertSidToStringSidW", [pointer, ctypes.POINTER(w.LPWSTR)], w.BOOL)
-    get_security = bind(api, "GetNamedSecurityInfoW", [w.LPWSTR, ctypes.c_int, w.DWORD, ctypes.POINTER(pointer), pointer,
-                        ctypes.POINTER(pointer), pointer, ctypes.POINTER(pointer)], w.DWORD)
-    get_control = bind(api, "GetSecurityDescriptorControl", [pointer, ctypes.POINTER(w.WORD), ctypes.POINTER(w.DWORD)], w.BOOL)
-    get_ace = bind(api, "GetAce", [pointer, w.DWORD, ctypes.POINTER(pointer)], w.BOOL)
-    def checked(result):
-        if not result:
-            raise BackupError("cannot verify private Windows backup permissions")
-    def sid_string(sid):
-        text = w.LPWSTR()
-        checked(sid_text(sid, ctypes.byref(text)))
-        try:
-            return text.value
-        finally:
-            free(ctypes.cast(text, pointer))
-    token = w.HANDLE()
-    checked(open_token(process(), 0x0008, ctypes.byref(token)))  # TOKEN_QUERY
+
+def _windows_private_acl(path: Path, *, restrict: bool = False) -> None:
+    """Retain the relay's protected-parent contract using shared native policy."""
+    from keys_keeper.windows_file_security import (
+        WindowsFileSecurityError, restrict_new_object, validate_path,
+    )
     try:
-        required = w.DWORD()
-        token_info(token, 1, None, 0, ctypes.byref(required))  # TokenUser
-        checked(0 < required.value <= 65536)
-        data = ctypes.create_string_buffer(required.value)
-        checked(token_info(token, 1, data, len(data), ctypes.byref(required)))
-        user = sid_string(pointer.from_buffer(data).value)
-    finally:
-        close(token)
-    allowed = {user, "S-1-5-18", "S-1-5-32-544"}
-    if restrict:
-        convert = bind(api, "ConvertStringSecurityDescriptorToSecurityDescriptorW",
-                       [w.LPCWSTR, w.DWORD, ctypes.POINTER(pointer), pointer], w.BOOL)
-        get_dacl = bind(api, "GetSecurityDescriptorDacl", [pointer, ctypes.POINTER(w.BOOL), ctypes.POINTER(pointer), ctypes.POINTER(w.BOOL)], w.BOOL)
-        set_security = bind(api, "SetNamedSecurityInfoW", [w.LPWSTR, ctypes.c_int, w.DWORD, pointer, pointer, pointer, pointer], w.DWORD)
-        descriptor, dacl = pointer(), pointer()
-        checked(convert(f"D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", 1, ctypes.byref(descriptor), None))
-        try:
-            present, defaulted = w.BOOL(), w.BOOL()
-            checked(get_dacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)))
-            checked(set_security(str(path), 1, 0x80000004, None, None, dacl, None) == 0)
-        finally:
-            free(descriptor)
-    owner, dacl, descriptor = pointer(), pointer(), pointer()
-    checked(get_security(str(path), 1, 0x00000005, ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(descriptor)) == 0)
-    try:
-        control, revision = w.WORD(), w.DWORD()
-        checked(get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)))
-        if not dacl.value or not control.value & 0x1000 or sid_string(owner) not in allowed:
-            raise BackupError("backup directory requires a protected private Windows DACL")
-        # ACL header: BYTE revision, BYTE reserved, WORD size, WORD AceCount.
-        count = ctypes.c_ushort.from_address(dacl.value + 4).value
-        for index in range(count):
-            ace = pointer()
-            checked(get_ace(dacl, index, ctypes.byref(ace)))
-            kind = ctypes.c_ubyte.from_address(ace.value).value
-            if kind == 1:  # ACCESS_DENIED_ACE cannot grant access
-                continue
-            if kind != 0 or sid_string(ace.value + 8) not in allowed:
-                raise BackupError("backup directory grants access to another Windows principal")
-    finally:
-        free(descriptor)
+        if restrict:
+            # Only relay-created empty objects inside an already private parent.
+            restrict_new_object(path)
+        validate_path(path, directory=path.is_dir(), require_protected=True,
+                      require_current_owner=False)
+    except (OSError, WindowsFileSecurityError) as ex:
+        raise BackupError(str(ex)) from ex
 
 
 def _backup_path_identity(path: Path, *, directory: bool = False) -> tuple[int, int]:
@@ -134,7 +72,8 @@ def backup_database(database: Path, destination: Path, *, timeout: int = 60) -> 
     """Atomically publish a consistent SQLite backup without replacing any file.
 
     The source is opened read-only with WAL awareness. Temporary database and
-    SQLite sidecars stay in a private directory and disappear on failure.
+    SQLite sidecars stay in a private directory. Failures after publication
+    preserve the complete destination and explicitly report its committed state.
     """
     if type(timeout) is not int or not 1 <= timeout <= 3600:
         raise BackupError("backup timeout must be between 1 and 3600 seconds")
@@ -142,6 +81,7 @@ def backup_database(database: Path, destination: Path, *, timeout: int = 60) -> 
     destination = destination.expanduser().absolute()
     parent = destination.parent
     directory_fd = None
+    published = False
     try:
         _backup_path_identity(database)
         parent_identity = _backup_path_identity(parent, directory=True)
@@ -207,11 +147,17 @@ def backup_database(database: Path, destination: Path, *, timeout: int = 60) -> 
                     os.link(candidate, destination.name, dst_dir_fd=directory_fd, follow_symlinks=False)
             except FileExistsError:
                 raise BackupError("backup destination already exists") from None
+            published = True
             if directory_fd is not None:
                 os.fsync(directory_fd)
     except BackupError:
         raise
     except (OSError, sqlite3.Error):
+        if published:
+            raise BackupCommitError(
+                "relay backup was published but durability or cleanup is uncertain; "
+                "inspect the backup before retrying"
+            ) from None
         raise BackupError("cannot create consistent relay backup") from None
     finally:
         if directory_fd is not None:

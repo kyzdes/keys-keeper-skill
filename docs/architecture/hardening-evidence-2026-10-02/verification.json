@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-02",
+  "baseline_commit": "36df576ba403437d6352add265232bc01601cbae",
+  "validated_code_commit": "3c7aba1e18151f0f4ceaeffbcaab93a0247d580b",
+  "branch": "codex/simplify-and-harden",
+  "unreleased": true,
+  "installed_or_deployed": false,
+  "validation_tree": {
+    "sha256": "cbfc9ff89aed5bbe362fc7679fdf83bc9b2793ecab51bef03d274413aac58eea",
+    "file_count": 286,
+    "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
+    "selection": [
+      "src",
+      "tests",
+      "scripts",
+      ".github/workflows",
+      "skills",
+      "plugins",
+      "pyproject.toml",
+      "README.md",
+      "CHANGELOG.md",
+      ".claude-plugin"
+    ]
+  },
+  "local_full_suite": {
+    "platform": "darwin",
+    "python": "3.12.11",
+    "pytest": "9.1.1",
+    "cryptography": "48.0.1",
+    "passed": 1852,
+    "skipped": 25,
+    "failed": 0,
+    "errors": 0,
+    "collected": 1877,
+    "subtests_passed": 4,
+    "session_seconds": 681.0679,
+    "exit_status": 0,
+    "skip_reasons": {
+      "real Win32 supervisor Job Object": 3,
+      "no Secret Service daemon available": 4,
+      "Windows-only test": 14,
+      "native clipboard test requires explicit KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=1": 2,
+      "APPDATA path is Windows-only": 1,
+      "requires real Windows DACL APIs": 1
+    },
+    "command": "KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=0 PYTHONPATH=src .venv/bin/python -m pytest -q -o addopts='' --test-metrics=... --junitxml=...",
+    "isolation": "Synthetic fixture roots under project .pytest_cache; temporary test Keychains; fake clipboard; isolated global KEYS_KEEPER_HOME",
+    "source_commit": "26c1cd0245e545f426363648d8c0e91b59a671b9",
+    "validation_tree": {
+      "sha256": "9bde2f3d08f385c27dceb5fa5bf5223ae72d9008f96ff0318df908b51cc56883",
+      "file_count": 285,
+      "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
+      "selection": [
+        "src",
+        "tests",
+        "scripts",
+        ".github/workflows",
+        "skills",
+        "plugins",
+        "pyproject.toml",
+        "README.md",
+        "CHANGELOG.md",
+        ".claude-plugin"
+      ]
+    }
+  },
+  "wheel": {
+    "version": "0.11.1",
+    "sha256": "340a7fcab9434ea42b7cc5758e5c252c0a5b2936a7e50991e74001214eb5f93e",
+    "built": true,
+    "installed_artifact_smoke": "passed",
+    "canonical_skill_parity": "passed",
+    "generated_ui_tokens": "passed",
+    "user_installation_modified": false,
+    "source_commit": "3c7aba1e18151f0f4ceaeffbcaab93a0247d580b"
+  },
+  "updater_standalone": {
+    "passed": 28,
+    "result": "OK"
+  },
+  "project_idle": {
+    "all_results_idle": true,
+    "cpu_seconds": 1.33984,
+    "cycles": 3,
+    "encrypted_files_changed": 0,
+    "journal_record_writes": 0,
+    "kdf_derivations": 6,
+    "retain_state": true,
+    "scope_cycles": 18,
+    "scopes": 6,
+    "wall_seconds": 1.362767
+  },
+  "ci_evidence": {
+    "authority": "GitHub check runs for the pull request head; results are retained separately from this local receipt",
+    "pull_request": "https://github.com/kyzdes/keys-keeper-skill/pull/21",
+    "checks": "https://github.com/kyzdes/keys-keeper-skill/pull/21/checks",
+    "required_jobs": [
+      "macos-latest · py3.12",
+      "windows-latest · py3.12",
+      "ubuntu-latest · py3.10",
+      "ubuntu-latest · py3.12",
+      "ubuntu-latest · py3.14",
+      "coverage · full matrix",
+      "wheel · generated payload",
+      "updater (ubuntu-latest, 3.9)",
+      "updater (macos-latest, 3.12)",
+      "updater (windows-latest, 3.12)"
+    ],
+    "windows_native_acl_cases": 7,
+    "local_windows_execution": false,
+    "source_commit_policy": "Final PR-head checks are authoritative for the complete OS matrix, including private Windows fixture preparation. Each local run and prior native confirmation retains its own source/checks commit.",
+    "windows_native_acl_confirmation": {
+      "checks_head": "d70cf3f96045012bbbffa82aa92da6b43da102bb",
+      "ci_checkout_merge_commit": "ee99c8770880ed5804f8e7b2daa45f59c6fcb484",
+      "ci_checkout_tree_equal_to_checks_head": true,
+      "test_run": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/37030196177",
+      "windows_job": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/37030196177/job/110914805505",
+      "native_cases_passed": 6,
+      "native_cases_skipped": 0,
+      "native_cases_failed": 0,
+      "full_windows_suite_passed": 1609,
+      "full_windows_suite_skipped": 228,
+      "full_windows_suite_failed": 47,
+      "full_windows_suite_note": "Private Windows policy rejected legacy fixtures inheriting public ACLs. The subsequent fixture-only correction and final full matrix are validated by PR-head checks."
+    },
+    "owner_rights_compatibility_regression": {
+      "prior_checks_head": "0d09e7e3eef0f17121d1bcfb232a263adcd6a10c",
+      "prior_ci_checkout_merge_commit": "0d819345bad6961ff72e04be50e68dadd26b02ab",
+      "prior_test_run": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/37032822260",
+      "prior_windows_passed": 1655,
+      "prior_windows_skipped": 228,
+      "prior_windows_failed": 1,
+      "prior_native_cases_passed": 6,
+      "remaining_failure": "tests/test_profiles.py::test_two_replica_namespaces_isolate_same_logical_account",
+      "cause": "CPython Windows mkdir(0700) grants OWNER RIGHTS; this ACE identifies the already validated object owner.",
+      "fix": "Accept exact S-1-3-4 only in effective allow ACEs after trusted owner validation. Unknown principals and OWNER RIGHTS as actual owner remain rejected.",
+      "native_regression_added": true,
+      "early_windows_preflight_added": true,
+      "primary_sources": [
+        "https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c",
+        "https://docs.python.org/3.12/library/os.html#os.mkdir",
+        "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-special-identities-groups#owner-rights"
+      ]
+    }
+  },
+  "limits": [
+    "No installed or production validation",
+    "Local macOS results do not establish Windows ACL or Linux Secret Service execution; use CI evidence",
+    "Hard process kill during S3 credential bootstrap may require explicit setup again",
+    "Early legacy tests replaced the operator clipboard with synthetic values; ordinary tests now isolate clipboard"
+  ],
+  "post_windows_ci_focused_suites": [
+    {
+      "scope": "Private IO and Windows owner policy",
+      "source_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
+      "platform": "darwin",
+      "passed": 47,
+      "skipped": 8,
+      "failed": 0,
+      "errors": 0,
+      "native_windows_execution": false,
+      "command": "PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_windows_owner_policy.py tests/test_windows_file_security.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py tests/test_sync_server_cli.py",
+      "log": ".pytest_cache/windows-owner-focused-92bea74.log"
+    },
+    {
+      "scope": "CLI secret contracts, clipboard fixture isolation and copy/inject",
+      "source_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
+      "platform": "darwin",
+      "passed": 62,
+      "skipped": 1,
+      "failed": 0,
+      "errors": 0,
+      "log": ".pytest_cache/hardening-cli-utf8-portability.log"
+    },
+    {
+      "scope": "Windows fixture composition, private IO, clipboard isolation and Keychain mode",
+      "source_commit": "68ec47c2b6d694e7afd2094d3cdec9b77b964409",
+      "platform": "darwin",
+      "passed": 73,
+      "skipped": 8,
+      "failed": 0,
+      "errors": 0,
+      "native_windows_execution": false,
+      "command": "PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_windows_owner_policy.py tests/test_windows_file_security.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py tests/test_sync_server_cli.py tests/test_clipboard_test_isolation.py tests/test_clipboard_clear_daemon.py tests/test_keychain_mode.py",
+      "log": ".pytest_cache/windows-fixture-focused-d70cf3f.log"
+    },
+    {
+      "scope": "OWNER RIGHTS compatibility, private IO, profile namespaces and encrypted-file backend",
+      "source_commit": "3c7aba1e18151f0f4ceaeffbcaab93a0247d580b",
+      "platform": "darwin",
+      "passed": 100,
+      "skipped": 9,
+      "failed": 0,
+      "errors": 0,
+      "native_windows_execution": false,
+      "command": "KEYS_KEEPER_TEST_NATIVE_CLIPBOARD=0 PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_windows_owner_policy.py tests/test_windows_file_security.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py tests/test_profiles.py tests/test_backend_file.py tests/test_sync_server_cli.py",
+      "log": ".pytest_cache/hardening-final-owner-rights-focused.log"
+    }
+  ],
+  "production_code_commit": "3c7aba1e18151f0f4ceaeffbcaab93a0247d580b"
+}

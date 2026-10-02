@@ -1074,7 +1074,7 @@ button:disabled, input:disabled, textarea:disabled, select:disabled {
 .delete-error { margin: 16px 0 0; color: var(--danger); overflow-wrap: anywhere; }
 .delete-dialog button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ========== NEW/EDIT MODAL (S3) ========== */
+/* ========== NEW/EDIT MODAL ========== */
 .new-modal {
   width: min(760px, calc(100vw - 40px));
   max-height: 84vh;
@@ -1520,11 +1520,6 @@ button:disabled, input:disabled, textarea:disabled, select:disabled {
   padding: 20px;
 }
 .settings-card.full { grid-column: 1 / -1; }
-.sync-actions { margin-top: 16px; flex-wrap: wrap; }
-.sync-actions button[disabled] { opacity: 0.5; cursor: default; }
-.sync-mode-sel { width: auto; min-width: 92px; }
-.sync-msg { font-size: 11.5px; color: var(--text-3); }
-.sync-note { font-size: 11px; color: var(--text-3); margin-top: 12px; line-height: 1.5; }
 .settings-card .card-title {
   font-family: var(--font-ui);
   font-size: 12.5px;
@@ -1971,6 +1966,4 @@ button:disabled, input:disabled, textarea:disabled, select:disabled {
 .personal-device .btn { margin-left:auto; }
 #personal-message { margin:14px 0 0; color:var(--text-2); font-size:13px; }
 #personal-message:empty { margin:0; }
-#card-sync summary { cursor:pointer; margin-bottom:0; }
-#card-sync[open] summary { margin-bottom:18px; }
 @media(max-width:700px) { .personal-grid { grid-template-columns:1fr; gap:28px; } .personal-heading { gap:12px; } .personal-verification { font-size:18px; } }

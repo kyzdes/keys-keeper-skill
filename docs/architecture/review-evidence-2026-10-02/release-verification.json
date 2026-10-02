@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "version": "0.11.1",
+  "generated_at_utc": "2026-10-02T11:06:47.834362+00:00",
+  "source_sha": "36df576ba403437d6352add265232bc01601cbae",
+  "reviewed_pr_head": "d2ab6e30d2f8a647adfb99d64e6fdab48b322ea6",
+  "source_prs": [
+    19,
+    20
+  ],
+  "marketplace_sha": "570adfb690a32c21a4393a31962cc335a74a25ba",
+  "marketplace_source_pin": "36df576ba403437d6352add265232bc01601cbae",
+  "wheel": {
+    "filename": "keys_keeper-0.11.1-py3-none-any.whl",
+    "sha256": "43a0877d8da627cd38feda0246f3c948b34b0b2080faa86054f7c21e3eba36da"
+  },
+  "tests": {
+    "collected_cases": 1582,
+    "new_read_and_policy_cases": 131,
+    "pr_checks_passed": 10,
+    "main_checks_passed": 10,
+    "main_runs": [
+      {
+        "run_id": 36997726907,
+        "url": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/36997726907",
+        "jobs": [
+          {
+            "name": "wheel \u00b7 generated payload",
+            "conclusion": "success"
+          },
+          {
+            "name": "ubuntu-latest \u00b7 py3.12",
+            "conclusion": "success"
+          },
+          {
+            "name": "macos-latest \u00b7 py3.12",
+            "conclusion": "success"
+          },
+          {
+            "name": "ubuntu-latest \u00b7 py3.14",
+            "conclusion": "success"
+          },
+          {
+            "name": "ubuntu-latest \u00b7 py3.10",
+            "conclusion": "success"
+          },
+          {
+            "name": "windows-latest \u00b7 py3.12",
+            "conclusion": "success"
+          },
+          {
+            "name": "coverage \u00b7 full matrix",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "run_id": 36997726935,
+        "url": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/36997726935",
+        "jobs": [
+          {
+            "name": "updater (windows-latest, 3.12)",
+            "conclusion": "success"
+          },
+          {
+            "name": "updater (macos-latest, 3.12)",
+            "conclusion": "success"
+          },
+          {
+            "name": "updater (ubuntu-latest, 3.9)",
+            "conclusion": "success"
+          }
+        ]
+      }
+    ],
+    "matrix_jobs": [
+      "macos-latest-py3.12",
+      "ubuntu-latest-py3.10",
+      "ubuntu-latest-py3.12",
+      "ubuntu-latest-py3.14",
+      "windows-latest-py3.12"
+    ],
+    "python_modules": 81,
+    "omitted_modules": [],
+    "coverage": {
+      "covered_lines": 14755,
+      "lines": 17304,
+      "line_percent": 85.27,
+      "covered_branches": 4029,
+      "branches": 5596,
+      "branch_percent": 72.0
+    },
+    "coverage_gate": {
+      "status": "passed",
+      "min_line": 84.0,
+      "min_branch": 69.0,
+      "errors": []
+    }
+  },
+  "regressions": [
+    "multiline and UTF-8 fidelity",
+    "literal hex is not guessed",
+    "native buffer zero/free and redacted failures",
+    "partition, signature and prompt preflight",
+    "malformed and bounded metadata with zero denied helpers",
+    "bounded test identifiers on Windows"
+  ],
+  "installed_software": {
+    "runtime_matching_files": 108,
+    "native_signature_verified": true,
+    "swift_recompiled": false,
+    "dependencies_preserved": true,
+    "version": "0.11.1"
+  },
+  "boundaries": {
+    "stored_secret_changes": 0,
+    "acl_changes": 0,
+    "encryption_format_changes": 0,
+    "pbkdf2_reduction": false,
+    "periodic_work_added": false
+  },
+  "limitations": [
+    "Platform skips apply; collection size is not a claim that every case ran on every OS.",
+    "Python coverage excludes native Swift and JavaScript.",
+    "Coverage does not establish every real credential or external service is usable.",
+    "No physical battery-life guarantee is made."
+  ]
+}

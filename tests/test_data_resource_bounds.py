@@ -148,14 +148,51 @@ def test_metadata_backup_symlink_never_modifies_unrelated_target(tmp_path):
     assert paths.data_json.read_bytes() == before
 
 
+def _empty_master_backup_payload():
+    metadata = {"schema_version": 2, "entries": [], "tombstones": []}
+    revision = store.MetadataTransaction(metadata).revision()
+    return {
+        "kind": "master",
+        "metadata": {**metadata, "revision": revision, "catalog": None},
+        "entry_secrets": {}, "service_secrets": {},
+        "project_state": {}, "journal_files": {},
+    }
+
+
 def test_backup_envelope_bound_stops_before_kdf_or_partial_file(tmp_path, monkeypatch):
-    payload = {"kind": "master", "metadata": {"entries": []}}
-    monkeypatch.setattr(project_backup, "_MAX_BACKUP_BYTES", 128)
+    payload = _empty_master_backup_payload()
+    monkeypatch.setattr(project_backup, "_MAX_BACKUP_BYTES",
+                        len(project_backup._canonical_bytes(payload)) + 49)
     monkeypatch.setattr(project_backup.crypto, "_derive_key", lambda *args: pytest.fail("unreadable backup derived key"))
     target = tmp_path / "backup.enc"
     with pytest.raises(project_backup.ProjectBackupError, match="size limit"):
-        project_backup._write_bundle(target, "synthetic-key", payload, None)
+        project_backup._write_bundle(target, "synthetic-key", payload, payload["metadata"]["revision"])
     assert not target.exists()
+
+
+def test_backup_raw_payload_bound_precedes_deep_validation(tmp_path, monkeypatch):
+    payload = _empty_master_backup_payload()
+    monkeypatch.setattr(project_backup, "_MAX_BACKUP_BYTES", 128)
+    monkeypatch.setattr(project_backup, "_validate_payload", lambda *args, **kwargs:
+                        pytest.fail("oversized payload reached deep state validation"))
+    target = tmp_path / "backup.enc"
+    with pytest.raises(project_backup.ProjectBackupError, match="size limit"):
+        project_backup._write_bundle(target, "synthetic-key", payload, payload["metadata"]["revision"])
+    assert not target.exists()
+
+
+def test_backup_producer_still_validates_small_output_before_password_or_publication(tmp_path, monkeypatch):
+    payload = {"kind": "master", "metadata": {"entries": []}}
+    target = tmp_path / "missing-parent" / "backup.enc"
+    monkeypatch.setattr(project_backup, "_password", lambda *args:
+                        pytest.fail("invalid producer output requested its password"))
+    monkeypatch.setattr(project_backup.crypto, "encrypt_blob", lambda *args, **kwargs:
+                        pytest.fail("invalid producer output started encryption"))
+
+    with pytest.raises(project_backup.ProjectBackupError, match="invalid master backup fields"):
+        project_backup._write_bundle(target, "synthetic-key", payload, None)
+
+    assert not target.parent.exists()
 
 
 def test_replica_envelope_bound_stops_before_password_or_pointer(tmp_path, monkeypatch):

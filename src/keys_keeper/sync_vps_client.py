@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json
+import math
 from collections.abc import Callable, Mapping
+from functools import lru_cache
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
@@ -44,6 +46,10 @@ class VpsTransportError(VpsClientError):
 
 class VpsAuthenticationError(VpsTransportError):
     """The server rejected the bearer token or device identity (401/403)."""
+
+
+class VpsBadRequestError(VpsTransportError):
+    """The relay rejected a query/request shape (400)."""
 
 
 class VpsNotFoundError(VpsTransportError):
@@ -92,22 +98,16 @@ class _NoRedirectHandler(HTTPRedirectHandler):
         return None
 
 
-_OPENERS: dict[str, Any] = {}
-
-
+@lru_cache(maxsize=16)
 def _opener_for(proxy: str):
     key = proxy or "direct"
-    opener = _OPENERS.get(key)
-    if opener is None:
-        if key == "system":
-            proxy_handler = ProxyHandler()
-        elif key in ("direct", "none", "off", ""):
-            proxy_handler = ProxyHandler({})
-        else:
-            proxy_handler = ProxyHandler({"http": key, "https": key})
-        opener = build_opener(proxy_handler, _NoRedirectHandler())
-        _OPENERS[key] = opener
-    return opener
+    if key == "system":
+        proxy_handler = ProxyHandler()
+    elif key in ("direct", "none", "off", ""):
+        proxy_handler = ProxyHandler({})
+    else:
+        proxy_handler = ProxyHandler({"http": key, "https": key})
+    return build_opener(proxy_handler, _NoRedirectHandler())
 
 
 def urlopen(req, timeout=None, *, proxy: str = "direct"):
@@ -131,7 +131,13 @@ def _is_loopback(hostname: str | None) -> bool:
 
 
 def _normalize_base_url(value: str) -> str:
-    parsed = urlparse(value)
+    if not isinstance(value, str) or not value or any(ch.isspace() or ord(ch) < 0x20 for ch in value):
+        raise VpsConfigurationError("sync server URL must be an absolute HTTP(S) URL")
+    try:
+        parsed = urlparse(value)
+        parsed.port
+    except ValueError:
+        raise VpsConfigurationError("sync server URL is invalid") from None
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise VpsConfigurationError("sync server URL must be an absolute HTTP(S) URL")
     if parsed.username is not None or parsed.password is not None:
@@ -148,7 +154,13 @@ def _normalize_base_url(value: str) -> str:
 def _normalize_proxy(value: str) -> str:
     if value in ("direct", "system"):
         return value
-    parsed = urlparse(value)
+    if not isinstance(value, str) or not value or any(ch.isspace() or ord(ch) < 0x20 for ch in value):
+        raise VpsConfigurationError("proxy configuration is invalid")
+    try:
+        parsed = urlparse(value)
+        parsed.port
+    except ValueError:
+        raise VpsConfigurationError("proxy configuration is invalid") from None
     if (
         parsed.scheme not in ("http", "https")
         or not parsed.hostname
@@ -183,7 +195,7 @@ def _secret_value(source: SecretSource, label: str) -> str:
         plaintext = value
     else:
         raise VpsConfigurationError(f"{label} must be Sealed or supplied by a callback")
-    if not plaintext or any(ch.isspace() for ch in plaintext):
+    if not plaintext or any(not 0x21 <= ord(ch) < 0x7f for ch in plaintext):
         raise VpsAuthenticationError(f"{label} is missing or malformed")
     return plaintext
 
@@ -209,7 +221,7 @@ def _decode_json(body: bytes) -> Any:
             parse_constant=_reject_constant,
             object_pairs_hook=_unique_object,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         raise VpsProtocolError("sync server returned malformed JSON") from None
 
 
@@ -221,7 +233,7 @@ def _encode_json(payload: Mapping[str, Any]) -> bytes:
             allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         # json's exception can contain repr(user_value); do not splice it into a
         # transport error because payloads may contain credential material.
         raise VpsValidationError("request payload is not valid JSON data") from None
@@ -236,31 +248,6 @@ def _header(headers: Any, name: str) -> str | None:
     return None
 
 
-def _redact(message: object, sensitive_values: tuple[str, ...]) -> str:
-    text = str(message)
-    for value in sensitive_values:
-        if value:
-            text = text.replace(value, "<redacted>")
-    return text
-
-
-def _opaque_strings(value: Any) -> tuple[str, ...]:
-    """Collect strings from an opaque envelope solely for error redaction."""
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if isinstance(value, Mapping):
-        items: list[str] = []
-        for nested in value.values():
-            items.extend(_opaque_strings(nested))
-        return tuple(items)
-    if isinstance(value, (list, tuple)):
-        items = []
-        for nested in value:
-            items.extend(_opaque_strings(nested))
-        return tuple(items)
-    return ()
-
-
 def _b64url(data: bytes) -> str:
     """Canonical unpadded URL-safe base64 used by the sync wire protocol."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -273,6 +260,7 @@ _SAFE_SERVER_ERROR_CODES = {
     "device_conflict",
     "device_inactive",
     "invalid_invite_secret",
+    "invalid_request",
     "invite_expired",
     "invite_not_claimed",
     "invite_used",
@@ -293,6 +281,8 @@ def _status_error(
         message += f" [{safe_code}]"
     if status in (401, 403):
         return VpsAuthenticationError(message)
+    if status == 400:
+        return VpsBadRequestError(message)
     if status == 404:
         return VpsNotFoundError(message)
     if status == 410:
@@ -333,13 +323,15 @@ class VpsSyncClient:
             raise VpsConfigurationError("bearer token must be Sealed or supplied by a callback")
         if device_id is not None and (not isinstance(device_id, str) or not device_id):
             raise VpsConfigurationError("device_id must be non-empty when supplied")
-        if timeout <= 0:
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise VpsConfigurationError("timeout must be positive")
-        if max_request_bytes <= 0 or max_response_bytes <= 0:
+        if any(type(value) is not int or value <= 0 for value in (max_request_bytes, max_response_bytes)):
             raise VpsConfigurationError("HTTP body limits must be positive")
         self.device_id = device_id
         self._token = token
         self.timeout = float(timeout)
+        if not isinstance(proxy, str):
+            raise VpsConfigurationError("proxy configuration is invalid")
         self._proxy = _normalize_proxy(proxy or "direct")
         self.max_request_bytes = int(max_request_bytes)
         self.max_response_bytes = int(max_response_bytes)
@@ -353,15 +345,16 @@ class VpsSyncClient:
         )
 
     def _auth_headers(self, *, include_device: bool) -> tuple[dict[str, str], str]:
+        if include_device:
+            if not self.device_id:
+                raise VpsAuthenticationError("no device identity is configured")
+            if any(not 0x21 <= ord(ch) < 0x7f for ch in self.device_id):
+                raise VpsConfigurationError("device identity contains invalid characters")
         if self._token is None:
             raise VpsAuthenticationError("no bearer token is configured")
         token = _secret_value(self._token, "bearer token")
         headers = {"Authorization": f"Bearer {token}"}
         if include_device:
-            if not self.device_id:
-                raise VpsAuthenticationError("no device identity is configured")
-            if "\r" in self.device_id or "\n" in self.device_id:
-                raise VpsConfigurationError("device identity contains invalid characters")
             headers["X-Device-ID"] = self.device_id
         return headers, token
 
@@ -374,18 +367,15 @@ class VpsSyncClient:
         auth: bool = True,
         include_device: bool = True,
         expected_statuses: tuple[int, ...] = (200,),
-        sensitive_values: tuple[str, ...] = (),
     ) -> Any:
         body = b"" if payload is None else _encode_json(payload)
         if len(body) > self.max_request_bytes:
             raise VpsPayloadTooLargeError("request body exceeds the configured limit")
 
         headers = {"Accept": "application/json"}
-        secrets = sensitive_values
         if auth:
-            auth_headers, bearer = self._auth_headers(include_device=include_device)
+            auth_headers, _bearer = self._auth_headers(include_device=include_device)
             headers.update(auth_headers)
-            secrets = secrets + (bearer,)
         if payload is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
             headers["Content-Length"] = str(len(body))
@@ -463,12 +453,17 @@ class VpsSyncClient:
         except VpsClientError:
             raise
         except (URLError, TimeoutError, OSError) as exc:
-            detail = _redact(exc, secrets)
-            raise VpsTransportError(f"{method} {path}: transport failure: {detail}") from None
+            detail = "request timed out" if isinstance(exc, TimeoutError) else "transport failure"
+            raise VpsTransportError(f"{method} {path}: {detail}") from None
         finally:
             close = getattr(response, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception:
+                    # A valid response already establishes the outcome; a
+                    # cleanup failure must not trigger a replay or expose data.
+                    pass
 
     @staticmethod
     def _object(value: Any) -> JsonObject:
@@ -501,7 +496,6 @@ class VpsSyncClient:
             },
             include_device=False,
             expected_statuses=(200, 201),
-            sensitive_values=(plaintext_token,),
         )
         return self._object(result)
 
@@ -514,11 +508,15 @@ class VpsSyncClient:
             return None
         return self._object(result)
 
-    def get_commit(self, vault_id: str, commit_id: str) -> JsonObject:
+    def get_commit(self, vault_id: str, commit_id: str, *, include_snapshot: bool = True) -> JsonObject:
+        if type(include_snapshot) is not bool:
+            raise VpsValidationError("include_snapshot must be a boolean")
         path = (
             f"/v1/vaults/{_segment(vault_id, 'vault_id')}/commits/"
             f"{_segment(commit_id, 'commit_id')}"
         )
+        if not include_snapshot:
+            path += "?snapshot=0"
         return self._object(self._request("GET", path))
 
     def list_commits(
@@ -527,10 +525,13 @@ class VpsSyncClient:
         *,
         after_sequence: int | None = None,
         limit: int = 100,
+        include_commit: bool = False,
     ) -> JsonObject:
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
             raise VpsValidationError("commit list limit must be between 1 and 100")
         query: dict[str, str] = {"limit": str(limit)}
+        if type(include_commit) is not bool:
+            raise VpsValidationError("include_commit must be a boolean")
         if after_sequence is not None:
             if (
                 not isinstance(after_sequence, int)
@@ -539,6 +540,8 @@ class VpsSyncClient:
             ):
                 raise VpsValidationError("after_sequence must be a non-negative integer")
             query["after_sequence"] = str(after_sequence)
+        if include_commit:
+            query["include_commit"] = "1"
         path = f"/v1/vaults/{_segment(vault_id, 'vault_id')}/commits?{urlencode(query)}"
         return self._object(self._request("GET", path))
 
@@ -565,7 +568,6 @@ class VpsSyncClient:
                 "snapshot_ciphertext": encoded_snapshot,
             },
             expected_statuses=(200, 201),
-            sensitive_values=(encoded_commit, encoded_snapshot),
         )
         return self._object(result)
 
@@ -650,7 +652,6 @@ class VpsSyncClient:
             auth=False,
             include_device=False,
             expected_statuses=(200, 201, 202),
-            sensitive_values=(invite_secret, plaintext_token),
         )
         return self._object(result)
 
@@ -696,6 +697,5 @@ class VpsSyncClient:
                 "membership_signature": membership_signature,
             },
             expected_statuses=(200, 201),
-            sensitive_values=_opaque_strings(wrapped_vault_key),
         )
         return self._object(result)

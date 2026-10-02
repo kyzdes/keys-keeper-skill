@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 
 import pytest
-from _sync_fakes import FakeBackend, add_entry
+from _vault_fakes import FakeBackend, add_entry
 
 from keys_keeper.models import EntryType
 from keys_keeper.paths import Paths
@@ -56,9 +56,22 @@ class FakeVps:
             "manifest_hash": item["manifest_hash"],
         }
 
-    def get_commit(self, vault_id, commit_id):
+    def get_commit(self, vault_id, commit_id, *, include_snapshot=True):
         assert vault_id == self.vault_id
-        return self.commits[commit_id]
+        return {key: value for key, value in self.commits[commit_id].items()
+                if include_snapshot or key != "snapshot_ciphertext"}
+
+    def list_commits(self, vault_id, *, after_sequence=0, limit=100, include_commit=False):
+        assert vault_id == self.vault_id
+        records = sorted(self.commits.values(), key=lambda item: item["sequence"])
+        return {
+            "head_commit_id": self.head,
+            "commits": [
+                {key: value for key, value in item.items()
+                 if key != "snapshot_ciphertext" and (include_commit or key != "commit_blob")}
+                for item in records if item["sequence"] > after_sequence
+            ][:limit],
+        }
 
     def append_commit(
         self, vault_id, *, commit_blob, snapshot_ciphertext, expected_parent

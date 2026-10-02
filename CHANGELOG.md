@@ -4,6 +4,66 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.12.0] — 2026-10-02
+
+### Removed
+
+- S3 transport, SigV4 signing, flat-TOML sync model, S3 CLI/API/settings,
+  automatic S3 workers and the S3-only browser WebVault. Existing configuration,
+  credentials, bucket data and encrypted KK1 backups are preserved.
+- The SessionStart sync hook; personal and project background sync continue
+  through their existing OS scheduler.
+
+### Changed
+
+- KK2 VPS sync verifies fresh signed ancestry with compact paged history and
+  downloads only the newest snapshot. Older relays keep a bounded fallback;
+  local trust checkpoints and membership/revocation checks remain mandatory.
+- KK2/KK3 share bounded HTTP admission. Default active requests are reduced to
+  two, SQLite contention is bounded to one second, and quota checks use
+  transactionally maintained counters instead of scanning encrypted history.
+- Relay storage is private before its first write. The container build uses
+  only allowlisted package inputs and runs with an unprivileged user and a
+  read-only root filesystem. No extra runtime dependency is introduced.
+
+### Fixed
+
+- Device revocation persists its exact signed intent before sending, resumes
+  safely after interruption and requires matching signed evidence to confirm.
+  All KK2 proof operations share a bounded per-vault lock; verified revocations
+  survive restart even before the first commit. Safe CAS retries preserve the
+  original cutoff and signature.
+- Snapshot application compares the original presence and value of every
+  affected credential under the mutation lock before starting its journal.
+  Same-second secret rotations now cause a fresh merge instead of being lost.
+- Surviving references cannot lose their target, change its immutable ID or
+  acquire a new target after being unresolved. Full import replacement removes
+  absent optional credentials; ordinary patch semantics remain unchanged.
+- CLI, HTTP and audit agree on published, failed and unconfirmed outcomes.
+  Installation probes use `--version`; instructions accurately describe the
+  local unlock-material reads performed by configured `devices status`.
+- Snapshot merges preserve credential reference identities and assign unique
+  deterministic names. Ambiguous binding changes fail before mutation.
+- VPS enrollment preserves credentials when configuration was published but
+  the filesystem could not confirm durability. Trust state cannot regress,
+  and unchanged state avoids redundant writes.
+- Complete legacy snapshots fail before publication on missing required
+  secrets or denied reads. Encrypted export/import use bounded private IO and
+  explicit replacement, with honest receipts after publication uncertainty.
+- Standalone and project master writes share encrypted durable recovery.
+  Referenced names cannot be renamed; empty existing metadata is a recovery
+  error. Completed operations retain bounded receipts without secret images.
+- Private files use one IO policy. Windows creates protected current-user
+  DACLs before writing, validates opened objects and leaves existing external
+  directory permissions unchanged.
+- CLI injection accepts only an unambiguous literal dotenv subset. Resolution
+  preflights metadata and reads each unique secret once, stopping on denial.
+- Local JSON routes share strict bounded validation and safe error handling.
+  Sensitive notes use credential storage; bulk import supports API keys and
+  protected notes. Committed actions remain successful when audit fails, and
+  activity displays recent events with stable entry identities.
+- Ordinary tests use an isolated clipboard; native integration is explicit.
+
 ## [0.11.1] — 2026-10-02
 
 ### Fixed

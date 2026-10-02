@@ -132,10 +132,9 @@ def test_api_resolves_project_selector_before_using_selected_context():
     ("DELETE", "/api/entries/id"),
     ("POST", "/api/entries/id/replace-secret"),
     ("POST", "/api/bulk-import"),
-    ("GET", "/api/sync/status"),
     ("POST", "/api/projects/folders"),
 ])
-def test_replica_rejects_mutating_and_legacy_sync_routes_without_backend(method, path):
+def test_replica_rejects_mutating_routes_without_backend(method, path):
     context = Context()
     runtime = Runtime(context)
 
@@ -150,7 +149,7 @@ def test_replica_allows_create_only_and_never_reads_master_catalog():
     context = Context()
     runtime = Runtime(context)
 
-    status, body = call(runtime, "POST", "/api/entries", b'{"name":"draft","type":"api_key"}')
+    status, body = call(runtime, "POST", "/api/entries", b'{"name":"draft","type":"api_key","value":"synthetic-draft-secret"}')
     assert status == 201
     assert body["name"] == "draft"
     assert len(context.service.created) == 1
@@ -169,12 +168,12 @@ def test_unknown_or_conflicting_selector_fails_before_runtime_backend_access():
 
     status, body = call(runtime, "GET", "/api/entries?profile=")
     assert status == 400
-    assert "empty" in body["error"]
+    assert body["error"] == "Invalid request"
     assert runtime.selectors == []
 
     status, body = call(runtime, "GET", "/api/entries?profile=one", selector="two")
     assert status == 400
-    assert "fixed" in body["error"]
+    assert body["error"] == "Invalid request"
     assert runtime.selectors == []
 
 

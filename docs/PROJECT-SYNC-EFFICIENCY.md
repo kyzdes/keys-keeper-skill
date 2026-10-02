@@ -32,11 +32,9 @@ Deferred cycles do not decrypt project state. Manual sync bypasses this
 automatic scheduling guard.
 
 Personal-device watchers use the same metadata-only claim without changing
-their configured auto-sync setting or recipients. Legacy S3 SessionStart sync
-uses a separate claim and an interval of at least 24 hours, even if an older
-environment setting requests less. Its explicit `sync auto --force` remains a
-manual override. Detached workers receive an already claimed attempt. Manual
-project/device Sync and S3 push/pull remain immediate.
+their configured auto-sync setting or recipients. Detached workers receive an
+already claimed attempt. Manual project/device Sync remains immediate. Version
+0.12 removes the S3 SessionStart hook and its separate scheduler path.
 
 ## Working UI and activity summaries
 
@@ -62,8 +60,8 @@ Project and personal watchers plus the standalone launcher use the same
 scope-based daily claim. A portable supervisor bounds automatic workers to five
 minutes and terminates their owned process tree on timeout/cancellation. Manual
 operations use their ordinary immediate path. Failed or corrupt configurations
-cannot cause a frequent autostart restart loop. HTTP response sizes and S3
-pagination are bounded in addition to per-socket timeouts.
+cannot cause a frequent autostart restart loop. HTTP response sizes and VPS history pages are bounded in addition to per-socket
+timeouts.
 
 The opt-in Keys Keeper fallback updater also claims a daily attempt before
 work. Lower interval overrides and failures cannot permit a short retry. The

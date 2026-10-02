@@ -7,8 +7,6 @@ import hashlib
 import json
 import os
 import re
-import stat
-import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -19,7 +17,7 @@ from typing import Callable, Mapping
 from keys_keeper import crypto
 from keys_keeper.backend import KeychainBackend, Sealed
 from keys_keeper.backend_file import EncryptedFileBackend
-from keys_keeper.models import Entry, EntryType, ValidationError, validate_tombstone
+from keys_keeper.models import Entry, ValidationError, entry_requires_secret, validate_tombstone
 from keys_keeper.operation_journal import (
     JournalError,
     OperationJournal,
@@ -27,15 +25,16 @@ from keys_keeper.operation_journal import (
     profile_lock,
 )
 from keys_keeper.paths import Paths, ensure_private_dir
+from keys_keeper.private_files import PrivateFileCommitError, PrivateFileError, atomic_write_bytes, secure_read
 from keys_keeper.project_models import CatalogState, CatalogValidationError
 from keys_keeper.project_replica import ReplicaStore, validate_checkpoint, validate_replica_payload
-from keys_keeper.store import CATALOG_SCHEMA_VERSION, MetadataStore, StoreError
+from keys_keeper.store import CATALOG_SCHEMA_VERSION, MetadataSnapshot, MetadataStore, MetadataTransaction
 
 
 BACKUP_SCHEMA_VERSION = 3
 _MAX_BACKUP_BYTES = 128 * 1024 * 1024
 _MAX_STATE_BYTES = 16 * 1024 * 1024
-_JOURNAL_FILE = re.compile(r"(?:[0-9a-f-]{36}\.enc|pending-index\.json)\Z")
+_JOURNAL_FILE = re.compile(r"(?:[0-9a-f-]{36}\.enc|pending-index\.json|terminal-receipts\.kk1)\Z")
 Password = str | bytes | Sealed
 _RECOVERY_LOCKS_GUARD = threading.Lock()
 _RECOVERY_LOCKS: dict[str, "_RecoveryRootLock"] = {}
@@ -43,6 +42,11 @@ _RECOVERY_LOCKS: dict[str, "_RecoveryRootLock"] = {}
 
 class ProjectBackupError(RuntimeError):
     pass
+
+
+class ProjectBackupCommitError(ProjectBackupError):
+    """The file was published, but directory durability remains uncertain."""
+    committed = True
 
 
 class _RecoveryRootLock:
@@ -141,41 +145,36 @@ def create_master_backup(
     """Capture schema 2 or 3 while the profile mutation lock is held."""
     if store.paths.root != journal.paths.root:
         raise ValueError("master store and backup journal must share one profile root")
-    from keys_keeper.master_journal import MASTER_MUTATION_KIND
+    _require_new_destination(destination)
+    from keys_keeper.master_journal import MASTER_MUTATION_KIND, MASTER_UNLOCK_ACCOUNT
 
     with journal.locked():
         if journal.pending_refs(kind=MASTER_MUTATION_KIND):
             raise ProjectBackupError("master recovery is required before backup")
-        before = store.snapshot()
-        try:
-            catalog = store.catalog_state()
-            metadata_schema = CATALOG_SCHEMA_VERSION
-        except StoreError as ex:
-            if "explicit schema-v3 migration" not in str(ex):
-                raise ProjectBackupError("cannot read master catalog for backup") from ex
-            catalog = None
-            metadata_schema = 2
-        if service_accounts is None:
-            service_accounts = (
-                ("kk:project-runtime-key",)
-                if metadata_schema == CATALOG_SCHEMA_VERSION
-                else ()
-            )
+        with store.read_transaction() as tx:
+            before = MetadataSnapshot(tx.list(), tx.tombstones(), tx.revision(), tx.schema_version)
+            records = tx.records()
+            metadata_schema = tx.schema_version
+            catalog = tx.catalog_state() if metadata_schema >= CATALOG_SCHEMA_VERSION else None
+        journal_files = _capture_journal_files(journal.paths)
+        service_accounts = service_accounts or ()
+        # Schema 2 now shares durable mutations. Its encrypted journal/receipts
+        # need the authority key on restore just as schema 3 does. An explicit
+        # service-account selection cannot silently omit this prerequisite.
+        if (metadata_schema == CATALOG_SCHEMA_VERSION or journal_files
+                or MASTER_UNLOCK_ACCOUNT in backend.list_ids()):
+            service_accounts = tuple(dict.fromkeys((*service_accounts, MASTER_UNLOCK_ACCOUNT)))
         entry_secrets = _capture_entry_secrets(backend, before.entries)
         service_secrets = _capture_service_secrets(backend, service_accounts)
         after = store.snapshot()
         if after.revision != before.revision:
             raise ProjectBackupError("master metadata changed during backup")
-        journal_files = _capture_journal_files(journal.paths)
         payload = {
             "kind": "master",
             "metadata": {
                 "schema_version": metadata_schema,
                 "revision": before.revision,
-                "entries": [
-                    _persisted_entry_dict(entry, metadata_schema)
-                    for entry in before.entries
-                ],
+                "entries": records,
                 "tombstones": copy.deepcopy(before.tombstones),
                 "catalog": copy.deepcopy(catalog),
             },
@@ -200,6 +199,7 @@ def create_replica_backup(
     The generation is read both before and after the state snapshot.  A change
     during capture aborts instead of pairing a checkpoint with another state.
     """
+    _require_new_destination(destination)
     first_payload, first_checkpoint = replica.load()
     if project_state_provider is not None:
         if project_state is not None:
@@ -335,6 +335,14 @@ def _write_bundle(
     payload: dict,
     metadata_revision: str | None,
 ) -> BackupManifest:
+    # Reject oversized input before deep validation copies its state.
+    if len(_canonical_bytes(payload)) > _MAX_BACKUP_BYTES:
+        raise ProjectBackupError("project backup payload exceeds size limit")
+    # The producer must satisfy the same contract as inspect/restore before
+    # encrypting or publishing a destination, including legacy metadata.
+    payload = _validate_payload(payload, expected_kind=payload["kind"])
+    if metadata_revision != _payload_metadata_revision(payload):
+        raise ProjectBackupError("project backup manifest revision mismatch")
     payload_bytes = _canonical_bytes(payload)
     if len(payload_bytes) > _MAX_BACKUP_BYTES:
         raise ProjectBackupError("project backup payload exceeds size limit")
@@ -355,7 +363,10 @@ def _write_bundle(
     if len(plaintext) + 48 > _MAX_BACKUP_BYTES:
         raise ProjectBackupError("project backup exceeds size limit")
     blob = crypto.encrypt_blob(plaintext, password=_password(password))
-    _atomic_write(Path(destination), blob)
+    destination = Path(destination)
+    if not destination.parent.exists():
+        ensure_private_dir(destination.parent)
+    _atomic_write(destination, blob, private_parent=False, replace_existing=False)
     return _manifest(manifest_data)
 
 
@@ -382,8 +393,16 @@ def _read_bundle(source: Path, password: Password) -> dict:
         raise ProjectBackupError("project backup content hash mismatch")
     if _entry_count(payload) != manifest.entry_count:
         raise ProjectBackupError("project backup manifest count mismatch")
+    if manifest.metadata_revision != _payload_metadata_revision(payload):
+        raise ProjectBackupError("project backup manifest revision mismatch")
     bundle["payload"] = payload
     return bundle
+
+
+def _payload_metadata_revision(payload: dict) -> str:
+    if payload["kind"] == "master":
+        return payload["metadata"]["revision"]
+    return payload["generation"]["payload"]["source_revision"]
 
 
 def _manifest(value: object) -> BackupManifest:
@@ -437,13 +456,27 @@ def _validate_payload(value: object, *, expected_kind: str) -> dict:
     allowed_accounts = entry_ids | {item + ":passphrase" for item in entry_ids}
     if set(entry_secrets) != allowed_accounts:
         raise ProjectBackupError("master backup entry secret set is incomplete")
+    for raw in metadata["entries"]:
+        entry = Entry.from_dict(raw)
+        if entry_requires_secret(entry) and not entry_secrets[entry.id]["present"]:
+            raise ProjectBackupError("master backup is missing a required entry secret")
+    service_secrets = _validate_secret_map(value["service_secrets"])
+    if (set(service_secrets).intersection(entry_secrets)
+            or any(not re.fullmatch(r"kk:[a-z][a-z0-9-]{0,127}", account)
+                   for account in service_secrets)):
+        raise ProjectBackupError("master backup service accounts must be disjoint reserved identities")
+    journal_files = _validate_journal_files(value["journal_files"])
+    from keys_keeper.master_journal import MASTER_UNLOCK_ACCOUNT
+    if ((metadata["schema_version"] == CATALOG_SCHEMA_VERSION or journal_files)
+            and not service_secrets.get(MASTER_UNLOCK_ACCOUNT, {}).get("present")):
+        raise ProjectBackupError("master backup is missing its journal authority key")
     return {
         "kind": "master",
         "metadata": metadata,
         "entry_secrets": entry_secrets,
-        "service_secrets": _validate_secret_map(value["service_secrets"]),
+        "service_secrets": service_secrets,
         "project_state": _validate_project_state(value["project_state"]),
-        "journal_files": _validate_journal_files(value["journal_files"]),
+        "journal_files": journal_files,
     }
 
 
@@ -465,10 +498,15 @@ def _validate_metadata(value: object) -> dict:
             for item in records
         ]
         normalized_tombstones = [validate_tombstone(item) for item in tombstones]
-        if len({item.id for item in entries}) != len(entries):
-            raise ValidationError("duplicate entry id")
+        if (len({item.id for item in entries}) != len(entries)
+                or len({item.name for item in entries}) != len(entries)):
+            raise ValidationError("duplicate entry identity")
         if schema == CATALOG_SCHEMA_VERSION:
-            catalog = CatalogState.from_dict(value["catalog"], entry_ids={item.id for item in entries}).to_dict()
+            CatalogState.from_dict(value["catalog"], entry_ids={item.id for item in entries})
+            catalog = copy.deepcopy(value["catalog"])
+            folders = {folder["id"] for folder in catalog["folders"]}
+            if any(entry.folder_id is not None and entry.folder_id not in folders for entry in entries):
+                raise ValidationError("entry folder is unavailable")
         elif value["catalog"] is None:
             catalog = None
         else:
@@ -478,13 +516,19 @@ def _validate_metadata(value: object) -> dict:
     revision = value["revision"]
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
         raise ProjectBackupError("invalid master metadata revision")
-    return {
+    normalized = {
         "schema_version": schema,
         "revision": revision,
-        "entries": [_persisted_entry_dict(item, schema) for item in entries],
+        "entries": copy.deepcopy(records),
         "tombstones": normalized_tombstones,
         "catalog": catalog,
     }
+    revision_data = {key: normalized[key] for key in ("schema_version", "entries", "tombstones")}
+    if schema == CATALOG_SCHEMA_VERSION:
+        revision_data["catalog"] = catalog
+    if MetadataTransaction(revision_data).revision() != revision:
+        raise ProjectBackupError("master backup metadata revision is inconsistent")
+    return normalized
 
 
 def _capture_entry_secrets(backend: KeychainBackend, entries: list[Entry]) -> dict:
@@ -492,7 +536,7 @@ def _capture_entry_secrets(backend: KeychainBackend, entries: list[Entry]) -> di
     result = {}
     for entry in entries:
         for account, required in (
-            (entry.id, _secret_required(entry)),
+            (entry.id, entry_requires_secret(entry)),
             (entry.id + ":passphrase", False),
         ):
             if account not in present:
@@ -520,26 +564,6 @@ def _capture_service_secrets(backend: KeychainBackend, accounts: tuple[str, ...]
         except Exception as ex:
             raise ProjectBackupError("cannot read project service secret for backup") from ex
     return result
-
-
-def _secret_required(entry: Entry) -> bool:
-    return entry.type in {EntryType.API_KEY, EntryType.SSH_KEY} or (
-        entry.type is EntryType.SERVER and entry.fields.get("auth") == "password"
-    ) or (
-        entry.type is EntryType.NOTE and bool(entry.fields.get("secret_body"))
-    )
-
-
-def _persisted_entry_dict(entry: Entry, schema: int) -> dict:
-    record = entry.to_dict()
-    if schema == CATALOG_SCHEMA_VERSION:
-        record.setdefault("folder_id", None)
-        record.setdefault("distribution", "local_only")
-        record.setdefault("provenance", {"source": "local"})
-        if entry.content_revision is None:
-            raise ProjectBackupError("schema-v3 entry has no content revision")
-        record.setdefault("content_revision", entry.content_revision)
-    return record
 
 
 def _validate_secret_map(value: object) -> dict[str, dict[str, object]]:
@@ -685,62 +709,33 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _secure_read(path: Path, *, max_bytes: int | None = None) -> bytes:
     maximum = _MAX_BACKUP_BYTES if max_bytes is None else min(max_bytes, _MAX_BACKUP_BYTES)
-    before = path.lstat()
-    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-        raise ProjectBackupError("project backup path must be a regular file")
-    if os.name == "posix" and (
-        before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) & 0o077
-    ):
-        raise ProjectBackupError("project backup file must be owner-only")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    fd = os.open(path, flags)
     try:
-        opened = os.fstat(fd)
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            raise ProjectBackupError("project backup file changed while opening")
-        if opened.st_size > maximum:
-            raise ProjectBackupError("project backup exceeds size limit")
-        chunks = []
-        remaining = maximum + 1
-        while remaining:
-            chunk = os.read(fd, min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        result = b"".join(chunks)
-        if len(result) > maximum:
-            raise ProjectBackupError("project backup exceeds size limit")
-        return result
-    finally:
-        os.close(fd)
+        return secure_read(path, max_bytes=maximum)
+    except PrivateFileError:
+        raise ProjectBackupError("project backup file is unsafe, changed, or exceeds size limit") from None
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
-    ensure_private_dir(path.parent)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+def _require_new_destination(path: Path) -> None:
     try:
-        if os.name == "posix":
-            os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        _fsync_parent(path.parent)
-    except BaseException:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
+        Path(path).lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise ProjectBackupError("cannot inspect backup destination") from None
+    raise ProjectBackupError("backup destination already exists; choose an unused path")
+
+
+def _atomic_write(path: Path, data: bytes, *, private_parent: bool = True,
+                  replace_existing: bool = True) -> None:
+    try:
+        atomic_write_bytes(path, data, sync_parent=_fsync_parent,
+                           ensure_parent_private=private_parent,
+                           replace_existing=replace_existing)
+    except FileExistsError:
+        raise ProjectBackupError("backup destination already exists; choose an unused path") from None
+    except PrivateFileCommitError:
+        raise ProjectBackupCommitError(
+            "project backup file was published but durability is uncertain; inspect before retrying"
+        ) from None
+    except PrivateFileError:
+        raise ProjectBackupError("project backup publication could not be confirmed") from None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import threading
 import time
@@ -11,25 +10,21 @@ from collections.abc import Callable
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from keys_keeper import clipboard
-from keys_keeper.audit import AuditLog
+from keys_keeper.audit import normalize_outcome, record_outcome
 from keys_keeper.backend import KeychainError
 from keys_keeper.composition import AccessContext, build_backend
 from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
 from keys_keeper.paths import Paths
 from keys_keeper.refs import reverse_refs
 from keys_keeper.project_service import ProjectService
-from keys_keeper.service import HasDependents, SecretInput, VaultService
-from keys_keeper.store import MetadataStore, NameConflict
+from keys_keeper.service import HasDependents, SecretInput
+from keys_keeper.store import NameConflict, NotFound, StoreError
+from keys_keeper.request_json import request_object
 
 
 def _web_backend(paths: Paths):
     """Build a backend that is forbidden from opening OS authorization UI."""
     return build_backend(paths=paths, access=AccessContext.UI_FORBIDDEN)
-
-
-def _web_service(store: MetadataStore) -> VaultService:
-    """Compose a web-safe service without duplicating the access policy."""
-    return VaultService(store, _web_backend(store.paths))
 
 
 def _selector(parsed: ParseResult, server_selector: str | None) -> str | None:
@@ -59,7 +54,6 @@ def _selector(parsed: ParseResult, server_selector: str | None) -> str | None:
 def _request_context(handler, paths: Paths, parsed: ParseResult, *, runtime=None,
                      server_selector: str | None = None):
     """Resolve a request scope before any backend access occurs."""
-    from keys_keeper.composition import AccessContext
     from keys_keeper.project_runtime import ProjectRuntime
 
     active_runtime = runtime or getattr(handler, "project_runtime", None)
@@ -115,30 +109,87 @@ def handle_api(
     handler, *, paths: Paths, method: str, path: str, body: bytes | None,
     runtime=None, server_selector: str | None = None,
 ) -> None:
+    from keys_keeper.project_runtime import RuntimeErrorSafe
+
     parsed = urlparse(path)
-    if parsed.path.startswith("/api/personal-sync/"):
-        from keys_keeper.api_personal_sync import handle_personal_api
-        handle_personal_api(handler, paths=paths, method=method, parsed=parsed,
-                            body=body, runtime=runtime, server_selector=server_selector)
-        return
     try:
+        if parsed.path == "/api/sync" or parsed.path.startswith("/api/sync/"):
+            handler._send_json(410, {
+                "error": "S3 synchronization has been removed; use My computers or keys sync vps",
+            })
+            return
+        if parsed.path.startswith("/api/personal-sync/"):
+            from keys_keeper.api_personal_sync import handle_personal_api
+            handle_personal_api(handler, paths=paths, method=method, parsed=parsed,
+                                body=body, runtime=runtime, server_selector=server_selector)
+            return
         _request_context(handler, paths, parsed, runtime=runtime,
                          server_selector=server_selector)
-    except (ValueError, RuntimeError) as ex:
-        handler._send_json(400, {"error": str(ex)})
-        return
-    exact = _EXACT_ROUTES.get((method, parsed.path))
-    if exact is not None:
-        exact(handler, paths, parsed, body)
-        return
-    from keys_keeper.api_projects import dispatch_project_api
-    if dispatch_project_api(handler, paths, method, parsed, body,
-                            context=_context(handler, paths)):
-        return
-    if _dispatch_entry_route(handler, paths, method, parsed, body):
-        return
+        exact = _EXACT_ROUTES.get((method, parsed.path))
+        if exact is not None:
+            exact(handler, paths, parsed, body)
+            return
+        from keys_keeper.api_projects import dispatch_project_api
+        if dispatch_project_api(handler, paths, method, parsed, body,
+                                context=_context(handler, paths)):
+            return
+        if _dispatch_entry_route(handler, paths, method, parsed, body):
+            return
+        handler._send_json(404, {"error": "not found"})
+    except NotFound as ex:
+        if not _committed_exception(handler, ex):
+            handler._send_json(404, {"error": "not found", **normalize_outcome(committed=False, error=ex)})
+    except RuntimeErrorSafe as ex:
+        if not _committed_exception(handler, ex):
+            handler._send_json(400, {"error": str(ex), **normalize_outcome(error=ex)})
+    except (ValueError, TypeError, KeyError) as ex:
+        if not _committed_exception(handler, ex):
+            handler._send_json(400, {"error": "Invalid request", **normalize_outcome(committed=False, error=ex)})
+    except Exception as ex:
+        # Backend/process errors can contain a value or a private filesystem
+        # path. No unclassified exception message crosses the HTTP boundary.
+        if not _committed_exception(handler, ex):
+            handler._send_json(503, {"error": "Operation unavailable; inspect state before retrying",
+                                     **normalize_outcome(error=ex)})
 
-    handler._send_json(404, {"error": "not found"})
+
+def _committed_exception(handler, ex: Exception) -> bool:
+    receipt = normalize_outcome(error=ex)
+    if receipt["committed"] is not True:
+        return False
+    handler._send_json(503, {"error": "Change was published; confirm state before retrying",
+                             **receipt})
+    return True
+
+
+def _committed(handler, audit, *, op: str, entry: Entry | None = None,
+               affected_entry_ids: list[str] | None = None,
+               status: int = 200, **payload) -> None:
+    """Report a completed side effect even when its audit sink is unavailable."""
+    audit_status = record_outcome(
+        audit, op=op, name=entry.name if entry else "<batch>",
+        id_=entry.id if entry else "<batch>", affected_entry_ids=affected_entry_ids,
+        committed=True,
+    )
+    handler._send_json(status, {**payload, **normalize_outcome(committed=True, audit_status=audit_status)})
+
+
+def _operation_failed(handler, audit, *, op: str, entry: Entry | None = None,
+                      affected_entry_ids: list[str] | None = None,
+                      status: int = 503, message: str = "Operation unavailable",
+                      committed: bool | None = False, error: Exception | None = None) -> None:
+    receipt = normalize_outcome(committed=committed, error=error)
+    audit_status = record_outcome(
+        audit, op=op, name=entry.name if entry else "<batch>",
+        id_=entry.id if entry else "<batch>", success=False,
+        affected_entry_ids=affected_entry_ids, committed=receipt["committed"],
+    )
+    if receipt["committed"] is True:
+        message = "Change was published; confirm state before retrying"
+    elif receipt["committed"] is None:
+        message = "Operation outcome is unconfirmed; inspect recovery state before retrying"
+    handler._send_json(status, {"error": message,
+                                **normalize_outcome(committed=receipt["committed"], audit_status=audit_status, error=error)})
 
 
 _ApiRoute = Callable[[object, Paths, ParseResult, bytes | None], None]
@@ -157,12 +208,14 @@ def _route_copy(handler, paths: Paths, parsed: ParseResult, body: bytes | None) 
 def _route_heartbeat(
     handler, paths: Paths, parsed: ParseResult, body: bytes | None
 ) -> None:
+    request_object(body, {})
     handler._send_json(200, {"ok": True})
 
 
 def _route_shutdown(
     handler, paths: Paths, parsed: ParseResult, body: bytes | None
 ) -> None:
+    request_object(body, {})
     # Schedule a shutdown only after the success response has been sent.
     handler._send_json(200, {"ok": True})
     threading.Thread(target=_shutdown_self, daemon=True).start()
@@ -234,38 +287,6 @@ def _route_env_names(
     _env_names(handler)
 
 
-def _route_sync_setup(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    data = json.loads(body or b"{}")
-    _sync_action(handler, paths, lambda: _sync_mod().web_setup(paths, data))
-
-
-def _route_sync_status(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    _sync_action(handler, paths, lambda: _sync_mod().web_status(paths))
-
-
-def _route_sync_push(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    _sync_action(handler, paths, lambda: _sync_mod().web_push(paths))
-
-
-def _route_sync_pull(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    _sync_action(handler, paths, lambda: _sync_mod().web_pull(paths))
-
-
-def _route_sync_mode(
-    handler, paths: Paths, parsed: ParseResult, body: bytes | None
-) -> None:
-    mode = json.loads(body or b"{}").get("mode") or ""
-    _sync_action(handler, paths, lambda: _sync_mod().web_set_mode(paths, mode))
-
-
 _EXACT_ROUTES: dict[tuple[str, str], _ApiRoute] = {
     ("GET", "/api/entries"): _route_entries,
     ("POST", "/api/copy"): _route_copy,
@@ -282,11 +303,6 @@ _EXACT_ROUTES: dict[tuple[str, str], _ApiRoute] = {
     ("POST", "/api/project-sync/revoke"): _route_project_sync_revoke,
     ("POST", "/api/project-sync/initialize"): _route_project_sync_initialize,
     ("GET", "/api/env-names"): _route_env_names,
-    ("POST", "/api/sync/setup"): _route_sync_setup,
-    ("GET", "/api/sync/status"): _route_sync_status,
-    ("POST", "/api/sync/push"): _route_sync_push,
-    ("POST", "/api/sync/pull"): _route_sync_pull,
-    ("POST", "/api/sync/mode"): _route_sync_mode,
 }
 
 
@@ -329,9 +345,8 @@ def _delete_entry(handler, paths: Paths, entry_id: str, query: str) -> None:
     if e is None:
         handler._send_json(404, {"error": "not found"})
         return
-    service = context.service
     try:
-        result = service.delete_entry(e.id, cascade=cascade)
+        result = context.service.delete_entry(e.id, cascade=cascade)
     except HasDependents as ex:
         handler._send_json(
             409,
@@ -339,11 +354,10 @@ def _delete_entry(handler, paths: Paths, entry_id: str, query: str) -> None:
         )
         return
     except Exception as ex:
-        audit.record(op="delete", name=e.name, id_=e.id, success=False, error=str(ex))
-        handler._send_json(500, {"error": str(ex)})
+        _operation_failed(handler, audit, op="delete", entry=e, committed=None, error=ex,
+                          message="Vault operation failed; check recovery status before retrying")
         return
-    audit.record(op="delete", name=e.name, id_=e.id, success=True)
-    handler._send_json(200, {"ok": True, "cascaded": result.cascaded})
+    _committed(handler, audit, op="delete", entry=e, ok=True, cascaded=result.cascaded)
 
 
 def _project_target(handler, paths: Paths, *, selector: str | None = None,
@@ -365,8 +379,16 @@ def _project_target(handler, paths: Paths, *, selector: str | None = None,
 
 
 def _safe_project_error(handler, ex: Exception) -> None:
-    """Runtime diagnostics are metadata-only and safe to return to localhost UI."""
-    handler._send_json(400, {"error": str(ex)})
+    from keys_keeper.project_runtime import RuntimeErrorSafe
+
+    if _committed_exception(handler, ex):
+        return
+    if isinstance(ex, RuntimeErrorSafe):
+        handler._send_json(400, {"error": str(ex)})
+    elif isinstance(ex, (ValueError, TypeError, KeyError)):
+        handler._send_json(400, {"error": "Invalid request"})
+    else:
+        handler._send_json(503, {"error": "Operation unavailable"})
 
 
 def _project_sync_status(handler, paths: Paths) -> None:
@@ -438,12 +460,8 @@ def _project_sync_preview(handler, paths: Paths, parsed: ParseResult) -> None:
 
 def _project_sync_run(handler, paths: Paths, body: bytes | None) -> None:
     try:
-        data = json.loads(body or b"{}")
-        if not isinstance(data, dict):
-            raise ValueError("request body must be an object")
+        data = request_object(body, {"scope_id": str})
         selector = data.get("scope_id")
-        if selector is not None and not isinstance(selector, str):
-            raise ValueError("scope_id must be a string")
         runtime, target = _project_target(handler, paths, selector=selector)
         result = runtime.sync(target.profile_id)
         handler._send_json(200, {"ok": True, "profile_id": target.profile_id, "result": result})
@@ -456,9 +474,8 @@ def _project_sync_revoke(handler, paths: Paths, body: bytes | None) -> None:
         if _context(handler, paths).kind != "master":
             handler._send_json(403, {"error": "device revocation requires the master profile"})
             return
-        data = json.loads(body or b"{}")
-        if not isinstance(data, dict) or not isinstance(data.get("scope_id"), str) or not isinstance(data.get("device_id"), str):
-            raise ValueError("scope_id and device_id are required")
+        data = request_object(body, {"scope_id": str, "device_id": str},
+                              required={"scope_id", "device_id"})
         runtime, target = _project_target(handler, paths, selector=data["scope_id"],
                                           require_master_scope=True)
         result = runtime.master(target.item).revoke(data["device_id"])
@@ -474,9 +491,8 @@ def _project_sync_initialize(handler, paths: Paths, body: bytes | None) -> None:
         if context.kind != "master":
             handler._send_json(403, {"error": "scope initialization requires the master profile"})
             return
-        data = json.loads(body or b"{}")
-        if not isinstance(data, dict):
-            raise ValueError("request body must be an object")
+        data = request_object(body, {"scope_id": str, "endpoint": str, "admin_token_entry": str},
+                              required={"scope_id", "endpoint", "admin_token_entry"})
         scope_id, endpoint, token_entry = (data.get("scope_id"), data.get("endpoint"), data.get("admin_token_entry"))
         if not all(isinstance(value, str) and value for value in (scope_id, endpoint, token_entry)):
             raise ValueError("scope_id, endpoint, and admin_token_entry are required")
@@ -488,32 +504,6 @@ def _project_sync_initialize(handler, paths: Paths, body: bytes | None) -> None:
         handler._send_json(200, {"ok": True, "result": result})
     except (ValueError, RuntimeError, KeychainError) as ex:
         _safe_project_error(handler, ex)
-
-
-def _sync_mod():
-    from keys_keeper import cli_sync
-
-    return cli_sync
-
-
-def _sync_action(handler, paths: Paths, fn) -> None:
-    """Run a sync web action; map expected failures to safe JSON errors.
-
-    Error strings here are our own (endpoint/exception-type), never a secret.
-    """
-    from keys_keeper.backend import KeychainError
-    from keys_keeper.config import SyncConfigError
-    from keys_keeper.crypto import BadPassword
-    from keys_keeper.sync_remote import AuthError, TransportError
-
-    if not _require_master(handler, _context(handler, paths)):
-        return
-    try:
-        handler._send_json(200, fn())
-    except (SyncConfigError, KeychainError) as e:
-        handler._send_json(400, {"error": str(e)})
-    except (AuthError, TransportError, BadPassword) as e:
-        handler._send_json(502, {"error": str(e)})
 
 
 def _env_names(handler) -> None:
@@ -552,7 +542,7 @@ def _entry_detail(handler, paths: Paths, entry_id: str) -> None:
     d["used_by"] = rev.get(e.name, [])
     # also inline last 5 audit events for this entry
     audit = context.audit
-    d["recent_events"] = list(audit.search(name=e.name, limit=5))
+    d["recent_events"] = list(audit.search(entry_id=e.id, limit=5, newest_first=True))
     handler._send_json(200, d)
 
 
@@ -560,14 +550,12 @@ DEFAULT_CLIPBOARD_CLEAR_SEC = 30
 
 
 def _copy(handler, paths: Paths, body: bytes) -> None:
-    payload = json.loads(body or b"{}")
+    from keys_keeper.models import entry_requires_secret
+
+    payload = request_object(body, {"id": str, "clear_after": int}, required={"id"})
     entry_id = payload.get("id")
     # Mirror the CLI's `--clear-after` flag (cli.py default: 30, 0 disables).
-    try:
-        clear_after = int(payload.get("clear_after", DEFAULT_CLIPBOARD_CLEAR_SEC))
-    except (TypeError, ValueError):
-        handler._send_json(400, {"error": "clear_after must be an integer"})
-        return
+    clear_after = payload.get("clear_after", DEFAULT_CLIPBOARD_CLEAR_SEC)
     if not 0 <= clear_after <= clipboard.MAX_CLEAR_DELAY_SECONDS:
         handler._send_json(400, {"error": "clear_after must be from 0 to 86400 seconds"})
         return
@@ -578,39 +566,40 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
     if e is None:
         handler._send_json(404, {"error": "entry not found"})
         return
-    backend = context.backend
+    if not entry_requires_secret(e):
+        handler._send_json(400, {"error": "This entry does not have a secret body"})
+        return
     try:
-        sealed = backend.get(e.id)
-    except Exception as ex:
-        audit.record(op="copy", name=e.name, id_=e.id, success=False, error=str(ex))
-        handler._send_json(500, {"error": str(ex)})
+        sealed = context.backend.get(e.id)
+    except Exception:
+        _operation_failed(handler, audit, op="copy", entry=e,
+                          message="Credential unavailable")
         return
     # Clipboard sink (controlled, not transcript-visible to the agent).
     value = sealed.unseal()
     try:
         written = clipboard.write(value)
-    except clipboard.ClipboardUnavailable:
+    except Exception:
         written = False
     if not written:
-        audit.record(
-            op="copy",
-            name=e.name,
-            id_=e.id,
-            success=False,
-            error="clipboard write failed",
-        )
-        handler._send_json(500, {"error": "clipboard write failed"})
+        _operation_failed(handler, audit, op="copy", entry=e,
+                          message="Clipboard unavailable")
         return
-    audit.record(op="copy", name=e.name, id_=e.id, success=True)
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    clipboard.schedule_clear_after(written_hash, clear_after)
-    handler._send_json(200, {"ok": True, "clear_after": clear_after})
+    try:
+        clipboard.schedule_clear_after(written_hash, clear_after)
+        clear_status = "scheduled" if clear_after else "disabled"
+    except Exception:
+        clear_status = "unavailable"
+    _committed(handler, audit, op="copy", entry=e, ok=True,
+               clear_after=clear_after, clear_status=clear_status)
 
 
 def _audit(handler, paths: Paths, query: str) -> None:
     qs = parse_qs(query)
     op = qs.get("op", [None])[0]
     name = qs.get("name", [None])[0]
+    entry_id = qs.get("entry_id", [None])[0]
     limits = qs.get("limit", ["100"])
     try:
         if len(limits) != 1:
@@ -626,7 +615,8 @@ def _audit(handler, paths: Paths, query: str) -> None:
     # the file contains more than the UI's 2,000-event limit.
     from keys_keeper.audit import AuditReadLimit
     try:
-        events = list(audit.search(op=op, name=name, limit=limit, newest_first=True))
+        events = list(audit.search(op=op, name=name, entry_id=entry_id,
+                                   limit=limit, newest_first=True))
     except AuditReadLimit:
         handler._send_json(413, {"error": "audit read limit exceeded; narrow the filter or rotate the log"})
         return
@@ -634,7 +624,12 @@ def _audit(handler, paths: Paths, query: str) -> None:
 
 
 def _create_entry(handler, paths: Paths, body: bytes) -> None:
-    payload = json.loads(body or b"{}")
+    from keys_keeper.models import entry_requires_secret
+
+    payload = request_object(body, {
+        "name": str, "type": str, "fields": dict, "tags": list,
+        "note": str, "refs": list, "value": str,
+    }, required={"name", "type"})
     try:
         type_ = EntryType(payload["type"])
         e = Entry.new(
@@ -645,35 +640,46 @@ def _create_entry(handler, paths: Paths, body: bytes) -> None:
             note=payload.get("note", ""),
             refs=payload.get("refs", []),
         )
-    except (ValidationError, KeyError, ValueError) as ex:
-        handler._send_json(400, {"error": str(ex)})
+        e = Entry.from_untrusted_dict(e.to_dict())
+        if entry_requires_secret(e) and not payload.get("value"):
+            raise ValidationError("value required")
+        if not entry_requires_secret(e) and "value" in payload:
+            raise ValidationError("entry type does not accept a value")
+    except (ValidationError, KeyError, ValueError):
+        handler._send_json(400, {"error": "Invalid entry"})
         return
     context = _context(handler, paths)
     if context.kind not in {"master", "replica"}:
         handler._send_json(403, {"error": "selected profile is read-only"})
         return
     audit = context.audit
-    service = context.service
     try:
-        service.create_entry(
+        context.service.create_entry(
             e,
             secrets=SecretInput(value=payload["value"])
             if payload.get("value")
             else None,
         )
-    except NameConflict as ex:
-        handler._send_json(409, {"error": str(ex)})
+    except NameConflict:
+        handler._send_json(409, {"error": "Entry name already exists"})
+        return
+    except ValidationError:
+        _operation_failed(handler, audit, op="add", entry=e,
+                          status=400, message="Invalid entry")
         return
     except Exception as ex:
-        audit.record(op="add", name=e.name, id_=e.id, success=False, error=str(ex))
-        handler._send_json(500, {"error": str(ex)})
+        _operation_failed(handler, audit, op="add", entry=e, committed=None, error=ex,
+                          message="Vault operation failed; check recovery status before retrying")
         return
-    audit.record(op="add", name=e.name, id_=e.id, success=True)
-    handler._send_json(201, {"id": e.id, "name": e.name})
+    _committed(handler, audit, op="add", entry=e, status=201, id=e.id, name=e.name)
 
 
 def _patch_entry(handler, paths: Paths, entry_id: str, body: bytes) -> None:
-    payload = json.loads(body or b"{}")
+    from keys_keeper.models import entry_requires_secret
+
+    payload = request_object(body, {
+        "fields": dict, "tags": list, "note": str, "refs": list, "value": str,
+    })
     context = _context(handler, paths)
     if not _require_master(handler, context):
         return
@@ -689,36 +695,38 @@ def _patch_entry(handler, paths: Paths, entry_id: str, body: bytes) -> None:
     if "note" in payload:
         candidate["note"] = payload["note"]
     if "fields" in payload:
-        try:
-            candidate["fields"] = {**candidate["fields"], **payload["fields"]}
-        except TypeError as ex:
-            handler._send_json(400, {"error": str(ex)})
-            return
+        candidate["fields"] = {**candidate["fields"], **payload["fields"]}
     if "refs" in payload:
         candidate["refs"] = payload["refs"]
     candidate["updated_at"] = now_iso()
     try:
         updated = Entry.from_untrusted_dict(candidate, allow_project_fields=True)
-    except (ValidationError, TypeError, ValueError) as ex:
-        handler._send_json(400, {"error": str(ex)})
+        if e.type == EntryType.NOTE and updated.fields["secret_body"] != e.fields["secret_body"]:
+            raise ValidationError("note storage cannot be changed by a metadata edit")
+        if "value" in payload and (not entry_requires_secret(updated) or not payload["value"]):
+            raise ValidationError("invalid secret replacement")
+    except (ValidationError, TypeError, ValueError):
+        handler._send_json(400, {"error": "Invalid entry"})
         return
-    service = context.service
     try:
-        service.update_entry(
+        context.service.update_entry(
             updated,
             secrets=SecretInput(value=payload["value"])
             if payload.get("value")
             else None,
         )
-    except NameConflict as ex:
-        handler._send_json(409, {"error": str(ex)})
+    except NameConflict:
+        handler._send_json(409, {"error": "Entry name already exists"})
+        return
+    except ValidationError:
+        _operation_failed(handler, audit, op="update", entry=e,
+                          status=400, message="Invalid entry")
         return
     except Exception as ex:
-        audit.record(op="update", name=e.name, id_=e.id, success=False, error=str(ex))
-        handler._send_json(500, {"error": str(ex)})
+        _operation_failed(handler, audit, op="update", entry=e, committed=None, error=ex,
+                          message="Vault operation failed; check recovery status before retrying")
         return
-    audit.record(op="update", name=updated.name, id_=updated.id, success=True)
-    handler._send_json(200, {"ok": True})
+    _committed(handler, audit, op="update", entry=updated, ok=True)
 
 
 def _shutdown_self() -> None:
@@ -733,10 +741,18 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
     context = _context(handler, paths)
     if not _require_master(handler, context):
         return
-    payload = json.loads(body or b"{}")
+    payload = request_object(body, {"source": str}, required={"source"})
     text = payload.get("source", "")
     dry = "dry-run=1" in (query or "")
     rows = parse_bulk(text)
+
+    # This line format carries no structured fields or refs. Keep its scope
+    # honest instead of guessing SSH public keys or server configuration.
+    for row in rows:
+        if not row.error and row.type not in {"api_key", "note"}:
+            row.error = "this type requires the new entry form"
+        if not row.error and not row.value:
+            row.error = "a nonempty secret value is required"
 
     out = [
         {
@@ -760,7 +776,6 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
 
     store = context.store
     audit = context.audit
-    service = context.service
     existing = {e.name for e in store.list()}
     collisions = [r.name for r in rows if r.name in existing]
     if collisions:
@@ -770,29 +785,26 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
     prepared = []
     for r in rows:
         type_ = EntryType(r.type)
-        fields: dict = {}
+        fields: dict = {"secret_body": True} if type_ == EntryType.NOTE else {}
         try:
             entry = Entry.new(name=r.name, type=type_, fields=fields, tags=r.tags)
-        except ValidationError as ex:
-            handler._send_json(500, {"error": f"row {r.line}: {ex}"})
+            entry = Entry.from_untrusted_dict(entry.to_dict())
+        except ValidationError:
+            handler._send_json(400, {"error": "Invalid entry in bulk input"})
             return
-        secrets = (
-            SecretInput(value=r.value)
-            if type_ in (EntryType.API_KEY, EntryType.SSH_KEY, EntryType.NOTE)
-            else None
-        )
-        prepared.append((entry, secrets))
+        prepared.append((entry, SecretInput(value=r.value)))
     try:
-        imported = service.bulk_create(prepared)
-    except NameConflict as ex:
-        handler._send_json(409, {"error": str(ex)})
+        imported = context.service.bulk_create(prepared)
+    except NameConflict:
+        handler._send_json(409, {"error": "Entry name already exists"})
         return
     except Exception as ex:
-        handler._send_json(500, {"error": str(ex)})
+        _operation_failed(handler, audit, op="bulk_import", committed=None, error=ex,
+                          affected_entry_ids=[entry.id for entry, _ in prepared],
+                          message="Vault operation failed; check recovery status before retrying")
         return
-    for entry in imported:
-        audit.record(op="add", name=entry.name, id_=entry.id, success=True)
-    handler._send_json(200, {"ok": True, "imported": len(rows)})
+    _committed(handler, audit, op="bulk_import", affected_entry_ids=[entry.id for entry in imported],
+               ok=True, imported=len(rows))
 
 
 def _status(handler, paths: Paths) -> None:
@@ -823,10 +835,12 @@ def _status(handler, paths: Paths) -> None:
 
 
 def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:
+    from keys_keeper.models import entry_requires_secret
+
     context = _context(handler, paths)
     if not _require_master(handler, context):
         return
-    payload = json.loads(body or b"{}")
+    payload = request_object(body, {"value": str}, required={"value"})
     value = payload.get("value")
     if not value:
         handler._send_json(400, {"error": "value required"})
@@ -837,15 +851,14 @@ def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:
     if e is None:
         handler._send_json(404, {"error": "not found"})
         return
-    e.updated_at = now_iso()
-    service = context.service
-    try:
-        service.update_entry(e, secrets=SecretInput(value=value))
-    except Exception as ex:
-        audit.record(
-            op="replace_secret", name=e.name, id_=e.id, success=False, error=str(ex)
-        )
-        handler._send_json(500, {"error": str(ex)})
+    if not entry_requires_secret(e):
+        handler._send_json(400, {"error": "This entry does not have a secret body"})
         return
-    audit.record(op="replace_secret", name=e.name, id_=e.id, success=True)
-    handler._send_json(200, {"ok": True})
+    e.updated_at = now_iso()
+    try:
+        context.service.update_entry(e, secrets=SecretInput(value=value))
+    except Exception as ex:
+        _operation_failed(handler, audit, op="replace_secret", entry=e, committed=None, error=ex,
+                          message="Vault operation failed; check recovery status before retrying")
+        return
+    _committed(handler, audit, op="replace_secret", entry=e, ok=True)

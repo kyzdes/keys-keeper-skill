@@ -35,11 +35,11 @@ Download and run `scripts/install-windows.ps1` in PowerShell. It finds Python
 dedicated virtual environment under `%LOCALAPPDATA%\KeysKeeper`, adds only a
 `keys` wrapper to the user PATH, installs a Start Menu shortcut and opens the
 local app. It does not require Git, SSH, administrator rights or any vault token.
-The default download source is the reviewed `v0.10.1` release;
+The default download source is the reviewed `v0.11.1` release;
 `-Source` accepts another reviewed archive URL or local checkout.
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/v0.10.1/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
+Invoke-WebRequest https://raw.githubusercontent.com/kyzdes/keys-keeper-skill/v0.11.1/scripts/install-windows.ps1 -OutFile "$env:TEMP\install-keys-keeper.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\install-keys-keeper.ps1"
 ```
 
@@ -62,7 +62,10 @@ its durable outbox until submitted. The main computer must run to accept and
 publish them; all replicas eventually fetch that publication. Name conflicts
 keep the canonical existing key and are not resolved by overwriting it.
 
-`keys devices status` reports local state; `keys devices sync` retries now.
+`keys devices status` reports local state and may read local unlock material to
+decrypt configured sync state. It does not contact the VPS or read entry values.
+For a credential-free installation check, use `keys --version` or `keys --help`.
+`keys devices sync` retries now.
 `keys devices autostart on|off` controls automatic startup. Background processes
 use `keys devices watch --home PATH`. A network error is recorded as pending with
 a fixed message. It does not erase keys or log decrypted payloads.
@@ -117,6 +120,7 @@ not support the new pairing endpoints and must be updated first. Older clients
 do not understand personal routing/all-entry projection and must not run a
 personal scope's watcher; existing ordinary scopes remain compatible.
 
-S3 and KK2 commands remain available as legacy compatibility features. The S3
-panel is collapsed and makes no status/credential request until opened. Legacy
-full-vault exports and writers still reject schema 3.
+Version 0.12 removes S3 sync and its WebVault. Old S3 configuration and saved
+credentials are retained without being read or migrated. KK2 VPS commands stay
+available for schema-2 catalogs. Full-vault exports and writers reject schema 3;
+use the project recovery workflow to preserve its authority and bindings.

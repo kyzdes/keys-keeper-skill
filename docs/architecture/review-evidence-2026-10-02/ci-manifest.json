@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "jobs": [
+    "macos-latest-py3.12",
+    "ubuntu-latest-py3.10",
+    "ubuntu-latest-py3.12",
+    "ubuntu-latest-py3.14",
+    "windows-latest-py3.12"
+  ],
+  "commit": "36df576ba403437d6352add265232bc01601cbae",
+  "matrix": [
+    {
+      "label": "macos-latest-py3.12",
+      "commit": "36df576ba403437d6352add265232bc01601cbae",
+      "pytest_exit_status": 0
+    },
+    {
+      "label": "ubuntu-latest-py3.10",
+      "commit": "36df576ba403437d6352add265232bc01601cbae",
+      "pytest_exit_status": 0
+    },
+    {
+      "label": "ubuntu-latest-py3.12",
+      "commit": "36df576ba403437d6352add265232bc01601cbae",
+      "pytest_exit_status": 0
+    },
+    {
+      "label": "ubuntu-latest-py3.14",
+      "commit": "36df576ba403437d6352add265232bc01601cbae",
+      "pytest_exit_status": 0
+    },
+    {
+      "label": "windows-latest-py3.12",
+      "commit": "36df576ba403437d6352add265232bc01601cbae",
+      "pytest_exit_status": 0
+    }
+  ],
+  "expected_jobs": 5,
+  "errors": [],
+  "totals": {
+    "covered_lines": 14755,
+    "lines": 17304,
+    "line_percent": 85.27,
+    "covered_branches": 4029,
+    "branches": 5596,
+    "branch_percent": 72.0
+  },
+  "source_modules": 81,
+  "omitted_source_modules": [],
+  "coverage_status": "complete",
+  "coverage_gate": {
+    "status": "passed",
+    "min_line": 84.0,
+    "min_branch": 69.0,
+    "errors": []
+  },
+  "coverage_tool_version": "7.16.2",
+  "limitations": [
+    "Python package only: JavaScript/CSS/HTML and native Swift are not instrumented.",
+    "Subprocess coverage includes normal Python exits and patched os._exit; SIGKILL/forced process-tree termination may lose child data.",
+    "Line/branch execution does not prove assertions, all input combinations, live deployment, OS integration, or battery life.",
+    "Test phase durations are wall time under coverage, not uninstrumented CPU benchmarks."
+  ]
+}

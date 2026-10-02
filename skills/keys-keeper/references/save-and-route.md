@@ -6,7 +6,7 @@
 2. Preferred path: `keys add NAME --type TYPE --from-clipboard --tag TAG_A --tag TAG_B --note "..."`.
    `--tag` is repeatable: a comma-joined value such as `--tag llm,prod` creates one literal tag, not two. Keep each tag concise (64 characters maximum).
 3. For multi-line secrets (SSH keys, PEM blobs): tell the user to either save to a file (`--from-file path`) or open `keys serve` and use the web form (clipboard truncation can corrupt long PEMs).
-4. For mass import from a notes file: `keys serve` → Bulk import page (the parser handles `key=value` lines, multi-line PEMs, tags, and type override per-line).
+4. `keys serve` → Bulk import accepts API keys and protected notes. Use the single-entry form or `keys add` for SSH keys, servers, domains and other structured types; bulk import does not infer their fields.
 
 ### User wants to put a secret into a file
 
@@ -40,7 +40,7 @@ Presence, successful resolution, and external service validity are three differe
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
-- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.push`, `sync.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
+- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.vps.push`, `sync.vps.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
 - The web admin's `/audit` page has the same data plus charts; either is fine.
 
 ## Search & discovery

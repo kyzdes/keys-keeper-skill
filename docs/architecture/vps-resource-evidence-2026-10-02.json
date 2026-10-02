@@ -1,0 +1,184 @@
+{
+  "baseline": "7966581aa013326996fb479fb3fa38148681766b",
+  "scope": "Synthetic local measurements; no operator vault or live VPS",
+  "client": {
+    "baseline": "7966581aa013326996fb479fb3fa38148681766b",
+    "method": "Synthetic transport counters report JSON response-body bytes; tracemalloc starts after fixture creation and measures Python allocations, not native crypto RSS. Baseline import points to extracted shared snapshot helper; chain verifier is unchanged.",
+    "network": {
+      "before_cold": {
+        "get_head": 1,
+        "response_bytes": 1147869,
+        "snapshot_responses": 205,
+        "list_devices": 1,
+        "get_commit": 205,
+        "requests": 207,
+        "python_peak_bytes": 1272705
+      },
+      "before_pinned": {
+        "get_head": 1,
+        "response_bytes": 1147869,
+        "snapshot_responses": 205,
+        "list_devices": 1,
+        "get_commit": 205,
+        "requests": 207,
+        "python_peak_bytes": 1253122
+      },
+      "after_cold": {
+        "get_head": 1,
+        "response_bytes": 243146,
+        "snapshot_responses": 1,
+        "list_devices": 1,
+        "get_commit": 1,
+        "list_commits": 3,
+        "requests": 6,
+        "python_peak_bytes": 335312
+      },
+      "after_pinned": {
+        "get_head": 1,
+        "response_bytes": 243146,
+        "snapshot_responses": 1,
+        "list_devices": 1,
+        "get_commit": 1,
+        "list_commits": 3,
+        "requests": 6,
+        "python_peak_bytes": 1051621
+      },
+      "fixture": {
+        "commits": 205,
+        "plaintext_secret_bytes": 2048
+      }
+    },
+    "memory": {
+      "before_cold": {
+        "get_head": 1,
+        "response_bytes": 18798486,
+        "snapshot_responses": 80,
+        "list_devices": 1,
+        "get_commit": 80,
+        "requests": 82,
+        "python_peak_bytes": 15006581
+      },
+      "before_pinned": {
+        "get_head": 1,
+        "response_bytes": 18798486,
+        "snapshot_responses": 80,
+        "list_devices": 1,
+        "get_commit": 80,
+        "requests": 82,
+        "python_peak_bytes": 15008205
+      },
+      "after_cold": {
+        "get_head": 1,
+        "response_bytes": 328113,
+        "snapshot_responses": 1,
+        "list_devices": 1,
+        "get_commit": 1,
+        "list_commits": 1,
+        "requests": 4,
+        "python_peak_bytes": 986211
+      },
+      "after_pinned": {
+        "get_head": 1,
+        "response_bytes": 328113,
+        "snapshot_responses": 1,
+        "list_devices": 1,
+        "get_commit": 1,
+        "list_commits": 1,
+        "requests": 4,
+        "python_peak_bytes": 1051618
+      },
+      "fixture": {
+        "commits": 80,
+        "plaintext_secret_bytes": 131072
+      }
+    }
+  },
+  "relay": {
+    "synthetic": true,
+    "quota_checks": [
+      {
+        "history_records": 1,
+        "sql_queries": 2,
+        "sqlite_vm_instructions": 32,
+        "seconds": 3.7874997360631824e-05
+      },
+      {
+        "history_records": 500,
+        "sql_queries": 2,
+        "sqlite_vm_instructions": 32,
+        "seconds": 1.5041005099192262e-05
+      }
+    ],
+    "max_body_four_clients": {
+      "synthetic_loopback_only": true,
+      "clients": 4,
+      "active_dispatch_default": 4,
+      "plaintext_bytes_each": 16777216,
+      "snapshot_bytes_each": 22369843,
+      "request_body_bytes_each": 29827273,
+      "http_statuses": [
+        201,
+        409,
+        409,
+        409
+      ],
+      "elapsed_seconds": 1.5866437910008244,
+      "platform": "darwin",
+      "server_baseline_rss_mib": 24.75,
+      "server_peak_rss_mib": 566.640625
+    },
+    "max_body_four_clients_default_two": {
+      "synthetic_loopback_only": true,
+      "clients": 4,
+      "active_dispatch_default": 2,
+      "plaintext_bytes_each": 16777216,
+      "snapshot_bytes_each": 22369843,
+      "request_body_bytes_each": 29827273,
+      "http_statuses": [
+        429,
+        409,
+        201,
+        429
+      ],
+      "elapsed_seconds": 0.7651617079973221,
+      "platform": "darwin",
+      "server_baseline_rss_mib": 23.03125,
+      "server_peak_rss_mib": 302.640625
+    }
+  },
+  "idle": {
+    "all_results_idle": true,
+    "cpu_seconds": 1.464684,
+    "cycles": 3,
+    "encrypted_files_changed": 0,
+    "journal_record_writes": 0,
+    "kdf_derivations": 6,
+    "retain_state": true,
+    "scope_cycles": 18,
+    "scopes": 6,
+    "wall_seconds": 1.481947
+  },
+  "source_counts": {
+    "before": {
+      "files": 111,
+      "lines": 35831,
+      "python_modules": 84
+    },
+    "after": {
+      "files": 97,
+      "lines": 32467,
+      "python_modules": 76
+    },
+    "excludes": [
+      "tests",
+      "bytecode",
+      "build caches"
+    ]
+  },
+  "limits": [
+    "Client allocation metrics use tracemalloc, not process RSS or native crypto memory.",
+    "Relay RSS probe is macOS loopback without TLS or a proxy.",
+    "Lower admission trades excess concurrent work for HTTP 429, not faster completion of four successful uploads.",
+    "Logical storage quotas do not bound filesystem usage including indexes and WAL."
+  ]
+}

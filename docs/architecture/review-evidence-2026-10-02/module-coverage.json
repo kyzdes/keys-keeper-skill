@@ -1,0 +1,58 @@
+{
+  "api.py": {
+    "covered_lines": 308,
+    "lines": 539,
+    "line_percent": 57.14,
+    "covered_branches": 62,
+    "branches": 130,
+    "branch_percent": 47.69
+  },
+  "cli.py": {
+    "covered_lines": 697,
+    "lines": 910,
+    "line_percent": 76.59,
+    "covered_branches": 157,
+    "branches": 254,
+    "branch_percent": 61.81
+  },
+  "cli_project_sync.py": {
+    "covered_lines": 145,
+    "lines": 215,
+    "line_percent": 67.44,
+    "covered_branches": 42,
+    "branches": 84,
+    "branch_percent": 50.0
+  },
+  "ssh_runner.py": {
+    "covered_lines": 64,
+    "lines": 102,
+    "line_percent": 62.75,
+    "covered_branches": 13,
+    "branches": 42,
+    "branch_percent": 30.95
+  },
+  "api_personal_sync.py": {
+    "covered_lines": 60,
+    "lines": 60,
+    "line_percent": 100.0,
+    "covered_branches": 34,
+    "branches": 34,
+    "branch_percent": 100.0
+  },
+  "project_runtime.py": {
+    "covered_lines": 714,
+    "lines": 808,
+    "line_percent": 88.37,
+    "covered_branches": 192,
+    "branches": 268,
+    "branch_percent": 71.64
+  },
+  "project_sync.py": {
+    "covered_lines": 449,
+    "lines": 499,
+    "line_percent": 89.98,
+    "covered_branches": 145,
+    "branches": 194,
+    "branch_percent": 74.74
+  }
+}

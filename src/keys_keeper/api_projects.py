@@ -1,21 +1,11 @@
 """Authenticated, local-only Admin API for catalog organization."""
 from __future__ import annotations
 
-import json
 from urllib.parse import ParseResult, parse_qs, unquote
 
 from keys_keeper.project_service import ProjectCatalogError, ProjectService
 from keys_keeper.store import MetadataStore, NotFound, StoreError
-
-
-def _body(body: bytes | None) -> dict:
-    try:
-        value = json.loads(body or b"{}")
-    except (TypeError, json.JSONDecodeError) as ex:
-        raise ValueError("request body must be a JSON object") from ex
-    if not isinstance(value, dict):
-        raise ValueError("request body must be a JSON object")
-    return value
+from keys_keeper.request_json import InvalidRequest, request_object
 
 
 def _catalog_payload(paths, *, context=None) -> dict:
@@ -66,43 +56,61 @@ def dispatch_project_api(handler, paths, method: str, parsed: ParseResult, body:
         if method == "GET" and route == "/api/projects":
             handler._send_json(200, _catalog_payload(paths, context=context)); return True
         if method == "POST" and route == "/api/projects/init":
+            request_object(body, {})
             handler._send_json(409, {"error": "catalog migration requires a verified recovery backup; run `keys project-sync migrate --out BACKUP --password-file FILE`"}); return True
-        data = _body(body)
         if method == "POST" and route == "/api/projects/folders":
+            data = request_object(body, {"name": str, "parent_id": (str, type(None)), "position": int}, required={"name"})
             item = service.create_folder(data.get("name"), parent_id=data.get("parent_id"), position=data.get("position"))
         elif method == "PATCH" and route.startswith("/api/projects/folders/"):
+            data = request_object(body, {"name": str, "parent_id": (str, type(None)), "position": int})
+            if not data or ("name" in data and set(data) != {"name"}):
+                raise InvalidRequest()
             folder_id = unquote(route.rsplit("/", 1)[-1])
             item = service.rename_folder(folder_id, data["name"]) if "name" in data else service.move_folder(folder_id, parent_id=data.get("parent_id"), position=data.get("position"))
         elif method == "DELETE" and route.startswith("/api/projects/folders/"):
             destination = parse_qs(parsed.query).get("destination", [None])[0]
             item = service.delete_folder(unquote(route.rsplit("/", 1)[-1]), destination_id=destination)
         elif method == "POST" and route == "/api/projects":
+            data = request_object(body, {"slug": str, "name": str, "state": str}, required={"slug", "name"})
             item = service.create_project(data.get("slug"), data.get("name"), state=data.get("state", "active"))
         elif method == "PATCH" and route.startswith("/api/projects/") and route.count("/") == 3:
+            data = request_object(body, {"name": str, "slug": str}, required={"name"})
             project_id = unquote(route.rsplit("/", 1)[-1])
             item = service.rename_project(project_id, data["name"], slug=data.get("slug"))
         elif method == "POST" and route.startswith("/api/projects/") and route.endswith("/archive"):
+            request_object(body, {})
             project_id = unquote(route[len("/api/projects/"):-len("/archive")])
             item = service.archive_project(project_id)
         elif method == "POST" and route == "/api/projects/scopes":
+            data = request_object(body, {"project_id": str, "environment": str}, required={"project_id"})
             item = service.create_scope(data.get("project_id"), data.get("environment", "default"))
         elif method == "POST" and route == "/api/projects/bindings":
+            data = request_object(body, {"scope_id": str, "entry_id": str,
+                                        "local_name": str, "export": dict}, required={"scope_id", "entry_id"})
             item = service.assign(data.get("scope_id"), data.get("entry_id"), local_name=data.get("local_name"), export=data.get("export"))
         elif method == "DELETE" and route.startswith("/api/projects/bindings/"):
             scope_id, entry_id = unquote(route[len("/api/projects/bindings/"):]).split("/", 1)
             item = service.unassign(scope_id, entry_id)
         elif method == "PATCH" and route.startswith("/api/projects/entries/") and route.endswith("/distribution"):
+            data = request_object(body, {"distribution": str}, required={"distribution"})
             entry_id = unquote(route[len("/api/projects/entries/"):-len("/distribution")])
             item = service.set_entry_distribution(entry_id, data.get("distribution"))
         elif method == "PATCH" and route.startswith("/api/projects/entries/") and route.endswith("/folder"):
+            data = request_object(body, {"folder_id": (str, type(None))}, required={"folder_id"})
             entry_id = unquote(route[len("/api/projects/entries/"):-len("/folder")])
             folder_id = data.get("folder_id")
-            if folder_id is not None and not isinstance(folder_id, str):
-                raise ValueError("folder_id must be a string or null")
             item = service.set_entry_folder(entry_id, folder_id)
         else:
             handler._send_json(404, {"error": "not found"}); return True
         handler._send_json(200, {"ok": True, "item": item.to_dict()})
-    except (ValueError, KeyError, NotFound, ProjectCatalogError, StoreError) as ex:
-        handler._send_json(400 if not isinstance(ex, NotFound) else 404, {"error": str(ex)})
+    except NotFound:
+        handler._send_json(404, {"error": "not found"})
+    except (ValueError, KeyError, TypeError, ProjectCatalogError) as ex:
+        if getattr(ex, "committed", None) is True:
+            raise
+        handler._send_json(400, {"error": "Invalid project request"})
+    except Exception as ex:
+        if getattr(ex, "committed", None) is True:
+            raise
+        handler._send_json(503, {"error": "Project operation unavailable"})
     return True

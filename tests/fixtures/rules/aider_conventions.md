@@ -19,11 +19,12 @@ must be treated as exposed to other processes with access to that destination:
 - `keys inject NAME --file PATH --as ENV` — value goes directly to file (`--replace` only when that exact variable may be overwritten)
 - `keys resolve PATH` — placeholder substitution in file (writes back to the same path)
 - `keys add NAME --from-clipboard` / `--from-file PATH` / `--stdin` (when the user already piped); repeat `--tag TAG` for each tag
-- `keys ssh NAME` — opens ssh session with resolved key (CLI manages tempfile with locked-down permissions: POSIX 0600 on macOS/Linux, icacls user-restricted ACL on Windows)
+- `keys ssh NAME` — opens ssh session with resolved key (CLI creates the tempfile with private permissions before writing: POSIX 0600 on macOS/Linux, protected current-user DACL on Windows)
 - `keys rm NAME` (use `--cascade` if the entry is referenced by others)
 - `keys edit NAME` — change tags / note / non-secret fields (`--field key=value`)
 - `keys audit --name X --since 7d` / `--op copy` — search the audit log
-- `keys sync status` — reads sync credentials and contacts the remote; output contains metadata only
+- `keys devices status` — local public personal-sync metadata
+- `keys sync vps status` — verifies the remote and reads local vault secrets to compare snapshots; output contains metadata only
 - `keys keychain status` — current macOS prompt/bypass policy; does not open Keychain
 - `keys doctor` — vault-wide checks that inspect keychain presence but never print values
 - `keys quickstart` — read-only getting-started (config dir, command tour, first-key walkthrough); shows no values
@@ -40,10 +41,10 @@ migrate existing secrets or restructure their setup unprompted.
    `which keys` / `Get-Command keys`). If it works → skip to step 4.
 2. **If it's missing, OFFER to install and WAIT for a yes** — don't install
    silently. One line on what it is, then the platform command:
-   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.1'`
+   - macOS / Linux: `pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.12.0'`
      (no pipx? macOS `brew install pipx && pipx ensurepath`; Linux
      `python3 -m pip install --user pipx && pipx ensurepath`)
-   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.11.1"`
+   - Windows: `python -m pipx install "git+https://github.com/kyzdes/keys-keeper-skill.git@v0.12.0"`
    - Linux desktop also wants the keyring tool: `sudo apt install libsecret-tools`.
 3. **After install, note that `keys` may need a fresh terminal** for PATH to
    pick it up. Re-check with `keys --version`.
@@ -92,7 +93,7 @@ migrate existing secrets or restructure their setup unprompted.
 2. Preferred path: `keys add NAME --type TYPE --from-clipboard --tag TAG_A --tag TAG_B --note "..."`.
    `--tag` is repeatable: a comma-joined value such as `--tag llm,prod` creates one literal tag, not two. Keep each tag concise (64 characters maximum).
 3. For multi-line secrets (SSH keys, PEM blobs): tell the user to either save to a file (`--from-file path`) or open `keys serve` and use the web form (clipboard truncation can corrupt long PEMs).
-4. For mass import from a notes file: `keys serve` → Bulk import page (the parser handles `key=value` lines, multi-line PEMs, tags, and type override per-line).
+4. `keys serve` → Bulk import accepts API keys and protected notes. Use the single-entry form or `keys add` for SSH keys, servers, domains and other structured types; bulk import does not infer their fields.
 
 ### User wants to put a secret into a file
 
@@ -111,7 +112,7 @@ Examples:
 Use a narrowly scoped temporary directory and an explicit file path. On POSIX:
 
 1. Create it with `mktemp -d`, keep the returned path in a task-specific variable, and create only the exact file you need. Never target `$HOME`, `~`, a repository root, a glob, or an unresolved variable for cleanup.
-2. Run `keys inject NAME --file "$exact_file" --as ENV_NAME`; the CLI creates/rewrites the sink with owner-only permissions. Do not `cat`, `sed`, `grep`, `source`, interpolate, or otherwise round-trip its contents into shell output. A dotenv assignment is not shell-escaped data.
+2. Run `keys inject NAME --file "$exact_file" --as ENV_NAME`; the CLI creates/rewrites the sink with owner-only permissions. Injection supports single-line literal dotenv values and rejects ambiguous quoting, interpolation and duplicate assignments. Do not `cat`, `sed`, `grep`, `source`, interpolate, or otherwise round-trip its contents into shell output. A dotenv assignment is not shell-escaped data.
 3. Pass the file directly to the intended local tool, transfer it to one exact protected remote path, or use a fixed helper whose output contains status only. Verify path, owner/mode, non-empty status, and the downstream result — never the value.
 4. Remove the exact file with `/bin/unlink "$exact_file"`, then remove the now-empty temporary directory with `rmdir`. Avoid broad `rm -f` / `rm -rf` cleanup patterns; agent policies often reject them and a loose variable makes them dangerous.
 
@@ -157,14 +158,10 @@ Presence, successful resolution, and external service validity are three differe
 
 - Prefer **Settings → My computers** for personal VPS sync. Explicit all-key setup includes all current and future entries in a dedicated encrypted master authority without changing ordinary project bindings or entry distribution. Other computers have read + create access; existing entries can only be edited/deleted on the main computer.
 - Enrollment uses a short-lived connection code copied directly between the owner's computers. Never read, print, paste into chat, or inspect the code through an agent tool. The human compares verification codes on both screens and approves the exact device on the main computer. The relay transports encrypted invitation/request/response material; no manual bundle files or SSH setup are required.
-- `keys devices status` returns public personal-sync metadata; `keys devices sync` retries durable work. `keys devices autostart on|off` controls the per-user background job after sync setup is authorized. `keys devices setup --endpoint HTTPS_URL --admin-token-entry NAME --name LABEL --all-keys` is explicit all-entry setup; never run it for a request to deliver only selected project keys.
+- `keys devices status` returns public personal-sync metadata and may read local unlock material to open configured sync state. `keys devices sync` retries durable work. `keys devices autostart on|off` controls the per-user background job after sync setup is authorized. `keys devices setup --endpoint HTTPS_URL --admin-token-entry NAME --name LABEL --all-keys` is explicit all-entry setup; never run it for a request to deliver only selected project keys.
 - Automatic project/device sync attempts are limited to once per rolling 24 hours, including after errors or restarts. Manual Sync runs immediately; do not lower the background interval to deliver changes sooner.
-- S3 and KK2 below are legacy compatibility paths, not the default onboarding flow. Existing S3 configuration is preserved; schema-3 catalogs continue to reject legacy full-vault writers.
-- `keys sync setup` connects an S3-compatible bucket (AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi) and stores the access-key id, secret key, and a backup passphrase in the OS keychain. This step INGESTS secrets (it prompts for the secret key + passphrase), so it's user-driven — walk them through `keys sync setup --endpoint ... --bucket ... --access-key-id ...`, don't run it unprompted. The passphrase encrypts the whole cloud copy; a lost passphrase = unrecoverable backup, so tell the user to keep it somewhere safe.
-- Once configured you CAN run `keys sync push` / `keys sync pull` / `keys sync status` yourself — they move only the encrypted AES-256-GCM blob (same zero-knowledge format as `keys export`); no plaintext hits stdout or the transcript. `keys sync status` reads the saved sync credentials and contacts the remote even though its output contains metadata only.
-- `keys sync rollback N` restores an earlier snapshot version; `keys sync mode {off,manual,auto}` switches modes. `auto` enables a fail-open SessionStart auto-sync that exits silently on any error and never prompts.
-- Legacy S3 automatic attempts are limited to once per 24 hours; explicit `push`/`pull` remain immediate. `sync auto --force` is an explicit manual override, not a hook default.
-- For S3-free private VPS sync, `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a separate KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
+- KK2 full-vault sync remains available for schema-2 catalogs. Schema-3 catalogs use project or personal sync and reject legacy full-vault writers.
+- `keys sync vps init --endpoint HTTPS_URL --recovery-file PATH` creates a KK2 vault through `keys-keeper-syncd`. It prompts for the bootstrap admin token and writes a recovery secret bundle, so only run it when the user explicitly asks for this setup. Never open, preview, search, or read back the recovery file.
 - After VPS setup, you CAN run `keys sync vps status`, `push`, or `pull`; the server receives only ciphertext, signed manifests, public device keys, and token hashes. For onboarding, run `invite`, `join`, `approve`, and `finish` only when the user explicitly asks to add that device. `invite` and `approve` must run on the pinned root device. The invite file contains a short-lived secret: transfer it only to the user-selected destination and never read it back through an agent-visible tool. Pass the invitation trust fingerprint to `join` only after the human verifies it against the root device over a separate channel. Then require the new-device fingerprint to match before `approve`; approval also takes the original invite file so its signed checkpoint cannot change.
 - `keys sync vps revoke DEVICE_ID` is root-device-only. It blocks future server access but does not erase snapshots or VaultKey material already held by that device. Run it only on explicit request and report that cryptographic key rotation is not implemented yet.
 
@@ -179,17 +176,10 @@ Presence, successful resolution, and external service validity are three differe
 - Make a verified recovery bundle with `keys project-sync backup --out BACKUP --password-file FILE`. After an interrupted restore, repeat the same `project-sync restore --file BACKUP --root NEW_EMPTY_ROOT --password-file FILE --resume`; use `recover-takeover` only with explicit authorization, the same restored root, and a protected administrator-token file. Never inspect or paste a recovery, invitation, response, or token file into agent-visible tools.
 - `keys project-sync revoke --scope SCOPE --device DEVICE` is master-only and requires explicit authorization after checking IDs. It blocks future access and schedules a rekey/publish; it cannot erase data or material already held by that device. Check status until pending rekey work clears.
 
-### User wants the vault in a browser (self-hosted)
-
-- `keys webvault serve` runs the browser-decrypted web vault: the shipped client fetches the encrypted blob and decrypts it in-page, so the normal server request path receives ciphertext rather than vault plaintext. A compromised server can replace the JavaScript it serves; self-hosting and verifying the reviewed release remain part of the trust model. It reads the same S3 vault `keys sync` writes.
-- Prerequisite: `keys sync` must be configured (or pass the `WEBVAULT_S3_*` env vars). Defaults to `127.0.0.1:8333`.
-- Gate sign-up with `--register-token TOKEN` (registration is closed by default). For internet exposure, terminate TLS — put a reverse proxy in front and add `--behind-proxy`, or hand it `--certfile/--keyfile` directly.
-- v1 is read-only (view / search / reveal / copy in the browser). Adding and editing entries stay in the CLI or the local `keys serve` admin.
-
 ### User asks "why was X accessed" / "who used X"
 
 - `keys audit --name X` — most recent first, shows op + caller + file target where applicable.
-- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.push`, `sync.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
+- Filters: `--op OP` uses an exact stored operation name (common values: `copy`, `inject`, `resolve`, `add`, `update`, `delete`, `ssh`, `sync.vps.push`, `sync.vps.pull`), plus `--since 24h` / `7d` / `30d` and `--limit N`. If a filter returns zero rows, re-check the exact op name before concluding it never occurred.
 - The web admin's `/audit` page has the same data plus charts; either is fine.
 
 ## Search & discovery

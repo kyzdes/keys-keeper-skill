@@ -55,7 +55,16 @@
       } catch {}
       throw new Error(`${requestPath}: ${r.status}${detail}`);
     }
-    return r.json();
+    const body = await r.json();
+    if (body.audit_status === 'unavailable') toast('Operation completed, but the audit receipt could not be recorded. Do not repeat the operation.', 'error');
+    if (body.clear_status === 'unavailable') toast('Copied, but automatic clipboard clearing is unavailable.', 'error');
+    return body;
+  }
+
+  function hasSecret(entry) {
+    return ['api_key', 'ssh_key'].includes(entry.type)
+      || (entry.type === 'note' && entry.fields?.secret_body === true)
+      || (entry.type === 'server' && entry.fields?.auth === 'password');
   }
 
   const TYPE_META = {
@@ -228,7 +237,8 @@
           onclick: ev => { ev.stopPropagation(); requestDelete([e]); },
         }, svgIcon('trash'));
         if (canMutate) a.append(deleteBtn);
-        a.append(copyBtn, editBtn);
+        if (hasSecret(e)) a.append(copyBtn);
+        a.append(editBtn);
         return a;
       })(),
     );
@@ -361,6 +371,10 @@
           const body = await response.json().catch(() => ({}));
           throw new Error(body.error || `Request failed (${response.status}).`);
         }
+        if (response.ok) {
+          const receipt = await response.json().catch(() => ({}));
+          if (receipt.audit_status === 'unavailable') toast('Entry removed, but the audit receipt could not be recorded. Do not repeat the operation.', 'error');
+        }
         deletion.pending.shift();
         deletion.completed += 1;
         state.selected.delete(entry.id);
@@ -368,7 +382,7 @@
         state.entries.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
         deletion.pending.forEach(e => { e.used_by = (e.used_by || []).filter(name => name !== entry.name); });
       } catch (err) {
-        deletionMessage('delete-error', `Could not finish deleting ${entry.name}. ${err.message} You can retry the remaining entries or cancel.`);
+        deletionMessage('delete-error', `Could not finish deleting ${entry.name}. ${err.message} Check the vault state before trying again.`);
         break;
       }
     }
@@ -748,6 +762,8 @@
         audit.append(row);
       });
       document.getElementById('copy-btn').onclick = () => copy(e.id, e.name);
+      document.getElementById('copy-btn').hidden = !hasSecret(e);
+      document.getElementById('replace-secret-btn').hidden = !canMutate || !hasSecret(e);
       document.getElementById('delete-btn').onclick = () => requestDelete([e]);
       document.getElementById('replace-secret-btn').onclick = () => {
         document.getElementById('replace-modal').hidden = false;
@@ -825,11 +841,47 @@
         c.append(formRow('user', 'user', e?.fields?.user || '', true));
         c.append(formRow('auth', 'auth', e?.fields?.auth || 'ssh_key', true));
         c.append(formRow('ssh_key_ref', 'ssh_key ref', e?.refs?.find(r => r.role === 'ssh_key')?.name || '', false));
+        const secretFields = document.createElement('div');
+        c.append(secretFields);
+        const auth = document.getElementById('f-auth');
+        const renderPassword = () => {
+          secretFields.replaceChildren();
+          if (auth.value.trim() === 'password' && (!editId || e?.fields?.auth !== 'password')) {
+            secretFields.append(secretRow('value', 'password · stored as a secret', false));
+          }
+        };
+        auth.addEventListener('input', renderPassword);
+        renderPassword();
       } else if (selectedType === 'domain') {
         c.append(formRow('host', 'host', e?.fields?.host || '', true));
         c.append(formRow('registrar', 'registrar', e?.fields?.registrar || '', false));
       } else if (selectedType === 'note') {
-        c.append(formRow('body', 'body', e?.fields?.body || '', false));
+        const row = document.createElement('div'); row.className = 'form-row';
+        const label = document.createElement('label'); label.className = 'label';
+        label.textContent = 'body storage'; label.htmlFor = 'f-note-storage';
+        const storage = document.createElement('select'); storage.className = 'text-input';
+        storage.id = 'f-note-storage';
+        for (const [value, text] of [['secret', 'Secret — protected body'], ['public', 'Public — readable metadata']]) {
+          const option = document.createElement('option'); option.value = value; option.textContent = text;
+          storage.append(option);
+        }
+        storage.value = e ? (e.fields.secret_body ? 'secret' : 'public') : 'secret';
+        storage.disabled = Boolean(editId);
+        row.append(label, storage); c.append(row);
+        const bodyFields = document.createElement('div'); c.append(bodyFields);
+        const renderBody = () => {
+          bodyFields.replaceChildren();
+          if (storage.value === 'secret' && editId) {
+            const help = document.createElement('p');
+            help.textContent = 'The body is protected. Use Replace secret on the entry page to change it.';
+            bodyFields.append(help);
+          } else {
+            const body = secretRow('body', storage.value === 'secret' ? 'protected note body' : 'public note body · readable metadata', true);
+            bodyFields.append(body);
+            document.getElementById('f-body').value = e?.fields?.body || '';
+          }
+        };
+        storage.addEventListener('change', renderBody); renderBody();
       }
     }
 
@@ -861,7 +913,7 @@
         fields: {},
         refs: [],
       };
-      ['service', 'public_key', 'comment', 'host', 'port', 'user', 'auth', 'registrar', 'body'].forEach(k => {
+      ['service', 'public_key', 'comment', 'host', 'port', 'user', 'auth', 'registrar'].forEach(k => {
         const el = document.getElementById(`f-${k}`);
         if (el) {
           let v = el.value.trim();
@@ -872,7 +924,15 @@
       const refEl = document.getElementById('f-ssh_key_ref');
       if (refEl?.value.trim()) payload.refs.push({ role: 'ssh_key', name: refEl.value.trim() });
       const valueEl = document.getElementById('f-value') || document.getElementById('f-private_key');
-      if (valueEl) payload.value = valueEl.value;
+      if (valueEl) { payload.value = valueEl.value; valueEl.value = ''; }
+      if (selectedType === 'note') {
+        const secret = document.getElementById('f-note-storage').value === 'secret';
+        payload.fields.secret_body = secret;
+        const body = document.getElementById('f-body');
+        if (secret && !editId) { payload.value = body.value; body.value = ''; }
+        else if (!secret) payload.fields.body = body.value;
+      }
+      if (editId) { delete payload.name; delete payload.type; }
 
       try {
         if (editId) {
@@ -904,7 +964,6 @@
   if (document.getElementById('bulk-shell')) {
     const input = document.getElementById('bulk-input');
     const rowsEl = document.getElementById('preview-rows');
-    let lastParse = [];
 
     document.getElementById('format-toggle').onclick = () => {
       const h = document.getElementById('format-help');
@@ -925,7 +984,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: text }),
       });
-      lastParse = r.rows;
       renderPreview(r.rows);
       const errs = r.rows.filter(r => r.error).length;
       document.getElementById('preview-count').textContent = `${r.rows.length} entries · ${errs} errors`;
@@ -944,18 +1002,7 @@
           el('span', { class: 'status-dot' }),
           el('span', { class: 'row-num' }, String(r.line)),
           el('span', { class: 'name' }, r.name),
-          (() => {
-            const sel = document.createElement('select');
-            sel.className = 'type-dropdown';
-            ['api_key', 'ssh_key', 'server', 'domain', 'note'].forEach(t => {
-              const opt = document.createElement('option');
-              opt.value = t; opt.textContent = t;
-              if (t === r.type) opt.selected = true;
-              sel.append(opt);
-            });
-            sel.onchange = () => { r.type = sel.value; };
-            return sel;
-          })(),
+          el('span', { class: 'type-label-mono' }, r.type),
           el('span', { class: 'summary' },
             el('span', { class: 'muted' }, r.has_value ? 'value present' : 'no value'),
             ' ',
@@ -980,7 +1027,7 @@
         const r = await api('/api/bulk-import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ source: input.value, rows: lastParse }),
+          body: JSON.stringify({ source: input.value }),
         });
         if (r.ok) {
           location.href = '/';
@@ -1156,113 +1203,5 @@
       document.body.innerHTML = '<div class="curtain"><div class="glyph">K</div><div class="title">Server stopped</div><div class="sub">Re-run <span class="mono">keys serve</span> to restart.</div></div>';
     };
 
-    // --- cloud sync (S3) ---
-    const syncBody = document.getElementById('sync-body');
-    const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const SYNC_MODES = ['off', 'manual', 'auto'];
-    const modeOpts = sel => SYNC_MODES.map(m => `<option value="${m}"${m === sel ? ' selected' : ''}>${m}</option>`).join('');
-    const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : null });
-    const trimVal = id => (document.getElementById(id).value || '').trim();
-    const rawVal = id => document.getElementById(id).value || '';  // secrets: never trim
-    const setSyncMsg = t => { const m = document.getElementById('sync-msg'); if (m) m.textContent = t; };
-
-    function syncFormHTML(p) {
-      p = p || {};
-      return `
-        <div class="field-section-title">${p.configured ? 'reconfigure' : 'connect an s3 bucket'}</div>
-        <div class="form-row"><div class="label">endpoint <span class="req">*</span></div>
-          <input class="text-input" id="sf-endpoint" placeholder="https://<acct>.r2.cloudflarestorage.com" value="${escH(p.endpoint)}"></div>
-        <div class="form-row"><div class="label">bucket <span class="req">*</span></div>
-          <input class="text-input" id="sf-bucket" value="${escH(p.bucket)}"></div>
-        <div class="form-row"><div class="label">access key id <span class="req">*</span></div>
-          <input class="text-input" id="sf-akid" autocomplete="off" value="${escH(p.akid)}"></div>
-        <div class="form-row"><div class="label">secret key <span class="req">*</span></div>
-          <input class="text-input" id="sf-secret" type="password" autocomplete="new-password"></div>
-        <div class="form-row"><div class="label">passphrase <span class="req">*</span></div>
-          <input class="text-input" id="sf-pass" type="password" autocomplete="new-password" placeholder="encrypts the cloud copy"></div>
-        <div class="form-row"><div class="label">region</div>
-          <input class="text-input" id="sf-region" value="${escH(p.region || 'us-east-1')}"></div>
-        <div class="form-row"><div class="label">prefix</div>
-          <input class="text-input" id="sf-prefix" value="${escH(p.prefix || 'keys-keeper')}"></div>
-        <div class="form-row"><div class="label">addressing</div>
-          <select class="text-input" id="sf-addr"><option value="path"${(p.addressing || 'path') === 'path' ? ' selected' : ''}>path</option><option value="virtual"${p.addressing === 'virtual' ? ' selected' : ''}>virtual</option></select></div>
-        <div class="form-row"><div class="label">mode</div>
-          <select class="text-input" id="sf-mode">${modeOpts(p.mode || 'manual')}</select></div>
-        <div class="row gap-4 sync-actions">
-          <button class="btn btn-primary" id="sf-connect">${p.configured ? 'Save' : 'Connect'}</button>
-          ${p.configured ? '<button class="btn btn-ghost btn-sm" id="sf-cancel">Cancel</button>' : ''}
-          <span class="mono sync-msg" id="sync-msg"></span>
-        </div>
-        <div class="sync-note">Credentials go straight to your OS keychain over this loopback-only admin — never written to config or shown again.</div>`;
-    }
-
-    function syncStatusHTML(s) {
-      const rv = s.remote_version == null ? '—' : s.remote_version;
-      const lv = s.local_synced == null ? '—' : s.local_synced;
-      return `
-        <div class="kv-row"><span class="key">mode</span><span class="val">${escH(s.mode)}</span></div>
-        <div class="kv-row"><span class="key">bucket</span><span class="val">${escH(s.bucket)}</span></div>
-        <div class="kv-row"><span class="key">endpoint</span><span class="val mono">${escH(s.endpoint)}</span></div>
-        <div class="kv-row"><span class="key">remote version</span><span class="val">${rv}</span></div>
-        <div class="kv-row"><span class="key">local synced</span><span class="val">${lv}</span></div>
-        <div class="kv-row"><span class="key">local changes</span><span class="val ${s.dirty ? 'danger' : 'success'}">${s.dirty ? 'yes — push to publish' : 'in sync'}</span></div>
-        ${s.reachable === false ? `<div class="kv-row"><span class="key">remote</span><span class="val danger">unreachable (${escH(s.note)})</span></div>` : ''}
-        <div class="row gap-4 sync-actions">
-          <select class="text-input sync-mode-sel" id="sync-mode">${modeOpts(s.mode)}</select>
-          <button class="btn" id="sync-pull">Pull</button>
-          <button class="btn btn-primary" id="sync-push">Sync now</button>
-          <button class="btn btn-ghost btn-sm" id="sync-reconfig">Reconfigure</button>
-          <span class="mono sync-msg" id="sync-msg"></span>
-        </div>`;
-    }
-
-    async function syncRefresh() {
-      let s;
-      try { s = await api('/api/sync/status'); } catch { syncBody.textContent = 'status unavailable'; return; }
-      if (s.configured) { syncBody.innerHTML = syncStatusHTML(s); wireSyncStatus(s); }
-      else { syncBody.innerHTML = syncFormHTML({ mode: s.mode === 'off' ? 'manual' : s.mode }); wireSyncForm(); }
-    }
-
-    async function runSync(path, verb) {
-      setSyncMsg(verb + '…');
-      try { const r = await api(path, post()); setSyncMsg(`${verb} ${r.synced ?? r.merged ?? 0} change(s)`); syncRefresh(); }
-      catch (err) { setSyncMsg(err.message); }
-    }
-
-    function wireSyncStatus(s) {
-      document.getElementById('sync-mode').onchange = async e => {
-        try { await api('/api/sync/mode', post({ mode: e.target.value })); setSyncMsg('mode → ' + e.target.value); }
-        catch (err) { setSyncMsg(err.message); }
-      };
-      document.getElementById('sync-pull').onclick = () => runSync('/api/sync/pull', 'pulled');
-      document.getElementById('sync-push').onclick = () => runSync('/api/sync/push', 'synced');
-      document.getElementById('sync-reconfig').onclick = () => {
-        syncBody.innerHTML = syncFormHTML({ ...s, akid: '', configured: true });
-        wireSyncForm();
-      };
-    }
-
-    function wireSyncForm() {
-      const connect = document.getElementById('sf-connect');
-      const cancel = document.getElementById('sf-cancel');
-      if (cancel) cancel.onclick = syncRefresh;
-      connect.onclick = async () => {
-        const payload = {
-          endpoint: trimVal('sf-endpoint'), bucket: trimVal('sf-bucket'),
-          access_key_id: trimVal('sf-akid'), secret_key: rawVal('sf-secret'),
-          passphrase: rawVal('sf-pass'), region: trimVal('sf-region'),
-          prefix: trimVal('sf-prefix'), addressing: trimVal('sf-addr'), mode: trimVal('sf-mode'),
-        };
-        connect.disabled = true; setSyncMsg('connecting…');
-        try { await api('/api/sync/setup', post(payload)); syncRefresh(); }
-        catch (err) { setSyncMsg(err.message); connect.disabled = false; }
-      };
-    }
-
-    const legacySync = document.getElementById('card-sync');
-    let legacyLoaded = false;
-    legacySync?.addEventListener('toggle', () => {
-      if (legacySync.open && !legacyLoaded) { legacyLoaded = true; syncRefresh(); }
-    });
   }
 })();

@@ -12,3 +12,6 @@
 *.yaml          text eol=lf
 
 tests/fixtures/rules/*  text eol=lf
+
+# Generated verification evidence can be inspected separately in review.
+docs/architecture/*evidence*/*.json linguist-generated=true

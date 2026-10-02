@@ -1,0 +1,5879 @@
+{
+  "schema_version": 1,
+  "exit_status": 0,
+  "session_seconds": 13.805874,
+  "collection_failures": [],
+  "tests": [
+    {
+      "nodeid": "tests/test_project_projection.py::test_preview_stale_aliases_are_scope_local_and_cycles_fail_closed",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000546,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.942104,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.942747
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_shared_entry_update_changes_each_scope_projection",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000535,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.841778,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.842411
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_initial_html_response_includes_token_in_query",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.078805,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.046894,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.537042,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.662741
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_request_without_token_returns_403",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.07055,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.022097,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.530735,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.623382
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_browser_cookie_authenticates_api_without_js_readable_token",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.073939,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.017052,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.531751,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.622742
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_admin_rejects_malformed_content_length[-1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.063026,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000948,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.547736,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.61171
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_request_with_correct_token_succeeds",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.083523,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001561,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.520466,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.60555
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_admin_rejects_oversized_body_before_reading_it",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.072013,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001047,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.525944,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.599004
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_no_cache_headers_on_responses",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.075662,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00176,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.519973,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.597395
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_request_with_wrong_token_returns_403",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.076078,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001356,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.519816,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.59725
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_admin_rejects_chunked_request_bodies",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.077743,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001006,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.518464,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.597213
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_admin_rejects_malformed_content_length[not-a-number]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.080097,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001048,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.515735,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.59688
+    },
+    {
+      "nodeid": "tests/test_server_auth.py::test_admin_csp_blocks_inline_script_execution",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.078313,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001975,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.513877,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.594165
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_unauthenticated_and_public_static_requests_do_not_extend_idle_lifetime",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.007459,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.004138,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.50662,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.518217
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_admin_rejects_duplicate_length_and_short_body_before_dispatch",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.011506,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.003883,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.50088,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.516269
+    },
+    {
+      "nodeid": "tests/test_runtime_profile_binding.py::test_swapped_authenticated_ciphertext_cannot_cross_selected_profile",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000574,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.497406,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.498075
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_keepalive_requests_each_have_a_new_input_budget",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000323,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.38318,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000209,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.383712
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_independent_decoder_accepts_production_kk1_and_pins_kdf_parameters",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.161043,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.130674,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.291785
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_production_decoder_accepts_independently_encoded_kk1",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.28787,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.287987
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_slow_drip_cannot_extend_header_or_body_deadline[POST / HTTP/1.1\\r\\nContent-Length: 10000\\r\\n\\r\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00019,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.245934,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000208,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.246332
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_slow_drip_cannot_extend_header_or_body_deadline[GET / HTTP/1.1\\r\\nX-Slow: ]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000129,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.245309,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.245534
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[truncate]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000114,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.160485,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.160684
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[nonce]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000116,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.15887,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.159062
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[salt]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.158691,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.158866
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[ciphertext]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000118,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.158524,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.158717
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[tag]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000115,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.15853,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.158715
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_repeated_encryption_uses_fresh_salt_and_nonce",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.158384,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.158524
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_tls_partial_handshake_or_record_wakes_without_dispatch[handshake]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.001289,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.071228,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000118,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.072635
+    },
+    {
+      "nodeid": "tests/test_store.py::test_tombstone_prune_serializes_with_concurrent_entry_add",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000611,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.055753,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.0001,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.056464
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_excess_connections_never_create_another_handler_and_capacity_returns",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.036577,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.036714
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_server_close_interrupts_owned_incomplete_connections",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00015,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.025512,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000365,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.026027
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_wakes_all_select_waiters_and_retains_reader_until_last_owner",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000137,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.025445,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000377,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.025959
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_tls_partial_handshake_or_record_wakes_without_dispatch[record]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000756,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.018284,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000111,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.019151
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_handler_thread_start_failure_rolls_back_socket_and_slot_before_next_request",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000101,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.016524,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.016708
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_server_requires_explicit_ssh_key_closure_and_reads_only_key_secret",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.001125,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.015235,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.016446
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_close_before_queued_handler_starts_skips_handler_construction_and_releases_slot",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000724,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.01503,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.00021,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.015964
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_close_preserves_receiving_fd_until_owner_exits_and_cancels_partial_dispatch",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000488,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.014769,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000314,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.015571
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_projection_reads_only_selected_secret_and_excludes_private_metadata",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.001098,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.013296,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.00014,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.014534
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_close_does_not_dispatch_next_keepalive_request_already_in_read_buffer",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000227,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.012775,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000275,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.013277
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_optional_out_of_scope_refs_are_omitted_without_global_lookup",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.001253,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.010499,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.011849
+    },
+    {
+      "nodeid": "tests/test_store.py::test_concurrent_writes_serialize",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000545,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.010666,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.011306
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_required_secret_missing_or_denied_blocks_whole_projection[backend0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00059,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.009843,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.010532
+    },
+    {
+      "nodeid": "tests/test_project_projection.py::test_required_secret_missing_or_denied_blocks_whole_projection[backend1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000729,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.009486,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.010306
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_queued_owner_keeps_reader_until_thread_exits",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00019,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.007284,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000251,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.007725
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_no_handlers_and_idempotent_close_release_both_sockets",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.006712,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000122,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.006926
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_admin_stop_before_serve_is_prompt_and_closes_listener",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.001425,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.005291,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.00016,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.006876
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_public_copy_does_not_claim_same_user_isolation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.004689,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.004794
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_bind_activate_failure_preserves_original_exception[server_activate]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000155,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.004428,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000154,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.004737
+    },
+    {
+      "nodeid": "tests/test_http_routing.py::test_dynamic_entry_routes_keep_decoding_query_and_body",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.004417,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000173,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.004668
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_first_backup_preserves_exact_legacy_0644_bytes_without_rewriting_on_reentry",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000836,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.003225,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.004131
+    },
+    {
+      "nodeid": "tests/test_service.py::test_create_rolls_back_backend_failure_after_write",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.002668,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001308,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.004072
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_pair_construction_failure_closes_bound_listener",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000174,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.003695,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000116,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.003985
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_thread_start_failure_during_close_releases_last_reader_and_slot",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.003667,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.003837
+    },
+    {
+      "nodeid": "tests/test_store.py::test_transaction_rollback_commit_and_serialized_bytes_are_stable",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000682,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.002741,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.003492
+    },
+    {
+      "nodeid": "tests/test_store.py::test_transaction_update_rename_preserves_order_and_entry_isolation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000692,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.002433,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000116,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.003241
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_backup_created_between_validation_and_publication_remains_first",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000746,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.002117,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002942
+    },
+    {
+      "nodeid": "tests/test_service.py::test_delete_failure_restores_secrets_and_cascade_metadata",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000544,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.002096,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002721
+    },
+    {
+      "nodeid": "tests/test_store.py::test_transaction_replace_updates_id_index_without_moving_entry",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000696,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001891,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002666
+    },
+    {
+      "nodeid": "tests/test_service.py::test_delete_reports_dependents_without_mutation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000561,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001942,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002582
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_codex_plugin_is_skill_only_and_implicitly_invokable",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.002441,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002526
+    },
+    {
+      "nodeid": "tests/test_service.py::test_snapshot_rejects_stale_revision_before_secret_mutation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000496,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00189,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002457
+    },
+    {
+      "nodeid": "tests/test_store.py::test_atomic_write_creates_backup",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000537,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001675,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00229
+    },
+    {
+      "nodeid": "tests/test_runtime_profile_binding.py::test_mutation_manager_retained_but_backend_role_and_root_always_rechecked",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000391,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001704,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002184
+    },
+    {
+      "nodeid": "tests/test_store.py::test_transaction_delete_keeps_order_and_new_add_appends",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000571,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001534,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002177
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_existing_regular_legacy_backup_is_preserved_without_overwrite",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000745,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001202,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.002006
+    },
+    {
+      "nodeid": "tests/test_service.py::test_update_restores_old_secret_and_metadata",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000647,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00124,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001964
+    },
+    {
+      "nodeid": "tests/test_store.py::test_transaction_indexes_reject_duplicate_name_and_id",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000812,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001051,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001956
+    },
+    {
+      "nodeid": "tests/test_store.py::test_update_replaces_entry",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000537,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001325,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001925
+    },
+    {
+      "nodeid": "tests/test_service.py::test_snapshot_failure_restores_overwritten_and_deleted_values",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000482,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001253,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001803
+    },
+    {
+      "nodeid": "tests/test_service.py::test_snapshot_rejects_write_delete_overlap_before_mutation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00054,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001129,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.00013,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001799
+    },
+    {
+      "nodeid": "tests/test_store.py::test_delete_removes_entry",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000456,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001254,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001777
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[oversized-backup]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000972,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000574,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00162
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_symlink_destination_never_changes_external_target_or_metadata[False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00093,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000607,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001597
+    },
+    {
+      "nodeid": "tests/test_runtime_profile_binding.py::test_wrong_identity_save_rejected_before_password[mode-replica]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00065,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000846,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001554
+    },
+    {
+      "nodeid": "tests/test_store.py::test_add_rejects_duplicate_id_even_when_name_differs",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00058,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000895,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001542
+    },
+    {
+      "nodeid": "tests/test_store.py::test_add_persists_to_disk",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000571,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000807,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001468
+    },
+    {
+      "nodeid": "tests/test_store.py::test_add_rejects_duplicate_name",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00055,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.0008,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001429
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_symlink_destination_never_changes_external_target_or_metadata[True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000988,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000344,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00139
+    },
+    {
+      "nodeid": "tests/test_http_routing.py::test_exact_api_route_forwards_query_without_body",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00018,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001117,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001371
+    },
+    {
+      "nodeid": "tests/test_store.py::test_get_by_name_finds_existing",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000555,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000731,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001363
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_create_if_absent_publication_cannot_replace_concurrently_created_backup",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000363,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000916,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00134
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions0-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001168,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001337
+    },
+    {
+      "nodeid": "tests/test_store.py::test_add_and_list",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000482,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000773,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001328
+    },
+    {
+      "nodeid": "tests/test_store.py::test_schema_version_written",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000613,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000637,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001319
+    },
+    {
+      "nodeid": "tests/test_runtime_profile_binding.py::test_wrong_identity_save_rejected_before_password[vault_id-wrong]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000445,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000777,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001281
+    },
+    {
+      "nodeid": "tests/test_secure_io.py::test_replace_rejects_target_changed_after_read",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000385,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000819,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001254
+    },
+    {
+      "nodeid": "tests/test_runtime_profile_binding.py::test_wrong_identity_save_rejected_before_password[scope_id-wrong]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000473,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000708,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001235
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[fifo-source]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000817,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000333,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001213
+    },
+    {
+      "nodeid": "tests/test_service.py::test_failed_compensation_is_reported_explicitly",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000673,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000444,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00121
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[False-timeout]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.001014,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001184
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[directory-backup]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000756,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000363,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001182
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[oversized-source]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000724,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000366,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00115
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[revoke-data8-revoke-args8-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000157,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00089,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001139
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[directory-source]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000664,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000371,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001101
+    },
+    {
+      "nodeid": "tests/test_metadata_backup_safety.py::test_migration_rejects_oversized_or_special_file_before_read[fifo-backup]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000685,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000345,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001088
+    },
+    {
+      "nodeid": "tests/test_service.py::test_bulk_create_rejects_duplicate_ids_without_mutation",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00049,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000468,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001023
+    },
+    {
+      "nodeid": "tests/test_secure_io.py::test_replace_preserves_stricter_owner_mode",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00038,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000576,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001005
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_path_replaced_at_open_never_reads_symlink_target_or_special_file[symlink]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000413,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000536,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.001
+    },
+    {
+      "nodeid": "tests/test_service.py::test_create_rolls_back_when_metadata_commit_fails",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000504,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00032,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.00016,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000984
+    },
+    {
+      "nodeid": "tests/test_service.py::test_bulk_create_is_all_or_nothing",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000596,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000319,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00098
+    },
+    {
+      "nodeid": "tests/test_service.py::test_create_rolls_back_keyboard_interrupt_after_write",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000565,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000301,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000933
+    },
+    {
+      "nodeid": "tests/test_ssh_runner.py::test_validated_executable_rejects_group_world_writable_file",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000543,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000344,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000931
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_opened_descriptor_is_checked_before_read_and_always_closed[owner]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000602,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000237,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000895
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_path_replaced_at_open_never_reads_symlink_target_or_special_file[fifo]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000404,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000432,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000886
+    },
+    {
+      "nodeid": "tests/test_store.py::test_delete_missing_raises",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000578,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000206,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000851
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls0-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000111,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000667,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000837
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_opened_descriptor_is_checked_before_read_and_always_closed[regular]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000442,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000305,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000812
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_public_current_version_surfaces_match",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000723,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000809
+    },
+    {
+      "nodeid": "tests/test_ssh_runner.py::test_validated_executable_returns_canonical_absolute_path",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000405,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000247,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000151,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000803
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_count_and_id_length_are_bounded[partitions0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00069,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00079
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[auto-data7-set_auto-args7-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.0006,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00074
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_legacy_public_metadata_mode_remains_readable_only_when_explicitly_allowed",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000434,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000245,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00073
+    },
+    {
+      "nodeid": "tests/test_store.py::test_initial_load_returns_empty_when_no_file",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000601,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000727
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_file_growth_after_fstat_is_bounded_to_limit_plus_one",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000359,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000302,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000709
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_opened_descriptor_is_checked_before_read_and_always_closed[inode]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000434,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000214,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000699
+    },
+    {
+      "nodeid": "tests/test_private_files.py::test_permissions_changed_between_lstat_and_open_reject_before_read",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000373,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000271,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000695
+    },
+    {
+      "nodeid": "tests/test_store.py::test_get_by_name_returns_none_for_missing",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000524,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000658
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_invalid_resource_limits_never_bind[0-1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000334,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00018,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000135,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000649
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_cancellation_bind_activate_failure_preserves_original_exception[server_bind]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000202,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000268,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000556
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[poll-data5-poll_worker-args5-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000371,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000508
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[claude.md]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00014,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000308,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000499
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_declared_safe_errors_are_400_including_constructor[error1-construct]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000119,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000264,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000474
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[cursor.mdc]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000106,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000305,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000455
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_invalid_resource_limits_never_bind[129-1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000234,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000118,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.0001,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000452
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[aider_conventions.md]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000297,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000434
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[codex_agents.md]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.0003,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000431
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls12-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000101,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000273,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000428
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_invalid_resource_limits_never_bind[1-inf]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00021,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000112,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000103,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000425
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[cline.md]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000294,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000425
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override7]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000308,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000422
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls6-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00012,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000221,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000405
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_get_metadata_routes_invoke_only_expected_manager_action[status-status]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000249,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000404
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls3-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000105,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000235,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000396
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[True-exit]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000179,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000167,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000392
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_get_metadata_routes_invoke_only_expected_manager_action[options-options]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00023,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000388
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls7-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000103,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000229,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000388
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_all_fixtures_present",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000311,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000387
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_repository_is_an_installable_codex_marketplace",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000271,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000387
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls2-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000242,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000386
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unexpected_failure_is_503_and_never_discloses_exception[construct]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000158,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.00012,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000107,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000385
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_invalid_resource_limits_never_bind[True-1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000191,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000102,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000381
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_render_matches_golden[generic.md]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000257,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000381
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[setup-data0-setup-args0-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000222,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000377
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[False-oserror]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000151,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000172,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000377
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls11-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000226,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000377
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions1-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000146,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000171,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000372
+    },
+    {
+      "nodeid": "tests/test_http_resources.py::test_invalid_resource_limits_never_bind[1-0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000174,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000104,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 9.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000372
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[False-exit]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000155,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000163,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00037
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions2-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000108,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000207,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000365
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[multiple-root-dicts]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000193,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000111,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000361
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[sync-data4-sync-args4-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000247,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000359
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_release_versions_are_consistent",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000258,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000359
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls1-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000107,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000197,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000355
+    },
+    {
+      "nodeid": "tests/test_http_routing.py::test_unknown_path_or_wrong_method_is_identical_404",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000236,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000355
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls17-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000218,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000354
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0xA \\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000214,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000349
+    },
+    {
+      "nodeid": "tests/test_service.py::test_secret_inputs_never_render_plaintext",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000141,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000124,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000343
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[setup-data0-setup-args0-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000174,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000106,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00034
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[True-timeout]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000197,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000336
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: \"plain\"\\n-plain]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000149,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 0.000122,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00033
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_declared_safe_errors_are_400_including_constructor[error1-sync]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000186,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000325
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls9-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000169,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000321
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls13-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000178,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000318
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls5-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000177,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000317
+    },
+    {
+      "nodeid": "tests/test_crypto_contract.py::test_modified_components_never_return_plaintext[magic]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000169,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000315
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[True-malformed]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000173,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000312
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_invalid_action_input_is_400_with_constant_redacted_error[error2]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000194,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000305
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls10-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000152,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000299
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[True-oserror]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000164,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000298
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[True-utf8]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000164,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000295
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls15-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000152,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000295
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls4-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000152,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000292
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[cancel-data6-cancel_pending-args6-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000173,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000289
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[invite-data1-invite-args1-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000164,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000287
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[invite-data1-invite-args1-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000163,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000285
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[join-data2-join-args2-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000159,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000283
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls14-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000148,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000283
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_scope_selector_or_any_query_rejects_before_manager_construction[query-GET]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000162,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000282
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[approve-data3-approve-args3-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000155,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000279
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls23-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000141,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000279
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_readme_installs_a_reviewed_release_not_repository_head",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000145,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000278
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[sync-data4-sync-args4-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000156,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000275
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_get_metadata_routes_invoke_only_expected_manager_action[pending-pending]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000147,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000272
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[cancel-data6-cancel_pending-args6-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000153,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000272
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[False-malformed]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000126,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000272
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[approve-data3-approve-args3-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000151,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000271
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_missing_schema_keys_rejected_without_mutation[approve-data2-approve-args2-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000147,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00027
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_missing_schema_keys_rejected_without_mutation[setup-data0-setup-args0-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000153,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00027
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[poll-data5-poll_worker-args5-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000157,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00027
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_errors_have_no_secret_bearing_exception_chain[False-utf8]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000124,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000269
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_count_and_id_length_are_bounded[partitions1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000169,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000269
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000154,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000269
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[join-data2-join-args2-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000157,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000267
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_extra_keys_rejected_without_any_manager_action[revoke-data8-revoke-args8-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000156,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000267
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_post_exact_schema_routes_and_setup_join_enable_auto_after_success[auto-data7-set_auto-args7-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000155,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000267
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: \"0xDEADBEEF\"\\n-0xDEADBEEF]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000111,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000267
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_missing_schema_keys_rejected_without_mutation[join-data1-join-args1-True]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000155,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000264
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unknown_or_unsupported_route_returns_404_without_manager_action[GET-sync]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.00017,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000263
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_missing_schema_keys_rejected_without_mutation[auto-data3-set_auto-args3-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000154,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000259
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions3-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000122,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000256
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls8-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000107,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000253
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_missing_schema_keys_rejected_without_mutation[revoke-data4-revoke-args4-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000149,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00025
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_cryptography_floor_contains_the_patched_wheel_release",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000152,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000246
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0x61  \"a\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000151,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000244
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: \"616263646566\"\\n-616263646566]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000128,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00024
+    },
+    {
+      "nodeid": "tests/test_security_contract.py::test_readme_recommends_stable_codex_skill_install",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000139,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000236
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unexpected_failure_is_503_and_never_discloses_exception[sync]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000122,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000235
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls16-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000234
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unknown_or_unsupported_route_returns_404_without_manager_action[POST-missing]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000127,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000229
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[non-hex]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000147,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000228
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_declared_safe_errors_are_400_including_constructor[error0-construct]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000125,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000226
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_invalid_action_input_is_400_with_constant_redacted_error[error0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000106,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000225
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions6-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000102,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000225
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_invalid_action_input_is_400_with_constant_redacted_error[error1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000105,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000224
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls19-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000224
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls18-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000221
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls20-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000221
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions5-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000101,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000219
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions11-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000103,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000218
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls21-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000217
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls22-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000217
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls24-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000217
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls27-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000215
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions10-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000215
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions4-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000214
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_scope_selector_or_any_query_rejects_before_manager_construction[query-POST]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000115,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000213
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions7-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000213
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override2]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000213
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls26-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000212
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unknown_or_unsupported_route_returns_404_without_manager_action[GET-missing]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000106,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000211
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: \"a\"b\"\\n-a\"b]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000114,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00021
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_no_plaintext_markers_leak_into_single_file_renders",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000122,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000209
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_all_partition_metadata_is_checked_before_one_legacy_helper[acls25-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000208
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000208
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_declared_safe_errors_are_400_including_constructor[error0-sync]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000103,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000206
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override4]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000205
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions8-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000204
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override3]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000204
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override5]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000204
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_partition_policy_requires_exact_typed_security_partition[partitions9-False]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000203
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_setup_or_join_failure_does_not_enable_automatic_sync[join]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000202
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[{]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.0002
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_setup_or_join_failure_does_not_enable_automatic_sync[setup]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000199
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[stray-dict-text]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000199
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x610A  \"a\\012\"\\n-a\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000198
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_scope_selector_or_any_query_rejects_before_manager_construction[selector-POST]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000108,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000196
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unknown_or_unsupported_route_returns_404_without_manager_action[DELETE-status]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000105,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000196
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_duplicate_json_keys_never_reach_auto_action[{\"enabled\":{\"nested\":true,\"nested\":false}}]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000195
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: \\n-]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000193
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unreadable_or_nonstandard_partition_descriptor_denies_before_helper[override6]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000193
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_renderers_are_deterministic",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000107,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000193
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_scope_selector_or_any_query_rejects_before_manager_construction[selector-GET]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 0.000102,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000192
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_duplicate_json_keys_never_reach_auto_action[{\"enabled\":true,\"enabled\":false}]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000191
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unknown_partition_policy_schema_fails_closed[value2]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000189
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x0A0A \\n-\\n\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000187
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[duplicate-key-deny-last]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000187
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000186
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x610D0A620D0A  \"a\\015\\012b\\015\\012\"\\n-a\\r\\nb\\r\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000186
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x615C62  \"a\\134b\"\\n-a\\\\b]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 9.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000186
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_legacy_bridge_uses_one_tagged_read_with_all_streams_private",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000185
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[duplicate-key-allow-last]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000185
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_success_status_without_owned_metadata_reference_is_not_authorization[SecKeychainFindGenericPassword]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000183
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[duplicate-key-both-allow]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000182
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unknown_partition_policy_schema_fails_closed[value4]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000182
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[[]]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000181
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_core_foundation_string_abi_uses_pointer_sized_lengths_and_type_ids",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 0.000104,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000179
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unknown_partition_policy_schema_fails_closed[value3]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000179
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[\\xff]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000178
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_success_status_without_owned_metadata_reference_is_not_authorization[SecKeychainItemCopyAccess]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000177
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[\"synthetic\"]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000176
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[null]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000176
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_success_status_without_owned_metadata_reference_is_not_authorization[SecAccessCopyACLList]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000176
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unknown_partition_policy_schema_fails_closed[value0]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000176
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_malformed_or_nonobject_json_does_not_call_manager_action[true]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000172
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x6122620A  \"a\"b\\012\"\\n-a\"b\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000171
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0xGG \\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.6e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000169
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_unknown_partition_policy_schema_fails_closed[value1]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 7.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000167
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0xCEBB \\n-\\u03bb]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000166
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x00 \\n-\\x00]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000162
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_tagged_password_record_preserves_exact_bytes[password: 0x61CEBB  \"a\\316\\273\"\\n-a\\u03bb]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 7.7e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000162
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[entity-declaration]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000161
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[unknown-string-attribute]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000159
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[unknown-array-child]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000156
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_entities_and_unknown_xml_grammar_cannot_grant_legacy_access[unknown-dict-child]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000154
+    },
+    {
+      "nodeid": "tests/test_api_personal_contract.py::test_unknown_post_rejected_before_constructor_or_json_parse",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000153
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[binary-plist]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000153
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0xFF \\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.1e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000152
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0x61 62 \\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.6e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000151
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[invalid-xml]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.5e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000151
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[\"plain\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.5e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00015
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0x610A \"a\\012\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.7e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00015
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[unencoded-xml]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4.1e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000148
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0x610A  \"different\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000147
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[odd-hex]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000147
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0xff \\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000146
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"plain\"]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.4e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000144
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000141
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"x\"\\nwarning\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000141
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"first\"\\npassword: \"second\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4.3e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00014
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: 0x0A\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00014
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[oversized-descriptor]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.3e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00014
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[spaced-hex]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.00014
+    },
+    {
+      "nodeid": "tests/test_rule_generators.py::test_claude_sync_reference_routes_project_profiles_and_recovery",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 4.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000139
+    },
+    {
+      "nodeid": "tests/test_backend_partition_policy.py::test_malformed_oversized_duplicate_or_unsupported_descriptor_fails_closed[empty]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000138
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.1e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000137
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[warning\\npassword: \"x\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000137
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"a\\b\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.9e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 4e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000136
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"unterminated\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 6.2e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 3.8e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.6e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000136
+    },
+    {
+      "nodeid": "tests/test_backend_legacy_parser.py::test_malformed_or_non_utf8_record_fails_closed[password: \"\\xff\"\\n]",
+      "outcome": "passed",
+      "phases": {
+        "setup": {
+          "seconds": 5.8e-05,
+          "outcome": "passed"
+        },
+        "call": {
+          "seconds": 3.9e-05,
+          "outcome": "passed"
+        },
+        "teardown": {
+          "seconds": 3.7e-05,
+          "outcome": "passed"
+        }
+      },
+      "seconds": 0.000134
+    }
+  ]
+}

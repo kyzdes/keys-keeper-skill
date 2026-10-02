@@ -15,7 +15,7 @@ def test_opened_descriptor_is_checked_before_read_and_always_closed(tmp_path, mo
     path = tmp_path / "synthetic-state"
     path.write_bytes(b"synthetic")
     path.chmod(0o600)
-    real_open, real_fstat = os.open, os.fstat
+    real_open, real_fstat = files._open_read, os.fstat
     descriptors = []
 
     def opened(target, flags):
@@ -34,7 +34,7 @@ def test_opened_descriptor_is_checked_before_read_and_always_closed(tmp_path, mo
             values["st_ino"] += 1
         return SimpleNamespace(**values)
 
-    monkeypatch.setattr(files.os, "open", opened)
+    monkeypatch.setattr(files, "_open_read", opened)
     monkeypatch.setattr(files.os, "fstat", altered)
     monkeypatch.setattr(files.os, "read", lambda *args: pytest.fail("untrusted descriptor read"))
     with pytest.raises(files.PrivateFileError):
@@ -49,14 +49,14 @@ def test_permissions_changed_between_lstat_and_open_reject_before_read(tmp_path,
     path = tmp_path / "synthetic-state"
     path.write_bytes(b"synthetic")
     path.chmod(0o600)
-    real_open = os.open
+    real_open = files._open_read
 
     def opened(target, flags):
         fd = real_open(target, flags)
         path.chmod(0o644)
         return fd
 
-    monkeypatch.setattr(files.os, "open", opened)
+    monkeypatch.setattr(files, "_open_read", opened)
     monkeypatch.setattr(files.os, "read", lambda *args: pytest.fail("new public-mode descriptor read"))
     with pytest.raises(files.PrivateFileError, match="unsafe ownership or permissions"):
         files.secure_read(path, max_bytes=128)
@@ -86,7 +86,7 @@ def test_path_replaced_at_open_never_reads_symlink_target_or_special_file(tmp_pa
         except OSError:
             pytest.skip("symlinks unavailable")
         probe.unlink()
-    real_open = os.open
+    real_open = files._open_read
 
     def replaced_before_open(target, flags):
         path.unlink()
@@ -96,7 +96,7 @@ def test_path_replaced_at_open_never_reads_symlink_target_or_special_file(tmp_pa
             os.mkfifo(path, 0o600)
         return real_open(target, flags)
 
-    monkeypatch.setattr(files.os, "open", replaced_before_open)
+    monkeypatch.setattr(files, "_open_read", replaced_before_open)
     monkeypatch.setattr(files.os, "read", lambda *args: pytest.fail("replacement file read"))
     with pytest.raises(files.PrivateFileError):
         files.secure_read(path, max_bytes=128)
@@ -146,3 +146,56 @@ def test_create_if_absent_publication_cannot_replace_concurrently_created_backup
     assert publications == [True]
     assert destination.read_bytes() == b"first-backup-exact-bytes"
     assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_in_place_mutation_while_reading_rejects_snapshot(tmp_path, monkeypatch):
+    path = tmp_path / "changing-state"
+    files.atomic_write_bytes(path, b"original", ensure_parent_private=False)
+    real_read = os.read
+    changed = []
+
+    def modify_after_read(fd, size):
+        data = real_read(fd, size)
+        if not changed:
+            path.write_bytes(b"modified")
+            changed.append(True)
+        return data
+
+    monkeypatch.setattr(files.os, "read", modify_after_read)
+    with pytest.raises(files.PrivateFileError, match="changed while reading"):
+        files.secure_read(path, max_bytes=128)
+
+
+def test_postpublication_sync_failure_reports_committed_without_retry(tmp_path):
+    destination = tmp_path / "synthetic-state"
+
+    def fail_sync(_parent):
+        raise OSError("synthetic fsync failure")
+
+    with pytest.raises(files.PrivateFileCommitError) as caught:
+        files.atomic_write_bytes(destination, b"published", sync_parent=fail_sync)
+    assert caught.value.committed is True
+    assert destination.read_bytes() == b"published"
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_postlink_cleanup_failure_reports_committed_and_still_syncs_parent(tmp_path, monkeypatch):
+    destination = tmp_path / "synthetic-backup"
+    synced = []
+    original = os.unlink
+
+    def cannot_remove_temp(path, *args, **kwargs):
+        if str(path).endswith(".tmp"):
+            raise OSError("synthetic unlink failure")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(files.os, "unlink", cannot_remove_temp)
+        with pytest.raises(files.PrivateFileCommitError) as caught:
+            files.atomic_write_bytes(destination, b"committed", replace_existing=False,
+                                      sync_parent=synced.append)
+    assert caught.value.committed is True
+    assert destination.read_bytes() == b"committed"
+    assert synced == [destination.parent]
+    for path in tmp_path.glob("*.tmp"):
+        original(path)

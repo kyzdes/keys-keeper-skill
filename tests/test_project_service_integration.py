@@ -10,7 +10,7 @@ from keys_keeper.paths import Paths
 from keys_keeper.project_service import ProjectService
 from keys_keeper.service import SecretInput, VaultService
 from keys_keeper.store import MetadataStore
-from keys_keeper.sync import LegacyCatalogSyncError, build_snapshot_payload
+from keys_keeper.vault_snapshot import LegacyCatalogSyncError, build_snapshot_payload
 
 
 class MemoryBackend(KeychainBackend):
@@ -38,10 +38,6 @@ def _env(kk_home):
     paths = Paths(); paths.ensure()
     store = MetadataStore(paths)
     backend = MemoryBackend()
-    service = VaultService(store, backend)
-    entry = Entry.new(name="catalog-key", type=EntryType.API_KEY)
-    service.create_entry(entry, secrets=SecretInput(value="synthetic"))
-    store.migrate_catalog_v3()
     journal = OperationJournal(
         paths=paths, password_provider=lambda: b"project-service-test-key"
     )
@@ -50,6 +46,9 @@ def _env(kk_home):
         backend,
         master_mutations=MasterMutationManager(store, backend, journal),
     )
+    entry = Entry.new(name="catalog-key", type=EntryType.API_KEY)
+    service.create_entry(entry, secrets=SecretInput(value="synthetic"))
+    store.migrate_catalog_v3()
     projects = ProjectService(store)
     project = projects.create_project("alice", "Alice")
     scope = projects.create_scope(project.id)
@@ -101,6 +100,7 @@ def test_v3_delete_removes_bindings_marks_intent_and_keeps_dedup(kk_home):
 
 def test_legacy_snapshot_refuses_v3_before_any_secret_backend_access(kk_home):
     store, backend, _service, _projects, _entry, _scope = _env(kk_home)
+    before = backend.get_calls
     with pytest.raises(LegacyCatalogSyncError, match="disabled"):
         build_snapshot_payload(store, backend)
-    assert backend.get_calls == 0
+    assert backend.get_calls == before

@@ -89,14 +89,21 @@ def test_ssh_revalidates_legacy_metadata_before_exec(cli_env, capsys):
     assert "unsafe" in capsys.readouterr().err
 
 
-def test_ssh_removes_tempfile_when_lockdown_fails(cli_env, monkeypatch):
+def test_ssh_removes_tempfile_when_write_fails(cli_env, monkeypatch):
     _seed_server_with_key(monkeypatch)
     captured = {}
 
-    def fail_lockdown(path):
-        captured["path"] = path
-        raise ssh_runner.SSHRunnerError("lockdown failed")
+    real_create = ssh_runner.create_private_temp
 
-    monkeypatch.setattr(ssh_runner, "_lock_down_key_file", fail_lockdown)
+    def record_temp(*args, **kwargs):
+        fd, path = real_create(*args, **kwargs)
+        captured["path"] = path
+        return fd, path
+
+    def fail_write(*args, **kwargs):
+        raise ssh_runner.SSHRunnerError("write failed")
+
+    monkeypatch.setattr(ssh_runner, "create_private_temp", record_temp)
+    monkeypatch.setattr(ssh_runner.os, "fdopen", fail_write)
     assert cli.main(["ssh", "test-server"]) == 1
     assert not Path(captured["path"]).exists()

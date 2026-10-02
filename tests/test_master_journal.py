@@ -62,22 +62,20 @@ def _durable(tmp_path):
     )
 
 
-def test_schema3_requires_durable_manager_but_legacy_behavior_remains(tmp_path):
-    legacy = MetadataStore(Paths(tmp_path / "legacy"))
+@pytest.mark.parametrize("schema", [2, 3])
+def test_default_service_composes_durable_manager_without_schema_migration(tmp_path, schema):
+    legacy = MetadataStore(Paths(tmp_path / "vault"))
+    if schema == 3:
+        legacy.migrate_catalog_v3()
     backend = MemoryBackend()
     entry = Entry.new(name="legacy-entry", type=EntryType.API_KEY)
-    VaultService(legacy, backend).create_entry(
-        entry, secrets=SecretInput(value="synthetic")
-    )
+    service = VaultService(legacy, backend)
+    service.create_entry(entry, secrets=SecretInput(value="synthetic"))
     assert backend.get(entry.id).unseal() == "synthetic"
-
-    catalog = MetadataStore(Paths(tmp_path / "catalog"))
-    catalog.migrate_catalog_v3()
-    with pytest.raises(MasterMutationRequired, match="durable"):
-        VaultService(catalog, MemoryBackend()).create_entry(
-            Entry.new(name="catalog-entry", type=EntryType.API_KEY),
-            secrets=SecretInput(value="synthetic"),
-        )
+    assert service.master_mutations is not None
+    assert not service.master_mutations.has_pending
+    assert "kk:project-runtime-key" in backend.values
+    assert legacy._read()["schema_version"] == schema
 
 
 def test_durable_update_is_in_place_and_delete_preserves_catalog_intent(tmp_path):
@@ -172,9 +170,11 @@ paths = Paths(os.environ['MASTER_ROOT'])
     return subprocess.run([sys.executable, "-c", script], env=environment, check=False)
 
 
-def test_process_exit_after_backend_write_recovers_secret_and_metadata(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_process_exit_after_backend_write_recovers_secret_and_metadata(tmp_path, schema):
     paths = Paths(tmp_path / "master")
-    MetadataStore(paths).migrate_catalog_v3()
+    if schema == 3:
+        MetadataStore(paths).migrate_catalog_v3()
     _password_file(paths)
     result = _run_child(
         paths,
@@ -204,9 +204,11 @@ VaultService(manager.store, backend, master_mutations=manager).create_entry(
     assert not manager.has_pending
 
 
-def test_process_exit_after_metadata_commit_recovers_without_duplicate(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_process_exit_after_metadata_commit_recovers_without_duplicate(tmp_path, schema):
     paths = Paths(tmp_path / "master")
-    MetadataStore(paths).migrate_catalog_v3()
+    if schema == 3:
+        MetadataStore(paths).migrate_catalog_v3()
     _password_file(paths)
     result = _run_child(
         paths,
@@ -234,9 +236,11 @@ VaultService(manager.store, backend, master_mutations=manager).create_entry(
     assert not manager.has_pending
 
 
-def test_process_exit_during_delete_recovers_cascade_forward(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3])
+def test_process_exit_during_delete_recovers_cascade_forward(tmp_path, schema):
     paths = Paths(tmp_path / "master")
-    MetadataStore(paths).migrate_catalog_v3()
+    if schema == 3:
+        MetadataStore(paths).migrate_catalog_v3()
     _password_file(paths)
     store, _backend, _journal, _manager, service = _file_components(paths)
     parent = Entry.new(name="delete-parent", type=EntryType.API_KEY)
@@ -271,3 +275,38 @@ VaultService(manager.store, backend, master_mutations=manager).delete_entry({par
     assert store.get_by_id(child.id).refs == []
     assert parent.id not in backend.list_ids()
     assert parent.id + ":passphrase" not in backend.list_ids()
+
+
+@pytest.mark.parametrize("schema", [2, 3])
+def test_process_exit_after_replacement_passphrase_delete_recovers_forward(tmp_path, schema):
+    paths = Paths(tmp_path / "master")
+    if schema == 3:
+        MetadataStore(paths).migrate_catalog_v3()
+    _password_file(paths)
+    store, _backend, _journal, _manager, service = _file_components(paths)
+    entry = Entry.new(name="replace-key", type=EntryType.SSH_KEY,
+                      fields={"public_key": "ssh-ed25519 synthetic"})
+    service.create_entry(entry, secrets=SecretInput(value="old-key", passphrase="old-passphrase"))
+    result = _run_child(paths, f"""
+class StopBackend(EncryptedFileBackend):
+    def delete(self, account):
+        super().delete(account)
+        os._exit(76)
+backend = StopBackend(paths=paths, password_file=paths.backend_password_file, allow_env_password=False)
+journal = OperationJournal(paths=paths, password_provider=lambda: b'durable-master-journal-key-32!!')
+manager = MasterMutationManager(MetadataStore(paths), backend, journal)
+changed = manager.store.get_by_id({entry.id!r})
+changed.note = 'restored metadata'
+VaultService(manager.store, backend, master_mutations=manager).update_entry(
+    changed, secrets=SecretInput(value='restored-key', mode='replace'))
+""")
+    assert result.returncode == 76
+    store, backend, _journal, manager, _service = _file_components(paths)
+    assert manager.has_pending
+    assert store.get_by_id(entry.id).note != "restored metadata"
+    manager.recover()
+    assert store.get_by_id(entry.id).note == "restored metadata"
+    assert backend.get(entry.id).unseal() == "restored-key"
+    assert entry.id + ":passphrase" not in backend.list_ids()
+    assert store.schema_version == schema
+    assert not manager.has_pending

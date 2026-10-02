@@ -9,11 +9,13 @@ import shutil
 import stat
 import subprocess
 import sys
+from pathlib import Path
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator
 from keys_keeper.paths import Paths, ensure_private_dir
+from keys_keeper.private_files import open_private_file
 
 
 MAX_AUDIT_RESULTS = 10_000
@@ -118,18 +120,8 @@ def _audit_lines(stream, *, newest_first: bool = False) -> Iterator[bytes]:
 
 
 def _private_opener(path: str, flags: int) -> int:
-    """``open()`` opener that creates new files mode 0600 on POSIX.
-
-    The mode passed to ``os.open`` only applies when the file is *created*
-    and is masked by the umask, so we also chmod after open on POSIX to
-    guarantee 0600 even if the file already existed with looser bits.
-    On Windows the mode arg is ignored; we skip the chmod so the platform
-    isn't broken. Mirrors how store.py opens the lock file / data.json.
-    """
-    fd = os.open(path, flags, 0o600)
-    if os.name == "posix":
-        os.fchmod(fd, 0o600)
-    return fd
+    """Use the same validated, private creation contract as other vault files."""
+    return open_private_file(Path(path), flags)
 
 
 @dataclass
@@ -145,9 +137,68 @@ class AuditEvent:
     error: str | None
     caller_kind: str = "unknown"
     caller_agent: str | None = None
+    affected_entry_ids: list[str] | None = None
+    committed: bool | None = None
+    outcome: str | None = None
+    audit_status: str | None = None
 
     def to_json(self) -> str:
-        return json.dumps(self.__dict__, separators=(",", ":"))
+        data = dict(self.__dict__)
+        if self.affected_entry_ids is None:
+            data.pop("affected_entry_ids")
+        if self.outcome is None:
+            for field in ("committed", "outcome", "audit_status"):
+                data.pop(field)
+        return json.dumps(data, separators=(",", ":"))
+
+
+def normalize_outcome(*, committed: bool | None = None,
+                      audit_status: str = "unknown", error: Exception | None = None) -> dict:
+    """Value-free receipt for publication, rejection or an uncertain operation.
+
+    A later error cannot erase a known publication. Unclassified errors never
+    imply either rollback or success; callers must inspect state before retrying.
+    """
+    if getattr(error, "committed", None) is True:
+        committed = True
+    elif committed is None and getattr(error, "committed", None) is False:
+        committed = False
+    if committed is not True and committed is not False:
+        committed = None
+    audit_status = getattr(error, "audit_status", audit_status)
+    if type(audit_status) is not str or audit_status not in {"recorded", "unavailable", "unknown"}:
+        audit_status = "unknown"
+    return {"committed": committed,
+            "outcome": "published" if committed is True else "failed" if committed is False else "unconfirmed",
+            "audit_status": audit_status}
+
+
+def record_outcome(audit, *, op: str, name: str, id_: str,
+                   file_target: str | None = None, success: bool = True,
+                   error: str | None = None,
+                   affected_entry_ids: list[str] | None = None,
+                   committed=...) -> str:
+    """Record metadata without turning an audit failure into an operation retry.
+
+    The caller decides whether the operation committed. This helper reports
+    only whether its receipt was persisted, never exception text or values.
+    Failed operations use a fixed error marker even for third-party audit sinks.
+    """
+    receipt = normalize_outcome(committed=success if committed is ... else committed,
+                                audit_status="recorded")
+    event = {"op": op, "name": name, "id_": id_,
+             "success": receipt["committed"] is True, **receipt}
+    if file_target is not None:
+        event["file_target"] = file_target
+    if error or not success:
+        event["error"] = "operation failed"
+    if affected_entry_ids is not None:
+        event["affected_entry_ids"] = list(dict.fromkeys(affected_entry_ids))
+    try:
+        audit.record(**event)
+    except Exception:
+        return "unavailable"
+    return "recorded"
 
 
 _UNTRUSTED_FIELD_MAX_LEN = 256
@@ -266,7 +317,18 @@ class AuditLog:
         file_target: str | None = None,
         success: bool = True,
         error: str | None = None,
+        affected_entry_ids: list[str] | None = None,
+        committed=...,
+        outcome: str | None = None,
+        audit_status: str | None = None,
     ) -> None:
+        receipt = None
+        if committed is not ... or outcome is not None or audit_status is not None:
+            receipt = normalize_outcome(committed=None if committed is ... else committed,
+                                        audit_status=audit_status or "recorded")
+            if outcome is not None and outcome != receipt["outcome"]:
+                raise ValueError("inconsistent audit outcome")
+            success = receipt["committed"] is True
         ensure_private_dir(self.paths.root)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # parent pid is the caller (CLI was invoked by zsh / claude / etc)
@@ -288,6 +350,10 @@ class AuditLog:
             error="operation failed" if error else None,
             caller_kind=caller_kind,
             caller_agent=caller_agent,
+            affected_entry_ids=(list(dict.fromkeys(
+                _sanitize_untrusted(value) or "?" for value in affected_entry_ids
+            )) if affected_entry_ids is not None else None),
+            **(receipt or {}),
         )
         with open(self.paths.audit_jsonl, "a", opener=_private_opener) as f:
             f.write(event.to_json() + "\n")
@@ -313,6 +379,7 @@ class AuditLog:
         *,
         op: str | None = None,
         name: str | None = None,
+        entry_id: str | None = None,
         since: datetime | None = None,
         limit: int = 1000,
         newest_first: bool = False,
@@ -331,6 +398,8 @@ class AuditLog:
                 if op and ev["op"] != op:
                     continue
                 if name and ev["name"] != name:
+                    continue
+                if entry_id and entry_id != ev.get("id") and entry_id not in (ev.get("affected_entry_ids") or []):
                     continue
                 if since_ts and ev["ts"] < since_ts:
                     continue
