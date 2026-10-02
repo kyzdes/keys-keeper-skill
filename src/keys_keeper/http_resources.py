@@ -16,10 +16,11 @@ from http.server import ThreadingHTTPServer
 
 
 class _DeadlineSocketReader(io.RawIOBase):
-    def __init__(self, connection, seconds):
+    def __init__(self, connection, seconds, closing=None):
         super().__init__()
         self.connection = connection
         self.seconds = seconds
+        self.closing = closing
         self.begin_request()
 
     def begin_request(self):
@@ -29,11 +30,18 @@ class _DeadlineSocketReader(io.RawIOBase):
         return True
 
     def readinto(self, buffer):
+        if self.closing is not None and self.closing.is_set():
+            raise ConnectionAbortedError("server is closing")
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("request input deadline exceeded")
         self.connection.settimeout(remaining)
-        return self.connection.recv_into(buffer)
+        received = self.connection.recv_into(buffer)
+        # Shutdown can return EOF after only part of the HTTP headers arrived.
+        # Do not let the parser dispatch that unfinished request during close.
+        if self.closing is not None and self.closing.is_set():
+            raise ConnectionAbortedError("server is closing")
+        return received
 
 
 class RequestDeadlineMixin:
@@ -45,10 +53,16 @@ class RequestDeadlineMixin:
         if not math.isfinite(seconds) or not 0 < seconds <= 300:
             raise ValueError("invalid request deadline")
         self.rfile.close()
-        self._deadline_reader = _DeadlineSocketReader(self.connection, seconds)
+        self._deadline_reader = _DeadlineSocketReader(
+            self.connection, seconds, getattr(self.server, "_closing", None)
+        )
         self.rfile = io.BufferedReader(self._deadline_reader)
 
     def handle_one_request(self):
+        closing = getattr(self.server, "_closing", None)
+        if closing is not None and closing.is_set():
+            self.close_connection = True
+            return
         # HTTP/1.1 keep-alive gets a fresh bounded budget per request. Waiting
         # for the next request is included, and admission remains bounded.
         self._deadline_reader.begin_request()
@@ -98,6 +112,9 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
     def process_request_thread(self, request, client_address):
         try:
+            if self._closing.is_set():
+                self.shutdown_request(request)
+                return
             super().process_request_thread(request, client_address)
         finally:
             with self._connection_lock:
@@ -120,5 +137,7 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
                 connection.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-            connection.close()
+            # The handler owns close in process_request_thread's finally.
+            # Invalidating its fd while another thread is in timeout/select
+            # can lose the shutdown wakeup on macOS or race descriptor reuse.
         super().server_close()

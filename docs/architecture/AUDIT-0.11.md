@@ -60,7 +60,9 @@ catalog updater helper remains unchanged.
 8. Thread-per-connection services and sliding socket timeouts did not bound
    slow input. Admission precedes thread creation; each request has an absolute
    input deadline. Local shutdown closes owned sockets and cannot deadlock when
-   serving has not started.
+   serving has not started. Shutdown wakes a receiver before its owning thread
+   closes the descriptor, avoiding a reproduced macOS receive/close race.
+   Cancellation rejects incomplete headers and already-buffered later requests.
 9. WebVault registry/session/rate maps lacked complete corruption/capacity
    handling. Damaged registries fail closed; deleted sessions cannot inherit
    the operator prefix; expiry/caps reclaim abandoned sessions and throttle

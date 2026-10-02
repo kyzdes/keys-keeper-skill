@@ -5,10 +5,12 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from keys_keeper.http_resources import BoundedThreadingHTTPServer, RequestDeadlineMixin
+from keys_keeper import http_resources
 from keys_keeper.paths import Paths
 from keys_keeper import server as admin_module
 from keys_keeper.server import AdminServer
@@ -156,6 +158,81 @@ def test_server_close_interrupts_owned_incomplete_connections():
         wait_for(lambda: len(server._connections) == 1)
         server.server_close()
         wait_for(lambda: not server._connections)
+
+
+def test_close_preserves_receiving_fd_until_owner_exits_and_cancels_partial_dispatch(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    original = http_resources._DeadlineSocketReader.readinto
+    app_work = Mock()
+    monkeypatch.setattr(EchoHandler, 'do_GET', lambda self: app_work())
+    def paused_read(reader, buffer):
+        entered.set()
+        assert release.wait(2), 'receiving owner was not released'
+        return original(reader, buffer)
+    monkeypatch.setattr(http_resources._DeadlineSocketReader, 'readinto', paused_read)
+    with listener(timeout=10) as server, connect(server) as peer:
+        try:
+            peer.sendall(b'GET / HTTP/1.1\r\nX-Incomplete: ')
+            assert entered.wait(1)
+            accepted, = server._connections
+            descriptor = accepted.fileno()
+            assert descriptor >= 0
+            server.server_close()
+            # Only the owner may invalidate its receive descriptor. Immediate
+            # cross-thread close would deterministically violate this contract.
+            assert accepted.fileno() == descriptor
+        finally:
+            release.set()
+        wait_for(lambda: not server._connections)
+        assert accepted.fileno() == -1
+        app_work.assert_not_called()
+        assert server._capacity.acquire(blocking=False)
+        server._capacity.release()
+
+
+def test_close_before_queued_handler_starts_skips_handler_construction_and_releases_slot(monkeypatch):
+    server = BoundedThreadingHTTPServer(('127.0.0.1', 0), EchoHandler,
+                                       max_workers=1, request_timeout=10)
+    queued = []
+    finish = Mock(side_effect=AssertionError('closed queued request constructed handler'))
+    monkeypatch.setattr(server, 'finish_request', finish)
+    try:
+        with connect(server) as peer:
+            accepted, address = server.socket.accept()
+            with monkeypatch.context() as held:
+                held.setattr(threading.Thread, 'start', lambda thread: queued.append(thread))
+                server.process_request(accepted, address)
+            assert len(queued) == 1 and accepted in server._connections
+            server.server_close()
+            queued[0].start()
+            queued[0].join(1)
+            assert not queued[0].is_alive()
+            assert accepted.fileno() == -1 and not server._connections
+            finish.assert_not_called()
+            assert server._capacity.acquire(blocking=False)
+            server._capacity.release()
+    finally:
+        server.server_close()
+
+
+def test_close_does_not_dispatch_next_keepalive_request_already_in_read_buffer(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    app_work = Mock()
+    def first_request(handler):
+        app_work()
+        entered.set()
+        assert release.wait(2), 'in-flight application work was not released'
+    monkeypatch.setattr(EchoHandler, 'do_GET', first_request)
+    with listener(timeout=10) as server, connect(server) as peer:
+        try:
+            request = b'GET / HTTP/1.1\r\nHost: synthetic\r\n\r\n'
+            peer.sendall(request + request)
+            assert entered.wait(1)
+            server.server_close()
+        finally:
+            release.set()
+        wait_for(lambda: not server._connections)
+        app_work.assert_called_once()
 
 
 @pytest.fixture
