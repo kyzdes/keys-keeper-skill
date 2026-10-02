@@ -124,6 +124,15 @@ new private creation сохраняет строгий TokenUser owner. Native a
 CLI/fixtures. Окончательное исполнение native cases проверяется по новому SHA
 платформенного CI.
 
+Следующий Windows прогон подтвердил все шесть native ACL cases без пропусков.
+Его оставшиеся 47 failures выявили старую подготовку fixtures: обычный pytest
+tmp root наследовал публичные Windows grants. Теперь Windows-only fixture
+задаёт protected DACL пустому синтетическому каталогу до тестовых payload.
+Production allowlist не расширена; unsafe native cases явно добавляют foreign
+grants и продолжают проверять отказ без ACL repair. Focused проверка после
+этой правки: 73 passed / 8 platform skips, включая clipboard isolation и
+Keychain mode. Финальная полная матрица проверяется по PR head.
+
 Wheel построен и установлен в чистое временное окружение. Проверены импорт из
 установленного пакета, CLI surface, генерация skill и совпадение payload в
 обеих упаковках. Canonical prose, UI tokens, compileall и diff whitespace

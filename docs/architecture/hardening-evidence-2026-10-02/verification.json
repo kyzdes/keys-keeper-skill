@@ -2,12 +2,12 @@
   "schema_version": 1,
   "date": "2026-10-02",
   "baseline_commit": "36df576ba403437d6352add265232bc01601cbae",
-  "validated_code_commit": "92bea74c9872e2916dd54f360adf5a14062cc286",
+  "validated_code_commit": "68ec47c2b6d694e7afd2094d3cdec9b77b964409",
   "branch": "codex/simplify-and-harden",
   "unreleased": true,
   "installed_or_deployed": false,
   "validation_tree": {
-    "sha256": "0b73888ddf60c4078b892a0c12228c2200e2c2cf802e99d2e07f0b2a6cf0e3b2",
+    "sha256": "2801547b312070897fd883725832bb597e974f3c16fb84874576e33ac5f0bc78",
     "file_count": 286,
     "algorithm": "SHA-256 over sorted tracked validation paths: UTF-8 name + NUL + file bytes + NUL",
     "selection": [
@@ -109,7 +109,21 @@
     ],
     "windows_native_acl_cases": 6,
     "local_windows_execution": false,
-    "source_commit_policy": "Final PR-head checks are authoritative for the Windows owner correction and full OS matrix; the local full-suite record retains its original source commit."
+    "source_commit_policy": "Final PR-head checks are authoritative for the complete OS matrix, including private Windows fixture preparation. Each local run and prior native confirmation retains its own source/checks commit.",
+    "windows_native_acl_confirmation": {
+      "checks_head": "d70cf3f96045012bbbffa82aa92da6b43da102bb",
+      "ci_checkout_merge_commit": "ee99c8770880ed5804f8e7b2daa45f59c6fcb484",
+      "ci_checkout_tree_equal_to_checks_head": true,
+      "test_run": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/37030196177",
+      "windows_job": "https://github.com/kyzdes/keys-keeper-skill/actions/runs/37030196177/job/110914805505",
+      "native_cases_passed": 6,
+      "native_cases_skipped": 0,
+      "native_cases_failed": 0,
+      "full_windows_suite_passed": 1609,
+      "full_windows_suite_skipped": 228,
+      "full_windows_suite_failed": 47,
+      "full_windows_suite_note": "Private Windows policy rejected legacy fixtures inheriting public ACLs. The subsequent fixture-only correction and final full matrix are validated by PR-head checks."
+    }
   },
   "limits": [
     "No installed or production validation",
@@ -139,6 +153,19 @@
       "failed": 0,
       "errors": 0,
       "log": ".pytest_cache/hardening-cli-utf8-portability.log"
+    },
+    {
+      "scope": "Windows fixture composition, private IO, clipboard isolation and Keychain mode",
+      "source_commit": "68ec47c2b6d694e7afd2094d3cdec9b77b964409",
+      "platform": "darwin",
+      "passed": 73,
+      "skipped": 8,
+      "failed": 0,
+      "errors": 0,
+      "native_windows_execution": false,
+      "command": "PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_windows_owner_policy.py tests/test_windows_file_security.py tests/test_private_files.py tests/test_secure_io.py tests/test_paths.py tests/test_sync_server_cli.py tests/test_clipboard_test_isolation.py tests/test_clipboard_clear_daemon.py tests/test_keychain_mode.py",
+      "log": ".pytest_cache/windows-fixture-focused-d70cf3f.log"
     }
-  ]
+  ],
+  "production_code_commit": "92bea74c9872e2916dd54f360adf5a14062cc286"
 }
