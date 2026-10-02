@@ -122,6 +122,14 @@ Missing/mixed jobs, omitted modules or missing denominators cannot pass.
 JUnit, phase timings, HTML/JSON/XML coverage and test inventory are downloadable.
 See [coverage and quality](../TEST-QUALITY-AND-COVERAGE.md) for specific gaps.
 
+The final release PR matrix passed all five platforms/jobs and measured
+85.08% lines / 71.51% branches across all 81 modules. A repeat after merge
+identified a nondeterministic test expectation about journal key derivation;
+fresh authentication and identity rejection worked correctly. The follow-up
+test correction adds deterministic cached-key-first evidence without changing
+the released runtime. The release receipt and supplemental verification name
+their respective immutable source revisions; they must not be conflated.
+
 Short temporary-data benchmarks used real PBKDF2:
 
 - Four terminal records, three recreated runtimes: 12 KDF / 1.933186 process

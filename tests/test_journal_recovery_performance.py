@@ -1,7 +1,7 @@
 """Terminal history caching authenticates content, not filesystem timestamps."""
 import json
 import os
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -16,8 +16,12 @@ def history(tmp_path, monkeypatch):
     paths = Paths(tmp_path / "journal")
     writer = OperationJournal(paths=paths, password_provider=lambda: "synthetic-test-password")
     identifiers = []
-    for _ in range(3):
-        record = writer.begin("test_history")
+    for identifier in (
+        UUID("10000000-0000-4000-8000-000000000001"),
+        UUID("20000000-0000-4000-8000-000000000001"),
+        UUID("30000000-0000-4000-8000-000000000001"),
+    ):
+        record = writer.begin("test_history", operation_id=identifier)
         writer.finish(record.operation_id)
         identifiers.append(record.operation_id)
     reader = OperationJournal(paths=paths, password_provider=lambda: "synthetic-test-password")
@@ -48,7 +52,7 @@ def test_unchanged_terminal_history_uses_fresh_reads_with_zero_kdf(history, monk
 
 
 @pytest.mark.parametrize("change", ["remove", "new_pending", "same_stat_corrupt", "rename"])
-def test_warm_history_change_reauthenticates_instead_of_reusing_empty_result(history, change):
+def test_warm_history_change_reauthenticates_instead_of_reusing_empty_result(history, monkeypatch, change):
     reader, writer, identifiers, calls = history
     path = reader._record_path(identifiers[0])
     expected_error = change in {"same_stat_corrupt", "rename"}
@@ -58,21 +62,56 @@ def test_warm_history_change_reauthenticates_instead_of_reusing_empty_result(his
         pending = writer.begin("test_pending", state={"not_finished": True})
         calls.clear()
     elif change == "rename":
-        path.rename(reader._record_path(uuid4()))
+        destination = reader._record_path(UUID("00000000-0000-4000-8000-000000000001"))
+        assert not destination.exists()
+        path.rename(destination)
     else:
         before = path.stat()
         damaged = bytearray(path.read_bytes())
         damaged[-1] ^= 1
         path.write_bytes(damaged)
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    decrypt = crypto._decrypt_blob_with_key
+    authentications = []
+    def authenticated_read(*args, **kwargs):
+        authentications.append(True)
+        return decrypt(*args, **kwargs)
+    monkeypatch.setattr(crypto, "_decrypt_blob_with_key", authenticated_read)
     if expected_error:
-        with pytest.raises(JournalError):
+        message = "identity mismatch" if change == "rename" else "cannot decrypt or decode"
+        with pytest.raises(JournalError, match=message):
             reader.list_unfinished()
         assert reader._terminal_manifest is None
     else:
         result = reader.list_unfinished()
         assert [record.operation_id for record in result] == ([pending.operation_id] if change == "new_pending" else [])
-    assert calls  # metadata-only or pending-index trust cannot authorize a hit
+    assert authentications  # Changed ciphertext/name cannot reuse the terminal result.
+    if change != "rename":
+        assert calls
+
+
+def test_renamed_cached_key_record_rejects_identity_with_one_gcm_and_zero_kdf(history, monkeypatch):
+    reader, _, identifiers, calls = history
+    # Fixed IDs put this record last in the authenticated cold scan. Renaming
+    # it before the other records then exercises reuse of that exact salt/key.
+    path = reader._record_path(identifiers[-1])
+    assert reader._derived_key_cache[0] == crypto._blob_salt(path.read_bytes())
+    assert reader._terminal_manifest is not None
+    destination = reader._record_path(UUID("00000000-0000-4000-8000-000000000001"))
+    assert not destination.exists()
+    path.rename(destination)
+    decrypt = crypto._decrypt_blob_with_key
+    authentications = []
+    def authenticated_read(*args, **kwargs):
+        authentications.append(True)
+        return decrypt(*args, **kwargs)
+    monkeypatch.setattr(crypto, "_decrypt_blob_with_key", authenticated_read)
+
+    with pytest.raises(JournalError, match="journal record identity mismatch"):
+        reader.list_unfinished()
+    assert not calls
+    assert len(authentications) == 1
+    assert reader._terminal_manifest is None
 
 
 def test_authenticated_same_salt_pending_rewrite_never_hits_terminal_cache(history):

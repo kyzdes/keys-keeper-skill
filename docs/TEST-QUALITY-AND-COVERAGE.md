@@ -4,6 +4,25 @@ Audit baseline: source commit `61a081e8466559f544a0f641b1131d0e60f362fa`
 (0.10.1). This document distinguishes static inventory, executable regression
 contracts, measured CI coverage, and installed application measurements.
 
+## Release matrix and subsequent test correction
+
+The final 0.11.0 release PR [passed all ten checks](https://github.com/kyzdes/keys-keeper-skill/pull/17).
+Its five-job matrix measured 14,582/17,140 lines (85.08%) and 3,946/5,518
+branches (71.51%) across all 81 Python modules, with zero omitted modules.
+The inventory contained 108 test files, 1,095 definitions and 1,450 collected
+cases. The release receipt records the tested revision, matrix outcomes and
+wheel checksum; these counts precede the additional deterministic case below.
+
+A repeat on merged main exposed a random-order assumption in a journal rename
+test. It required another KDF even when the first changed record used the
+currently cached salt/key. The implementation still freshly authenticated
+ciphertext and rejected the authenticated record/filename identity mismatch.
+The corrected contract counts GCM authentication and rejection rather than
+requiring unnecessary key derivation. An explicit cached-key-first regression
+requires zero KDF, one fresh GCM, `JournalError` and an invalidated terminal
+manifest. No runtime code, encryption format or KDF parameter changes for this
+correction; the published tag and wheel remain immutable.
+
 ## Baseline inventory
 
 Read-only AST inspection found 79 Python source modules, 92 test files and 937
