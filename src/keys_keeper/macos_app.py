@@ -226,7 +226,8 @@ def install_menubar_app(
             subprocess.run([
                 "/usr/bin/xcrun", "swiftc", "-O", "-swift-version", "5",
                 "-target", f"{platform.machine()}-apple-macos13.0",
-                str(source / "native/KeysKeeper.swift"), "-o", str(executable),
+                str(source / "native/KeysKeeper.swift"),
+                str(source / "native/BridgeMessages.swift"), "-o", str(executable),
                 "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "WebKit",
             ], check=True, capture_output=True, timeout=180)
             subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(staging)],

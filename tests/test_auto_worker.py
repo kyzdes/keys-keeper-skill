@@ -139,6 +139,93 @@ def test_failed_worker_never_exposes_output(tmp_path, monkeypatch, capsys):
     assert captured.out == captured.err == ""
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group regression")
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_worker_exit_reaps_remaining_descendants(tmp_path, monkeypatch, exit_code):
+    late = tmp_path / "late-descendant"
+    ready = tmp_path / "ready-descendant"
+    descendant = ("import time; from pathlib import Path; Path(" + repr(str(ready)) +
+                  ").touch(); time.sleep(.4); Path(" + repr(str(late)) + ").touch()")
+    script = ("import subprocess,sys,time; from pathlib import Path; "
+              "subprocess.Popen([sys.executable,'-c'," + repr(descendant) + "]); "
+              "ready=Path(" + repr(str(ready)) + ")\n"
+              "while not ready.exists(): time.sleep(.01)\n"
+              "sys.exit(" + str(exit_code) + ")")
+    monkeypatch.setattr(worker, "_arguments", lambda *_a, **_kw: [sys.executable, "-c", script])
+    if exit_code:
+        with pytest.raises(worker.AutoWorkerError, match="^operation_failed$"):
+            worker.run_auto_worker("personal", Paths(tmp_path), timeout=2, _direct=True)
+    else:
+        worker.run_auto_worker("personal", Paths(tmp_path), timeout=2, _direct=True)
+    assert ready.exists()
+    time.sleep(.5)
+    assert not late.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX spawn-cancellation regression")
+@pytest.mark.parametrize("kind", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_signal_during_spawn_defers_until_child_handle_is_acquired(tmp_path, monkeypatch, kind):
+    late = tmp_path / "late-spawn"
+    script = "import time; from pathlib import Path; time.sleep(.3); Path(" + repr(str(late)) + ").touch()"
+    monkeypatch.setattr(worker, "_arguments", lambda *_a, **_kw: [sys.executable, "-c", script])
+    original, children = worker.subprocess.Popen, []
+    def spawn(*args, **kwargs):
+        process = original(*args, **kwargs)
+        children.append(process)
+        os.kill(os.getpid(), getattr(signal, kind))
+        return process
+    monkeypatch.setattr(worker.subprocess, "Popen", spawn)
+    with pytest.raises(SystemExit):
+        worker.run_auto_worker("personal", Paths(tmp_path), timeout=2, _direct=True)
+    assert children[0].poll() is not None
+    time.sleep(.4)
+    assert not late.exists()
+
+
+def test_supervisor_job_failure_aborts_before_child_spawn(tmp_path, monkeypatch):
+    def failed():
+        raise worker.AutoWorkerError("operation_failed")
+    monkeypatch.setattr(worker, "_bind_supervisor_job", failed)
+    monkeypatch.setattr(worker, "run_auto_worker", lambda *_a, **_kw: pytest.fail("unsafe supervisor spawned worker"))
+    assert worker.main(["personal", "--home", str(tmp_path), "--supervise"]) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Win32 supervisor Job Object")
+@pytest.mark.parametrize("ending", ["success", "failure", "hardkill"])
+def test_windows_job_reaps_descendants_on_every_supervisor_exit(tmp_path, ending):
+    ready, late = tmp_path / "ready", tmp_path / "late"
+    descendant = ("import time; from pathlib import Path; Path(" + repr(str(ready)) +
+                  ").touch(); time.sleep(.7); Path(" + repr(str(late)) + ").touch()")
+    script = ("import subprocess,sys,time; from pathlib import Path; "
+              "from keys_keeper.auto_worker import _bind_supervisor_job; _bind_supervisor_job(); "
+              "subprocess.Popen([sys.executable,'-c'," + repr(descendant) + "]); "
+              "ready=Path(" + repr(str(ready)) + ")\n"
+              "until=time.monotonic()+5\n"
+              "while not ready.exists():\n"
+              " if time.monotonic()>until: sys.exit(9)\n"
+              " time.sleep(.01)\n"
+              + ("time.sleep(5)" if ending == "hardkill" else "sys.exit(" + ("0" if ending == "success" else "7") + ")"))
+    parent = subprocess.Popen([sys.executable, "-c", script],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        until = time.monotonic() + 5
+        while not ready.exists() and parent.poll() is None and time.monotonic() < until:
+            time.sleep(.01)
+        assert ready.exists(), "Windows job setup must succeed before spawning a descendant"
+        if ending == "hardkill":
+            parent.kill()
+        expected = 0 if ending == "success" else (7 if ending == "failure" else None)
+        result = parent.wait(timeout=5)
+        if expected is not None:
+            assert result == expected
+        time.sleep(.8)
+        assert not late.exists()
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+
+
 def test_detached_entry_runs_supervisor_and_preserves_explicit_root(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(worker.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))
@@ -211,7 +298,8 @@ def test_independent_supervisor_keeps_deadline_after_caller_sigkill(tmp_path):
               "from keys_keeper.paths import Paths; "
               "w._arguments=lambda *a,**kw: [sys.executable,'-c'," + repr(guardian) + "]; "
               "original=w.subprocess.Popen; "
-              "\ndef spawn(*a,**kw):\n p=original(*a,**kw); Path(" + repr(str(ready)) + ").write_text(str(p.pid)); return p\n"
+              "\ndef spawn(*a,**kw):\n p=original(*a,**kw); ready=Path(" + repr(str(ready)) + "); "
+              "temporary=ready.with_suffix('.tmp'); temporary.write_text(str(p.pid)); temporary.replace(ready); return p\n"
               "w.subprocess.Popen=spawn\nw.run_auto_worker('personal',Paths(" + repr(str(tmp_path)) + "),timeout=2)")
     parent = subprocess.Popen([sys.executable, "-c", caller], start_new_session=True,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

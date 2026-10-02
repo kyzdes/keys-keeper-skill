@@ -17,6 +17,7 @@ import tempfile
 import time
 
 DAY = 86_400
+MAX_CONFIG_BYTES = 4 * 1024 * 1024
 _spec = importlib.util.spec_from_file_location("keys_keeper_shared_updater", Path(__file__).with_name("auto_update.py"))
 shared = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(shared)
@@ -38,11 +39,31 @@ def _unique(items):
     return result
 
 
+def _public_config(path):
+    # Host routing files are public configuration, not owner-only vault data.
+    # Bound every hook preflight and reject pipes/devices before reading them.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_CONFIG_BYTES:
+            raise ValueError("invalid updater configuration")
+        data = stream.read(MAX_CONFIG_BYTES + 1)
+        if len(data) > MAX_CONFIG_BYTES:
+            raise ValueError("invalid updater configuration")
+    value = json.loads(data, object_pairs_hook=_unique,
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    if not isinstance(value, dict):
+        raise ValueError("invalid updater configuration")
+    return value
+
+
 def _last(path):
     try:
         if path.is_symlink():
             raise ValueError("invalid update marker")
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     except FileNotFoundError:
         return None
     with os.fdopen(fd, "rb") as stream:
@@ -84,14 +105,14 @@ def update_daily(root=None, env=None, *, clock=time.time):
             or env.get("KEYS_KEEPER_ENABLE_MUTABLE_AUTOUPDATE") != "1"):
         return "disabled"
     root = Path(__file__).resolve().parent.parent if root is None else Path(root)
-    if json.loads((root / ".claude-plugin/plugin.json").read_text())["name"] != "keys-keeper":
+    if _public_config(root / ".claude-plugin/plugin.json")["name"] != "keys-keeper":
         return "disabled"
     config = Path(env.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
-    installed = json.loads((config / "plugins/installed_plugins.json").read_text())
+    installed = _public_config(config / "plugins/installed_plugins.json")
     if "keys-keeper@claude-skills" not in installed.get("plugins", {}):
         return "disabled"
     known = config / "plugins/known_marketplaces.json"
-    if known.exists() and json.loads(known.read_text()).get("claude-skills", {}).get("autoUpdate") is True:
+    if known.exists() and _public_config(known).get("claude-skills", {}).get("autoUpdate") is True:
         return "native"
     if not shutil.which("claude"):
         return "disabled"

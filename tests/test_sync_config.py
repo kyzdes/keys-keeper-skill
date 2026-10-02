@@ -1,5 +1,6 @@
 """Phase 1 — config.py: non-secret [sync] settings, hand-rolled flat TOML."""
 import sys
+import os
 import pytest
 
 from keys_keeper.paths import Paths
@@ -122,3 +123,46 @@ def test_comments_and_quotes_parse(kk_home):
     assert cfg.mode == "manual"
     assert cfg.retain_snapshots == 7
     assert cfg.bucket == "b"
+
+
+def test_oversized_config_rejected_before_parse_or_automatic_work(kk_home, monkeypatch):
+    from keys_keeper import config, cli_sync
+    from types import SimpleNamespace
+    paths = Paths()
+    paths.ensure()
+    with paths.config_toml.open("wb") as stream:
+        stream.truncate(config.MAX_CONFIG_BYTES + 1)
+    monkeypatch.setattr(config, "_read_sync_table", lambda _text: pytest.fail("oversized config parsed"))
+    monkeypatch.setattr(cli_sync, "run_auto_worker", lambda *_a: pytest.fail("unsafe config ran automatic work"))
+    with pytest.raises(SyncConfigError, match="configuration file"):
+        load_sync_config(paths)
+    assert cli_sync.cmd_sync_auto(SimpleNamespace(force=False, foreground=True)) == 0
+    assert not (paths.root / "sync-auto-schedule" / "last-attempt.json").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX pipe fixture")
+def test_sync_config_pipe_is_rejected_without_waiting_for_writer(kk_home):
+    paths = Paths()
+    paths.ensure()
+    os.mkfifo(paths.config_toml)
+    with pytest.raises(SyncConfigError, match="configuration file"):
+        load_sync_config(paths)
+
+
+def test_oversized_config_write_preserves_previous_file(kk_home):
+    from keys_keeper.config import MAX_CONFIG_BYTES
+    paths = Paths()
+    save_sync_config(SyncConfig(mode="off"), paths)
+    before = paths.config_toml.read_bytes()
+    with pytest.raises(SyncConfigError, match="size limit"):
+        save_sync_config(SyncConfig(mode="off", prefix="x" * MAX_CONFIG_BYTES), paths)
+    assert paths.config_toml.read_bytes() == before
+    assert not paths.config_toml.with_suffix(".toml.tmp").exists()
+
+
+def test_invalid_utf8_config_fails_with_fixed_error(kk_home):
+    paths = Paths()
+    paths.ensure()
+    paths.config_toml.write_bytes(b"[sync]\n\xff")
+    with pytest.raises(SyncConfigError, match="^invalid sync configuration encoding$"):
+        load_sync_config(paths)

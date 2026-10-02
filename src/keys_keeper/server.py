@@ -6,11 +6,12 @@ import json
 import secrets
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from keys_keeper.paths import Paths
+from keys_keeper.http_resources import BoundedThreadingHTTPServer, RequestDeadlineMixin
 
 _MAX_BODY_BYTES = 8 * 1024 * 1024
 _NO_CACHE_HEADERS = {
@@ -55,8 +56,11 @@ class AdminServer:
         self.idle_timeout_sec = idle_timeout_sec
         self.token = secrets.token_hex(32)
         self.last_seen = time.monotonic()
-        self._server: ThreadingHTTPServer | None = None
+        self._server: BoundedThreadingHTTPServer | None = None
         self._stop_event = threading.Event()
+        self._activity_event = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._serving = False
 
     # ---- public ----
 
@@ -67,37 +71,57 @@ class AdminServer:
         cleanly when a port is occupied.  In particular, it must not emit a
         fresh capability URL for a server that never successfully started.
         """
-        if self._server is not None:
-            return
-        handler_cls = make_handler(self)
-        self._server = ThreadingHTTPServer(
-            ("127.0.0.1", self.requested_port), handler_cls
-        )
-        self._server._kk_started = time.monotonic()
-        self.bound_port = self._server.server_port
-        threading.Thread(target=self._idle_watchdog, daemon=True).start()
+        with self._lifecycle_lock:
+            if self._stop_event.is_set():
+                raise RuntimeError("admin server has stopped")
+            if self._server is not None:
+                return
+            handler_cls = make_handler(self)
+            self._server = BoundedThreadingHTTPServer(
+                ("127.0.0.1", self.requested_port), handler_cls
+            )
+            self._server._kk_started = time.monotonic()
+            self.bound_port = self._server.server_port
+            threading.Thread(target=self._idle_watchdog, daemon=True).start()
 
     def serve_forever(self) -> None:
-        self.start()
-        assert self._server is not None
-        self._server.serve_forever()
+        with self._lifecycle_lock:
+            if self._stop_event.is_set():
+                return
+            self.start()
+            assert self._server is not None
+            self._serving = True
+        try:
+            self._server.serve_forever()
+        finally:
+            with self._lifecycle_lock:
+                self._serving = False
+            self._server.server_close()
 
     def stop(self) -> None:
-        self._stop_event.set()
-        if self._server is not None:
-            self._server.shutdown()
+        with self._lifecycle_lock:
+            self._stop_event.set()
+            self._activity_event.set()
+            server, serving = self._server, self._serving
+        if server is not None:
+            if serving:
+                server.shutdown()
+            server.server_close()
 
     def heartbeat(self) -> None:
         self.last_seen = time.monotonic()
+        self._activity_event.set()
 
     # ---- internal ----
 
     def _idle_watchdog(self) -> None:
         while not self._stop_event.is_set():
-            time.sleep(5)
-            if time.monotonic() - self.last_seen > self.idle_timeout_sec:
+            remaining = self.last_seen + self.idle_timeout_sec - time.monotonic()
+            if remaining <= 0:
                 self.stop()
                 return
+            self._activity_event.wait(remaining)
+            self._activity_event.clear()
 
 
 _GET_PAGE_HANDLERS = {
@@ -111,7 +135,7 @@ _GET_PAGE_HANDLERS = {
 }
 
 
-class _AdminRequestHandler(BaseHTTPRequestHandler):
+class _AdminRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
     admin: AdminServer
     paths: Paths
 
@@ -183,7 +207,11 @@ class _AdminRequestHandler(BaseHTTPRequestHandler):
         if self.headers.get("Transfer-Encoding"):
             self._send_json(400, {"error": "transfer-encoding is unsupported"})
             return None
-        raw_length = self.headers.get("Content-Length")
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) > 1:
+            self._send_json(400, {"error": "duplicate content-length"})
+            return None
+        raw_length = lengths[0] if lengths else None
         if raw_length is None:
             return b""
         try:
@@ -197,12 +225,21 @@ class _AdminRequestHandler(BaseHTTPRequestHandler):
         if length > _MAX_BODY_BYTES:
             self._send_json(413, {"error": "request body too large"})
             return None
-        return self.rfile.read(length) if length else b""
+        try:
+            body = self.rfile.read(length) if length else b""
+        except TimeoutError:
+            self.close_connection = True
+            self._send_json(408, {"error": "request timed out"})
+            return None
+        if len(body) != length:
+            self.close_connection = True
+            self._send_json(400, {"error": "incomplete request body"})
+            return None
+        return body
 
     # ---- routing ----
 
     def do_GET(self) -> None:
-        self.admin.heartbeat()
         path = urlparse(self.path).path
         # Static assets (CSS / JS) are public — they hold no secrets and the
         # browser cannot attach our session header to <link>/<script> requests.
@@ -212,6 +249,7 @@ class _AdminRequestHandler(BaseHTTPRequestHandler):
         if not self._verify_token():
             self._send(403, b"forbidden")
             return
+        self.admin.heartbeat()
         self._dispatch_authenticated_get(path)
 
     def _dispatch_authenticated_get(self, path: str) -> None:
@@ -243,10 +281,10 @@ class _AdminRequestHandler(BaseHTTPRequestHandler):
         self._handle_api_write("PATCH", read_body=True)
 
     def _handle_api_write(self, method: str, *, read_body: bool) -> None:
-        self.admin.heartbeat()
         if not self._verify_token():
             self._send(403, b"forbidden")
             return
+        self.admin.heartbeat()
         body = self._read_request_body() if read_body else None
         if read_body and body is None:
             return

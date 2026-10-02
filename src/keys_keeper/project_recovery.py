@@ -387,7 +387,7 @@ def _activation_from_state(state: dict) -> dict:
 def _verify_installed_takeover(paths: Paths, activation: dict) -> None:
     activation = _validate_activation(activation)
     try:
-        settings = json.loads(_secure_read(paths.root / "runtime-backend.json"))
+        settings = json.loads(_secure_read(paths.root / "runtime-backend.json", max_bytes=4096))
         if settings != _BACKEND_SETTINGS:
             raise ProjectRecoveryError("recovered runtime backend settings are invalid")
         backend = EncryptedFileBackend(
@@ -402,7 +402,7 @@ def _verify_installed_takeover(paths: Paths, activation: dict) -> None:
         catalog = MetadataStore(paths).catalog_state()
         if catalog["dedup"] or catalog["publication_intents"]:
             raise ProjectRecoveryError("fresh takeover catalog contains an old active ledger")
-        registry = json.loads(_secure_read(paths.root / "profile-registry.json"))
+        registry = json.loads(_secure_read(paths.root / "profile-registry.json", max_bytes=1024 * 1024))
     except (FileNotFoundError, UnicodeError, ValueError, KeychainError, StoreError) as ex:
         if isinstance(ex, ProjectRecoveryError):
             raise
@@ -438,7 +438,7 @@ def _verify_installed_takeover(paths: Paths, activation: dict) -> None:
     try:
         history = json.loads(
             crypto.decrypt_blob(
-                _secure_read(paths.root / "recovery-history.enc"),
+                _secure_read(paths.root / "recovery-history.enc", max_bytes=160 * 1024 * 1024),
                 password=runtime_key,
             )
         )
@@ -551,7 +551,7 @@ def _takeover_journal(paths: Paths, password) -> OperationJournal:
 
 def _recovery_marker(paths: Paths) -> dict:
     try:
-        marker = json.loads(_secure_read(paths.root / "recovery-only"))
+        marker = json.loads(_secure_read(paths.root / "recovery-only", max_bytes=4096))
     except (FileNotFoundError, UnicodeError, ValueError) as ex:
         raise ProjectRecoveryError("recovery-only marker is unavailable") from ex
     fields = {"schema_version", "mode", "kind", "backup_hash", "status", "activation"}
@@ -574,7 +574,7 @@ def _recovery_marker_present(paths: Paths) -> bool:
 
 def _read_activation(path: Path) -> dict:
     try:
-        value = json.loads(_secure_read(path))
+        value = json.loads(_secure_read(path, max_bytes=16 * 1024 * 1024))
     except (FileNotFoundError, UnicodeError, ValueError) as ex:
         raise ProjectRecoveryError("takeover activation record is unavailable") from ex
     return _validate_activation(value)

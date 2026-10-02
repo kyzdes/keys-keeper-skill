@@ -86,7 +86,7 @@ def test_all_current_and_future_keys_without_widening_project_scopes(tmp_path, p
     assert master.master_store.catalog_state()["bindings"] == before["bindings"]
     assert manager.status()["devices"][0]["name"] == "Windows PC"
     # Relay sees neither the pairing encryption key nor any vault plaintext.
-    with app._connect() as db:
+    with app._connection() as db:
         rows = db.execute("SELECT * FROM kk3_pairings").fetchall()
     serialized = json.dumps([dict(r) for r in rows])
     assert "synthetic-" not in serialized and pairing.parse_code(invitation["code"])["key"] not in serialized

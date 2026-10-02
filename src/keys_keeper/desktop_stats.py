@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import gzip
+import errno
 import hashlib
 import json
 import os
+import re
 import stat
+import zlib
 from collections import Counter, OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
@@ -17,6 +21,116 @@ from keys_keeper.paths import Paths
 
 ACCESS_OPS = frozenset({"copy", "inject", "resolve", "ssh", "reveal", "export"})
 AGENTS = {"codex": "Codex", "claude": "Claude Code", "opencode": "OpenCode"}
+_MAX_LINE_BYTES = 1024 * 1024
+_MAX_SCAN_BYTES = 64 * 1024 * 1024
+_READ_CHUNK_BYTES = 64 * 1024
+_NEWLINE = re.compile(b"[\r\n]")
+
+
+class _ScanLimit(Exception):
+    def __init__(self, kind):
+        self.kind = kind
+
+
+@dataclass
+class _ScanBudget:
+    remaining: int
+    limited: bool = False
+    retryable_error: bool = False
+
+    def read(self, stream, size):
+        if self.remaining <= 0:
+            raise _ScanLimit("budget")
+        reserved = min(size, self.remaining)
+        # A gzip read also consumes compressed input through this same budget.
+        # Reserve output room first so nested reads cannot overspend it.
+        self.remaining -= reserved
+        try:
+            chunk = stream.read(reserved)
+        except BaseException:
+            self.remaining += reserved
+            raise
+        self.remaining += reserved - len(chunk)
+        return chunk
+
+
+class _CompressedSource:
+    def __init__(self, stream, budget):
+        self.stream, self.budget = stream, budget
+
+    def read(self, size=-1):
+        size = _READ_CHUNK_BYTES if size < 0 else min(size, _READ_CHUNK_BYTES)
+        return self.budget.read(self.stream, size)
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+@contextmanager
+def _open_log(path, compressed, budget):
+    with open(path, "rb", buffering=0, opener=_regular_log_opener) as source:
+        if compressed:
+            with gzip.GzipFile(fileobj=_CompressedSource(source, budget), mode="rb") as stream:
+                yield stream
+        else:
+            yield source
+
+
+def _regular_log_opener(path, flags):
+    """A stat/open replacement must never turn a bounded scan into a pipe wait."""
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise _ScanLimit("file") from None
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _ScanLimit("file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _bounded_lines(stream, budget, *, expected_size=None, initial_offset=0):
+    """Bound decompressed reads and logical CR/LF lines before JSON parsing."""
+    buffer = bytearray()
+    consumed = initial_offset
+    eof = expected_size is not None and consumed == expected_size
+    while True:
+        cursor = 0
+        while cursor < len(buffer):
+            ending = _NEWLINE.search(buffer, cursor)
+            if ending is None:
+                if len(buffer) - cursor > _MAX_LINE_BYTES:
+                    raise _ScanLimit("line")
+                if eof:
+                    yield bytes(buffer[cursor:])
+                    return
+                break
+            end = ending.end()
+            if end - cursor > _MAX_LINE_BYTES:
+                raise _ScanLimit("line")
+            if buffer[end - 1] == 13:
+                if end == len(buffer) and not eof:
+                    break  # A following LF belongs to this same CRLF record.
+                if end < len(buffer) and buffer[end] == 10:
+                    end += 1
+            if end - cursor > _MAX_LINE_BYTES:
+                raise _ScanLimit("line")
+            line = bytes(buffer[cursor:end])
+            cursor = end
+            yield line
+        if cursor:
+            del buffer[:cursor]
+        if eof:
+            return
+        chunk = budget.read(stream, _READ_CHUNK_BYTES)
+        consumed += len(chunk)
+        eof = not chunk or (expected_size is not None and consumed == expected_size)
+        buffer.extend(chunk)
 
 
 def _local_now() -> datetime:
@@ -103,7 +217,7 @@ def _count_line(line: bytes, counts: _Counts, start: datetime, now: datetime) ->
             return
         if not isinstance(event.get("success"), bool):
             raise ValueError("missing outcome")
-    except (ValueError, TypeError, KeyError, AttributeError):
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
         counts.skipped += 1
         return
     counts.total += 1
@@ -135,6 +249,7 @@ class _CachedFile:
     offset: int
     stable: _Counts
     tail: _Counts
+    appendable: bool = True
 
     def counts(self):
         counts = self.stable.copy()
@@ -157,8 +272,6 @@ def _files_fingerprint(files):
         digest.update(name)
         try:
             signature = _signature(path.stat())
-            if not stat.S_ISREG(signature[-1]):
-                return None
         except FileNotFoundError:
             signature = None
         except OSError:
@@ -176,9 +289,12 @@ class DailySummaryCache:
     request stats all currently discovered logs. Changed files are read again;
     appends verify the old prefix before parsing only the new suffix so an
     in-place rewrite plus growth cannot masquerade as an append. No cache is
-    serialized, shared between roots, or used after an I/O error.
+    serialized, shared between roots, or used after a retryable I/O error.
     Overflow retains one aggregate fingerprint and counters so unchanged logs
-    remain read-free even when they exceed the per-file LRU capacity.
+    remain read-free even when they exceed the per-file LRU capacity. Logical
+    lines are capped at 1 MiB and reads/decompression/prefix verification share
+    a 64 MiB budget per refresh. Stable unsupported input retains only incomplete
+    counters/fingerprints; transient I/O failures are retried.
     """
 
     def __init__(self, paths: Paths, *, max_files: int = 128):
@@ -204,15 +320,17 @@ class DailySummaryCache:
             self._aggregate = None
         self._window, self._last_now = window, instant
         counts = _Counts()
+        budget = _ScanBudget(_MAX_SCAN_BYTES)
         try:
             files = list(_log_files(self.paths, start, now))
         except OSError:
             files = [self.paths.audit_jsonl]
             counts.unreadable += 1
+            budget.retryable_error = True
         overflow = len(files) > self._max_files
-        fingerprint = _files_fingerprint(files) if overflow else None
+        fingerprint = _files_fingerprint(files)
         aggregate = self._aggregate
-        if (overflow and fingerprint is not None and counts.unreadable == 0 and aggregate is not None
+        if (fingerprint is not None and counts.unreadable == 0 and aggregate is not None
                 and aggregate.fingerprint == fingerprint
                 and (aggregate.counts.future_at is None or now < aggregate.counts.future_at)):
             return _summary(aggregate.counts, start, now)
@@ -226,32 +344,40 @@ class DailySummaryCache:
             # changed file cannot cascade into an LRU miss for every other log.
             files.sort(key=lambda path: path not in self._files)
         for path in files:
-            counts.include(self._file_counts(path, start, now))
-        if (overflow and fingerprint is not None and counts.unreadable == 0
+            counts.include(self._file_counts(path, start, now, budget))
+        if ((overflow or budget.limited) and fingerprint is not None and not budget.retryable_error
                 and fingerprint == _files_fingerprint(files)):
             self._aggregate = _CachedAggregate(fingerprint, counts.copy())
         return _summary(counts, start, now)
 
-    def _file_counts(self, path, start, now):
+    def _file_counts(self, path, start, now, budget):
         cached = self._files.pop(path, None)
         try:
             signature = _signature(path.stat())
-            if not stat.S_ISREG(signature[-1]):
-                raise OSError("audit log is not a regular file")
             previous = cached.counts() if cached else None
             current_time = previous is None or previous.future_at is None or now < previous.future_at
             if cached and cached.signature == signature and current_time:
+                budget.limited |= not cached.appendable
                 self._remember(path, cached)
                 return previous
+            if not stat.S_ISREG(signature[-1]):
+                unsupported = _Counts(unreadable=1)
+                budget.limited = True
+                self._remember(path, _CachedFile(signature, b"", 0, unsupported, _Counts(), False))
+                return unsupported
             if not current_time:
                 cached = None
-            counts, entry = self._read_file(path, signature, cached, start, now)
+            if budget.remaining <= 0 and signature[2] > 0:
+                budget.limited = True
+                return _Counts(unreadable=1)
+            counts, entry = self._read_file(path, signature, cached, start, now, budget)
             if entry is not None:
                 self._remember(path, entry)
             return counts
         except FileNotFoundError:
             return _Counts()
         except (OSError, EOFError):
+            budget.retryable_error = True
             return _Counts(unreadable=1)
 
     def _remember(self, path, entry):
@@ -259,21 +385,20 @@ class DailySummaryCache:
         while len(self._files) > self._max_files:
             self._files.popitem(last=False)
 
-    def _read_file(self, path, signature, cached, start, now):
+    def _read_file(self, path, signature, cached, start, now, budget):
         compressed = path.suffix == ".gz"
-        opener = gzip.open if compressed else open
         stable, tail = _Counts(), _Counts()
         offset = 0
         digest = hashlib.sha256()
         try:
-            with opener(path, "rb") as stream:
+            with _open_log(path, compressed, budget) as stream:
                 old_size = 0
                 incremental = False
-                if (not compressed and cached and signature[:2] == cached.signature[:2]
+                if (not compressed and cached and cached.appendable and signature[:2] == cached.signature[:2]
                         and signature[2] > cached.signature[2]):
                     remaining = cached.signature[2]
                     while remaining:
-                        chunk = stream.read(min(remaining, 1024 * 1024))
+                        chunk = budget.read(stream, min(remaining, _READ_CHUNK_BYTES))
                         if not chunk:
                             break
                         digest.update(chunk)
@@ -290,18 +415,16 @@ class DailySummaryCache:
                 if not incremental:
                     self._full_scans += 1
                 position = offset
-                for raw in stream:
-                    digest.update(raw[max(0, old_size - position):])
-                    # Binary iteration splits on LF; splitlines also preserves
-                    # the existing text reader's CR/CRLF newline semantics.
-                    for line in raw.splitlines(keepends=True):
-                        position += len(line)
-                        self._parsed_lines += 1
-                        if line.endswith((b"\n", b"\r")):
-                            _count_line(line, stable, start, now)
-                            offset = position
-                        else:
-                            _count_line(line, tail, start, now)
+                for line in _bounded_lines(stream, budget, expected_size=None if compressed else signature[2],
+                                           initial_offset=offset):
+                    digest.update(line[max(0, old_size - position):])
+                    position += len(line)
+                    self._parsed_lines += 1
+                    if line.endswith((b"\n", b"\r")):
+                        _count_line(line, stable, start, now)
+                        offset = position
+                    else:
+                        _count_line(line, tail, start, now)
                 after = _signature(path.stat())
                 result = stable.copy()
                 result.include(tail)
@@ -309,7 +432,22 @@ class DailySummaryCache:
                 # unchanged snapshot. The next request reads the file again.
                 entry = _CachedFile(signature, digest.digest(), offset, stable, tail) if after == signature else None
                 return result, entry
+        except (_ScanLimit, gzip.BadGzipFile, EOFError, zlib.error) as failure:
+            # Resource ceilings and invalid compressed bytes are deterministic
+            # for the same metadata. Keep value-free incomplete projections.
+            # Global budget misses depend on other logs, so only the aggregate
+            # fingerprint can retain them, never an independent file entry.
+            budget.limited = True
+            stable.unreadable += 1
+            result = stable.copy()
+            result.include(tail)
+            after = _signature(path.stat())
+            retain = not isinstance(failure, _ScanLimit) or failure.kind == "line"
+            entry = (_CachedFile(signature, digest.digest(), offset, stable, tail, False)
+                     if retain and after == signature else None)
+            return result, entry
         except (OSError, EOFError):
+            budget.retryable_error = True
             result = stable.copy()
             result.include(tail)
             result.unreadable += 1

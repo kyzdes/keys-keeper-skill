@@ -286,6 +286,9 @@ def _shell_quote(s: str) -> str:
 
 
 def cmd_copy(args: argparse.Namespace) -> int:
+    if not 0 <= args.clear_after <= clipboard.MAX_CLEAR_DELAY_SECONDS:
+        sys.stderr.write("clear-after must be from 0 to 86400 seconds\n")
+        return 1
     ctx = _context_or_error(args)
     if ctx is None:
         return 1
@@ -306,7 +309,11 @@ def cmd_copy(args: argparse.Namespace) -> int:
     # Clipboard is a controlled (non-transcript) sink. Unwrap is local; the
     # plaintext does not leave this scope as a printable.
     value = sealed.unseal()
-    if not clipboard.write(value):
+    try:
+        written = clipboard.write(value)
+    except clipboard.ClipboardUnavailable:
+        written = False
+    if not written:
         audit.record(op="copy", name=e.name, id_=e.id, success=False, error="clipboard write failed")
         sys.stderr.write("clipboard write failed\n")
         return 1

@@ -158,3 +158,54 @@ def test_mixed_launcher_watch_and_recreated_labels_share_scope_limit(scheduler, 
     assert work == [1000]
     assert runtime.auto_sync(COMMAND[-1], clock=lambda: 87400)["status"] == "synced"
     assert len(work) == 2
+
+
+@pytest.mark.parametrize("kind", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_launcher_cancellation_reaps_child_tree_and_keeps_daily_claim(scheduler, tmp_path, kind):
+    import signal
+    import subprocess
+    import sys
+    import time
+    ready, late = tmp_path / "ready", tmp_path / "late"
+    executable = tmp_path / "keys"
+    # Harmless stand-in for the allowlisted CLI, independent of vault code.
+    child = ("import time; from pathlib import Path; Path(" + repr(str(ready)) +
+             ").touch(); time.sleep(.7); Path(" + repr(str(late)) + ").touch()")
+    executable.write_text("#!" + sys.executable + "\nimport subprocess,sys,time\n"
+                          "p=subprocess.Popen([sys.executable,'-c'," + repr(child) + "])\np.wait()\n")
+    executable.chmod(0o700)
+    command = [str(executable), *COMMAND[1:]]
+    parent = subprocess.Popen([sys.executable, scheduler.__file__, "--state-dir", str(tmp_path / "state"),
+                               "--job-id", JOB, "--command", *command],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        until = time.monotonic() + 5
+        while not ready.exists() and parent.poll() is None and time.monotonic() < until:
+            time.sleep(.01)
+        assert ready.exists()
+        os.kill(parent.pid, getattr(signal, kind))
+        assert parent.wait(timeout=6) != 0
+        time.sleep(.8)
+        assert not late.exists()
+        saved = (tmp_path / "state" / (JOB + ".json")).read_bytes()
+        assert scheduler.run_daily(tmp_path / "state", JOB, command) == ("deferred", 0)
+        assert (tmp_path / "state" / (JOB + ".json")).read_bytes() == saved
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+
+
+@pytest.mark.parametrize("now", [True, -1, float("nan"), float("inf")])
+def test_invalid_scheduler_clock_never_claims_or_starts_child(scheduler, tmp_path, monkeypatch, now):
+    monkeypatch.setattr(scheduler, "_run_child", lambda _command: pytest.fail("invalid clock started sync"))
+    with pytest.raises(ValueError, match="scheduler clock"):
+        scheduler.run_daily(tmp_path, JOB, COMMAND, clock=lambda: now)
+    assert not (tmp_path / (JOB + ".json")).exists()
+
+
+def test_scheduler_timestamp_pipe_fails_closed_without_waiting(scheduler, tmp_path, monkeypatch):
+    os.mkfifo(tmp_path / (JOB + ".json"), 0o600)
+    monkeypatch.setattr(scheduler, "_run_child", lambda _command: pytest.fail("invalid marker started sync"))
+    with pytest.raises(ValueError, match="scheduler timestamp"):
+        scheduler.run_daily(tmp_path, JOB, COMMAND, clock=lambda: 1000)

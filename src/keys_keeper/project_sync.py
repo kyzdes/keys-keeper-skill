@@ -31,15 +31,18 @@ MAX_HISTORY_BYTES = 64 * 1024 * 1024
 class ProjectState:
     """Encrypted local state; private keys never live in plain metadata JSON."""
 
-    def __init__(self, paths, password_provider):
+    def __init__(self, paths, password_provider, *, expected_identity=None):
         self.paths = paths
+        self._expected_identity = dict(expected_identity or {})
         self.journal = OperationJournal(paths=paths, password_provider=password_provider)
         from keys_keeper.paths import Paths
         self._jobs = OperationJournal(paths=Paths(paths.root / "sync-job"), password_provider=password_provider)
 
     def load(self) -> dict:
         try:
-            return copy.deepcopy(dict(self.journal.read(_STATE_ID).state))
+            state = copy.deepcopy(dict(self.journal.read(_STATE_ID).state))
+            self._validate_identity(state)
+            return state
         except JournalNotFound:
             raise ProjectSyncError("project profile is not configured") from None
 
@@ -51,10 +54,15 @@ class ProjectState:
             return False
 
     def save(self, state: dict) -> None:
+        self._validate_identity(state)
         if self.exists():
             self.journal.stage(_STATE_ID, "configured", state=state)
         else:
             self.journal.begin("project-state", operation_id=_STATE_ID, state=state)
+
+    def _validate_identity(self, state):
+        if any(state.get(key) != value for key, value in self._expected_identity.items()):
+            raise ProjectSyncError("project state does not match selected profile")
 
     def locked(self):
         return self.journal.locked()

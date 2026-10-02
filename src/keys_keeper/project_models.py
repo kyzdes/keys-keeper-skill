@@ -230,11 +230,13 @@ def _validate_unique(values: Any, label: str) -> None:
 
 def _validate_folder_cycles(folders: list[Folder]) -> None:
     parents = {item.id: item.parent_id for item in folders}
+    checked: set[str] = set()
     for folder_id in parents:
         seen: set[str] = set()
         current: str | None = folder_id
-        while current is not None:
+        while current is not None and current not in checked:
             if current in seen:
                 raise CatalogValidationError("folder hierarchy contains a cycle")
             seen.add(current)
             current = parents[current]
+        checked.update(seen)

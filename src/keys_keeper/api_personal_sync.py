@@ -8,21 +8,35 @@ from keys_keeper.pairing import PairingError
 from keys_keeper.project_runtime import RuntimeErrorSafe
 
 
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def handle_personal_api(handler, *, paths, method, parsed, body, runtime=None, server_selector=None):
     if server_selector is not None or parsed.query:
         handler._send_json(403, {"error": "Open the default local Settings to manage your computers"})
         return
-    manager = PersonalSync(paths, runtime)
     action = parsed.path.removeprefix("/api/personal-sync/")
+    allowed = {"GET": {"status", "options", "pending"},
+               "POST": {"setup", "invite", "join", "approve", "sync", "poll", "cancel", "auto", "revoke"}}
+    if action not in allowed.get(method, ()):
+        handler._send_json(404, {"error": "Unknown personal sync operation"})
+        return
     try:
+        manager = PersonalSync(paths, runtime)
         if method == "GET" and action == "status":
             result = manager.status()
         elif method == "GET" and action == "options":
             result = manager.options()
         elif method == "GET" and action == "pending":
             result = {"requests": manager.pending()}
-        elif method == "POST":
-            data = json.loads(body or b"{}")
+        else:
+            data = json.loads(body or b"{}", object_pairs_hook=_unique_object)
             if not isinstance(data, dict):
                 raise ValueError()
             if action == "setup" and set(data) == {"endpoint", "admin_token_entry", "name", "all_keys"}:
@@ -47,9 +61,6 @@ def handle_personal_api(handler, *, paths, method, parsed, body, runtime=None, s
                 result = manager.revoke(data["device_id"])
             else:
                 raise ValueError()
-        else:
-            handler._send_json(404, {"error": "Unknown personal sync operation"})
-            return
         handler._send_json(200, result)
     except (RuntimeErrorSafe, PairingError) as ex:
         handler._send_json(400, {"error": str(ex)})

@@ -132,7 +132,7 @@ def test_pending_replica_status_exposes_only_expiry_and_expired_poll_skips_relay
     item = {'id': str(uuid4()), 'kind': 'replica', 'scope_id': scope_id, 'vault_id': data['vault_id'],
             'device_id': data['device_id'], 'project': 'synthetic', 'environment': 'personal',
             'endpoint': data['endpoint'], 'status': 'pending'}
-    data.update(personal_pairing={'key': 'synthetic-private-marker'},
+    data.update(mode='replica', personal_pairing={'key': 'synthetic-private-marker'},
                 enrollment={'request': {'synthetic': True}, 'invitation': {'payload': {'expires_at': 1000}}})
     runtime.registry.put(item)
     runtime.state(item).save(data)

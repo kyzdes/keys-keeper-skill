@@ -203,7 +203,7 @@ def test_publish_atomic_cas_idempotency_concurrent_and_fault_rollback(setup):
     assert s.call("GET", "/state")[1]["head_hash"] == s.head
     assert s.call("POST", "/publish", body=next_tx)[0] == 201  # failed operation did not reserve its id
     assert s.call("POST", "/publish", body=tx)[0] == 200  # retry after a newer HEAD
-    with app._connect() as connection:
+    with app._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM kk3_operations WHERE scope_id=?", (s.scope_id,)).fetchone()[0] == 4
 
 
@@ -237,7 +237,7 @@ def test_grant_history_no_reuse_across_removal_restart(setup):
     restarted = SyncServerApp(app.database, ADMIN)
     with running(restarted) as address:
         assert request(address, "GET", s.base + "/state", headers=s.member_headers(contributor))[0] == 200
-        with restarted._connect() as connection:
+        with restarted._connection() as connection:
             assert connection.execute("SELECT COUNT(*) FROM kk3_grants WHERE scope_id=? AND device_id=?", (s.scope_id, new_grant["device_id"])).fetchone()[0] == 2
 
 
@@ -260,7 +260,7 @@ def test_immediate_block_durable_retry_then_crypto_rekey(setup):
     restarted = SyncServerApp(app.database, ADMIN)
     with running(restarted) as address:
         assert request(address, "GET", s.base + "/state", headers=s.member_headers(contributor))[0] == 403
-    with app._connect() as connection:
+    with app._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM kk3_blocks WHERE scope_id=?", (s.scope_id,)).fetchone()[0] == 1
 
 
@@ -378,7 +378,7 @@ def test_hostile_request_json_bounded_types_and_no_secret_leaks(setup, capsys):
 def test_relay_persistence_only_ciphertexts_and_public_metadata(setup):
     app, s, contributor, reader = setup
     s.client(contributor).submit(s.scope_id, s.submission(contributor))
-    with app._connect() as connection:
+    with app._connection() as connection:
         # Include every persisted row and checkpoint WAL before byte inspection.
         dump = "\n".join(connection.iterdump())
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -416,7 +416,7 @@ def test_policy_and_grant_rollback_on_invalid_transaction_wraps(setup):
     tx = s.transaction(policy=policy)
     assert s.call("POST", "/publish", body={**tx, "wraps": tx["wraps"][:-1]})[0] == 422
     assert s.call("GET", "/state")[1]["policy"] == s.policy
-    with app._connect() as connection:
+    with app._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM kk3_grants WHERE scope_id=? AND grant_id=?", (s.scope_id, newcomer["grant"]["grant_id"])).fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM kk3_policies WHERE scope_id=? AND hash=?", (s.scope_id, p.canonical_hash(policy))).fetchone()[0] == 0
     assert s.call("POST", "/publish", body=tx)[0] == 201
@@ -463,7 +463,7 @@ def test_total_storage_byte_and_record_quotas_are_atomic_with_control_reserve(se
     other = Scope(s.address)
     other.publish()
     service = app.project_relay
-    with app._connect() as connection:
+    with app._connection() as connection:
         used, records = service.storage_usage(connection, s.scope_id)
     service.limits = replace(service.limits, scope_bytes=used + 100)
     tx = s.transaction()
@@ -482,7 +482,7 @@ def test_total_storage_byte_and_record_quotas_are_atomic_with_control_reserve(se
     assert s.call("POST", "/publish", body=s.transaction())[0] == 409  # blocked grant first
     policy = s.changed_policy([reader["grant"]])
     assert s.call("POST", "/publish", body=s.transaction(policy=policy))[0] == 201  # removal uses reserve
-    with app._connect() as connection:
+    with app._connection() as connection:
         used_all, _ = service.storage_usage(connection)
     service.limits = replace(service.limits, scope_records=20_000, relay_bytes=used_all + 100)
     assert other.call("POST", "/publish", body=other.transaction())[0] == 429
@@ -491,12 +491,12 @@ def test_total_storage_byte_and_record_quotas_are_atomic_with_control_reserve(se
 def test_storage_record_quota_rolls_back_inserted_submission(setup):
     from dataclasses import replace
     app, s, contributor, reader = setup
-    with app._connect() as connection:
+    with app._connection() as connection:
         _, records = app.project_relay.storage_usage(connection, s.scope_id)
     app.project_relay.limits = replace(app.project_relay.limits, scope_records=records)
     record = s.submission(contributor)
     assert s.call("POST", "/submissions", body={"submission": record}, headers=s.member_headers(contributor))[0] == 429
-    with app._connect() as connection:
+    with app._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM kk3_submissions WHERE scope_id=?", (s.scope_id,)).fetchone()[0] == 0
     app.project_relay.limits = replace(app.project_relay.limits, scope_records=records + 1)
     assert s.call("POST", "/submissions", body={"submission": record}, headers=s.member_headers(contributor))[0] == 201

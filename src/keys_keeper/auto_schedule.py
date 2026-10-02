@@ -45,7 +45,7 @@ def claim_auto_sync(schedule: Paths, now, *, interval=DAILY_INTERVAL, force=Fals
     """Claim before expensive work, serializing restarts and other workers.
 
     A failed attempt consumes the daily slot. ``force`` is reserved for an
-    explicit manual override or a previously claimed detached-worker handoff.
+    explicit manual override.
     The marker contains a timestamp only, and corrupt metadata fails closed.
     """
     if type(now) not in {int, float} or not math.isfinite(now) or now < 0:
@@ -53,7 +53,7 @@ def claim_auto_sync(schedule: Paths, now, *, interval=DAILY_INTERVAL, force=Fals
     if type(interval) is not int or interval < DAILY_INTERVAL or type(force) is not bool:
         raise AutoScheduleError("invalid automatic synchronization interval")
     marker = schedule.root / "last-attempt.json"
-    with profile_lock(schedule):
+    with profile_lock(schedule, timeout=1):
         previous = _read_attempt(marker)
         if legacy is not None and legacy.root != schedule.root:
             old = _read_attempt(legacy.root / "last-attempt.json")

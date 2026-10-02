@@ -53,12 +53,22 @@ PasswordProvider = Callable[[], str | bytes | Sealed]
 class ReplicaStore:
     """Install complete encrypted generations and expose read-only adapters."""
 
-    def __init__(self, *, paths: Paths, password_provider: PasswordProvider):
+    def __init__(self, *, paths: Paths, password_provider: PasswordProvider,
+                 expected_identity: dict | None = None):
         if not callable(password_provider):
             raise TypeError("password_provider must be callable")
         self.paths = paths
         self._password_provider = password_provider
         self._password_cache: Sealed | None = None
+        self._derived_key_cache: tuple[bytes, bytes] | None = None
+        self._expected_identity = dict(expected_identity or {})
+
+    def __getstate__(self):
+        raise TypeError("replica store contains process-local unlocking material")
+
+    def _validate_identity(self, checkpoint):
+        if any(checkpoint.get(key) != value for key, value in self._expected_identity.items()):
+            raise ReplicaError("replica generation does not match selected profile")
 
     def install(
         self,
@@ -69,6 +79,7 @@ class ReplicaStore:
     ) -> None:
         payload = validate_replica_payload(payload)
         checkpoint = validate_checkpoint(checkpoint)
+        self._validate_identity(checkpoint)
         ancestor = (
             None if verified_ancestor is None else validate_checkpoint(verified_ancestor)
         )
@@ -112,7 +123,9 @@ class ReplicaStore:
                 allow_nan=False,
                 separators=(",", ":"),
             ).encode("utf-8")
-            blob = crypto.encrypt_blob(plaintext, password=self._password())
+            if len(plaintext) + 48 > _MAX_GENERATION_BYTES:
+                raise ReplicaError("replica generation exceeds size limit")
+            blob, key = crypto._encrypt_blob_with_key(plaintext, password=self._password())
             generation_path = self.paths.generations_dir / (
                 checkpoint["snapshot_hash"] + ".enc"
             )
@@ -122,6 +135,7 @@ class ReplicaStore:
                 self.paths.active_generation,
                 (checkpoint["snapshot_hash"] + "\n").encode("ascii"),
             )
+            self._derived_key_cache = (crypto._blob_salt(blob), key)
 
     def load(self) -> tuple[dict, dict]:
         with profile_lock(self.paths):
@@ -140,13 +154,23 @@ class ReplicaStore:
         return self.paths.generations_dir / f"{generation_id}.enc"
 
     def _load_unlocked(self) -> tuple[dict, dict]:
+        try:
+            return self._read_generation_unlocked()
+        except BaseException:
+            self._derived_key_cache = None
+            raise
+
+    def _read_generation_unlocked(self) -> tuple[dict, dict]:
         generation_id = self._read_pointer_unlocked()
         path = self.paths.generations_dir / f"{generation_id}.enc"
         try:
-            blob = _secure_read(path)
+            blob = _secure_read(path, max_bytes=_MAX_GENERATION_BYTES)
             if len(blob) > _MAX_GENERATION_BYTES:
                 raise ReplicaError("active replica generation exceeds size limit")
-            plaintext = crypto.decrypt_blob(blob, password=self._password())
+            salt = crypto._blob_salt(blob)
+            cached = self._derived_key_cache
+            key = cached[1] if cached is not None and cached[0] == salt else crypto._derive_key(self._password(), salt)
+            plaintext = crypto._decrypt_blob_with_key(blob, key=key)
             if len(plaintext) > _MAX_GENERATION_BYTES:
                 raise ReplicaError("active replica generation exceeds size limit")
             raw = json.loads(plaintext.decode("utf-8"))
@@ -158,16 +182,18 @@ class ReplicaStore:
             raise ReplicaError("invalid replica generation schema")
         payload = validate_replica_payload(raw["payload"])
         checkpoint = validate_checkpoint(raw["checkpoint"])
+        self._validate_identity(checkpoint)
         if (
             checkpoint["snapshot_hash"] != generation_id
             or payload["scope_id"] != checkpoint["scope_id"]
         ):
             raise ReplicaError("replica generation identity mismatch")
+        self._derived_key_cache = (salt, key)
         return payload, checkpoint
 
     def _read_pointer_unlocked(self) -> str:
         try:
-            raw = _secure_read(self.paths.active_generation)
+            raw = _secure_read(self.paths.active_generation, max_bytes=256)
         except FileNotFoundError as ex:
             raise NoReplicaGeneration("replica has no active generation") from ex
         except JournalError as ex:

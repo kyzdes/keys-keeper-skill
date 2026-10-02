@@ -14,6 +14,8 @@ import threading
 from keys_keeper.desktop_stats import DailySummaryCache
 from keys_keeper.paths import Paths
 
+MAX_REQUEST_CHARS = 4096
+
 
 def main() -> int:
     os.environ["KEYS_KEEPER_CALLER"] = "desktop"
@@ -21,10 +23,18 @@ def main() -> int:
     summaries = DailySummaryCache(paths)
     server = None
     try:
-        for line in sys.stdin:
+        while True:
+            line = sys.stdin.readline(MAX_REQUEST_CHARS + 1)
+            if not line:
+                break
+            if len(line) > MAX_REQUEST_CHARS:
+                print('{"type":"error","error":"request_too_large"}', flush=True)
+                break
             command = None
             try:
                 request = json.loads(line)
+                if not isinstance(request, dict):
+                    raise ValueError("request must be an object")
                 command = request.get("command")
                 if command == "quit":
                     break

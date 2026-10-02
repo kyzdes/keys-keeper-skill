@@ -18,13 +18,15 @@ import re
 import secrets
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 from urllib.parse import parse_qs, urlsplit
+
+from keys_keeper.http_resources import RequestDeadlineMixin
 
 
 # A maximum-size KK2 plaintext expands once inside the encrypted JSON envelope
@@ -202,10 +204,21 @@ class SyncServerApp:
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30.0, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 30000")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        # SQLite's own context manager commits/rolls back but never closes.
+        # Exit it first, preserving that transaction behavior, then release IO.
+        with closing(self._connect()) as connection, connection:
+            yield connection
 
     @contextmanager
     def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
@@ -226,7 +239,7 @@ class SyncServerApp:
         database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name == "posix" and not parent_existed:
             os.chmod(database_path.parent, 0o700)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
@@ -309,7 +322,7 @@ class SyncServerApp:
         if not device_id or not _OPAQUE_ID_RE.fullmatch(device_id):
             raise SyncServerError(401, "unauthorized", "invalid credentials")
         token_hash = _sha256(_bearer_token(authorization).encode("utf-8"))
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT device_id, vault_id, token_hash, status FROM devices WHERE device_id = ?",
                 (device_id,),
@@ -361,13 +374,13 @@ class SyncServerApp:
 
     def health(self) -> dict[str, str]:
         """Check that the relay process can still open and query its database."""
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("SELECT 1").fetchone()
         return {"status": "ok"}
 
     def get_head(self, vault_id: str, device: AuthenticatedDevice) -> dict[str, Any]:
         self._require_vault(device, vault_id)
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 """SELECT v.head_commit_id, c.sequence, c.manifest_hash
                    FROM vaults v
@@ -390,7 +403,7 @@ class SyncServerApp:
         self._require_vault(device, vault_id)
         if not _COMMIT_ID_RE.fullmatch(commit_id):
             raise SyncServerError(404, "not_found", "commit not found")
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM commits WHERE vault_id = ? AND commit_id = ?",
                 (vault_id, commit_id),
@@ -410,7 +423,7 @@ class SyncServerApp:
         self._require_vault(device, vault_id)
         if after_sequence < 0 or limit < 1 or limit > 100:
             raise SyncServerError(400, "invalid_request", "invalid commit pagination")
-        with self._connect() as connection:
+        with self._connection() as connection:
             if connection.execute(
                 "SELECT 1 FROM vaults WHERE vault_id = ?", (vault_id,)
             ).fetchone() is None:
@@ -476,7 +489,7 @@ class SyncServerApp:
             )
         commit_blob = _decode_base64(payload.get("commit_blob"), "commit_blob")
         snapshot = _decode_base64(payload.get("snapshot_ciphertext"), "snapshot_ciphertext")
-        with self._connect() as connection:
+        with self._connection() as connection:
             key_row = connection.execute(
                 "SELECT sign_public_key FROM devices WHERE device_id = ? AND vault_id = ?",
                 (device.device_id, vault_id),
@@ -578,7 +591,7 @@ class SyncServerApp:
         self, vault_id: str, device: AuthenticatedDevice
     ) -> dict[str, Any]:
         self._require_vault(device, vault_id)
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """SELECT device_id, sign_public_key, wrap_public_key, status,
                           approved_by_device_id, membership_statement,
@@ -995,7 +1008,7 @@ class SyncServerApp:
 def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
     """Create a request handler bound to one application instance."""
 
-    class SyncRequestHandler(BaseHTTPRequestHandler):
+    class SyncRequestHandler(RequestDeadlineMixin, BaseHTTPRequestHandler):
         server_version = "keys-keeper-sync"
         sys_version = ""
 
@@ -1058,6 +1071,19 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                 vault_id=vault_id,
                 allow_pending=pending,
             )
+
+        def _v1_post_limit(self, path):
+            app.project_relay._unique_auth(self.headers)
+            if path == "/v1/vaults":
+                app._authenticate_admin(self.headers.get("Authorization"))
+                return 16 * 1024
+            match = re.fullmatch(r"/v1/vaults/([^/]+)/(commits|invites|devices/[^/]+/revoke|invites/[^/]+/approve)", path)
+            if match:
+                self._device(match.group(1))
+                return MAX_REQUEST_BODY if match.group(2) == "commits" else 16 * 1024
+            if re.fullmatch(r"/v1/invites/[^/]+/claim", path):
+                return 16 * 1024
+            raise SyncServerError(404, "not_found", "endpoint not found")
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             try:
@@ -1152,7 +1178,7 @@ def make_handler(app: SyncServerApp) -> type[BaseHTTPRequestHandler]:
                         status, result = app.project_relay.handle("POST", path, self.headers, payload)
                         self._send_json(status, result)
                     return
-                payload = self._read_json()
+                payload = self._read_json(maximum=self._v1_post_limit(path))
                 if path == "/v1/vaults":
                     result = app.create_vault(payload, self.headers.get("Authorization"))
                     self._send_json(201, result)
@@ -1232,6 +1258,7 @@ def create_http_server(
 
         def __init__(self, address, handler):
             import threading
+            self.request_timeout = app.project_relay.limits.socket_timeout
             self._connections = threading.BoundedSemaphore(app.project_relay.limits.concurrent_connections)
             super().__init__(address, handler)
 
