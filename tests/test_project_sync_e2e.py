@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import copy
 import hashlib
+import os
 import secrets
 import threading
 from uuid import uuid4
@@ -596,7 +597,11 @@ def test_clean_master_idle_cycles_do_not_save_or_rewrite_journal(two_scopes, mon
     env = two_scopes
     state, master = _new_master(env["tmp_path"] / "idle-master", env["scope_a"], env["endpoint"], env["store"], env["backend"])
     master.publish()
-    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in state.paths.operations_dir.glob("*.enc")}
+    durable = [*state.paths.operations_dir.glob("*.enc"),
+               env["store"].paths.data_json, env["store"].paths.data_json_bak]
+    for index, path in enumerate(durable):
+        os.utime(path, ns=(1_600_000_000_000_000_000 + index, 1_600_000_000_000_000_000 + index))
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in durable}
     saves, writes = [], []
     real_save, real_write = state.save, state.journal._write_unlocked
     def save(data):

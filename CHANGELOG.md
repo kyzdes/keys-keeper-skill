@@ -4,6 +4,27 @@ All notable changes to keys-keeper. Format loosely follows [Keep a Changelog](ht
 
 Distribution: install via the Claude Code marketplace (`/plugin install keys-keeper@claude-skills` after `/plugin marketplace add https://github.com/kyzdes/claude-skills`), the repository's Codex marketplace (`codex plugin marketplace add https://github.com/kyzdes/keys-keeper-skill`), or standalone `pipx install git+https://github.com/kyzdes/keys-keeper-skill`. The SessionStart fallback updater is opt-in; native host marketplace auto-update is an independent user setting.
 
+## [0.13.0] — 2026-10-03
+
+### Fixed
+
+- Unchanged metadata transactions leave both the catalog and its recovery copy
+  untouched. Repeated idle project sync no longer rewrites identical files.
+- Agent SSH instructions keep metadata discovery and connection in the same
+  authorized profile, use one-shot `--cmd` commands, and distinguish local
+  diagnostics from retrying a failed credential operation. Worker/replica
+  restrictions and existing SSH host verification remain in force.
+- Global `--profile` / `--project` help explicitly includes the supported
+  `master` selector alongside replica UUIDs and project/environment selection.
+- CLI, both plugin manifests, generated skills/rules and Windows installation
+  references target 0.13.0. The landing-page install command no longer pins
+  the superseded 0.11.1 release or labels 0.12.1 as an unpublished preview.
+- Release artifact verification checks Windows and landing-page installation
+  pins alongside the package and generated rules.
+
+No relay protocol, vault format or runtime dependency changes are included.
+Existing 0.12.1 relays do not require an update for these client changes.
+
 ## [0.12.1] — 2026-10-03
 
 ### Fixed

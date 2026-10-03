@@ -6,7 +6,14 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service — with an encrypted-file fallback on headless servers). Ships with rule files for **Claude Code, Cursor, Aider, Codex CLI, Cline** — and any other agent via `keys init generic`. The normal command surface routes values to explicit sinks without returning plaintext in tool output. This reduces accidental transcript exposure; it does not isolate secrets from arbitrary code running as the same OS user.
 
-**Status:** v0.12.1 · macOS + Windows + Linux · local-first · MIT license
+**Status:** v0.13.0 · macOS + Windows + Linux · local-first · MIT license
+
+Version 0.13.0 clarifies profile selection and one-shot SSH commands for
+agents, including local diagnostics after a failed connection. The CLI help
+now names the supported `master` profile. Idle project sync preserves unchanged
+catalog files and their recovery copy. Generated rules and installation
+references use the same release version; relay protocols and dependencies
+remain unchanged.
 
 Version 0.12.1 fixes a macOS foreground-worker cleanup race found during
 release qualification. It retains permission failures when process-group
@@ -84,10 +91,10 @@ This is transcript hygiene, not a same-user security boundary. A shell-capable a
 
 ### 1. Install the `keys` CLI
 
-The command below installs the immutable `v0.12.1` release tag.
+The command below installs the immutable `v0.13.0` release tag.
 
 ```bash
-pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.12.1'
+pipx install 'git+https://github.com/kyzdes/keys-keeper-skill.git@v0.13.0'
 keys --version                                        # installation check
 ```
 

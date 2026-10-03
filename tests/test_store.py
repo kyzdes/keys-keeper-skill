@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 
 import pytest
@@ -387,3 +388,55 @@ def test_transaction_rollback_commit_and_serialized_bytes_are_stable(store):
         "entries": [base.to_dict(), committed.to_dict()],
         "tombstones": [],
     }
+
+
+@pytest.mark.parametrize("schema", [2, 3])
+@pytest.mark.parametrize("operation", ["read_transaction", "unchanged_update"])
+def test_unchanged_transaction_preserves_metadata_and_last_distinct_backup(store, schema, operation):
+    first = Entry.new(name="idle-first", type=EntryType.API_KEY)
+    store.add(first)
+    if schema == 3:
+        store.migrate_catalog_v3()
+        # Migration appends fields in a different JSON order. Normalize the
+        # updated record once so this test exercises byte-identical writes.
+        store.update(store.get_by_name(first.name))
+    store.add(Entry.new(name="idle-second", type=EntryType.API_KEY))
+    paths = (store.paths.data_json, store.paths.data_json_bak)
+    for index, path in enumerate(paths):
+        # Force distinguishable old timestamps; do not depend on clock precision.
+        os.utime(path, ns=(1_600_000_000_000_000_000 + index, 1_600_000_000_000_000_000 + index))
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+    assert before[paths[0]][0] != before[paths[1]][0]
+
+    if operation == "read_transaction":
+        with store.transaction() as tx:
+            assert len(tx.list()) == 2
+            tx.revision()
+    else:
+        store.update(store.get_by_name(first.name))
+
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths} == before
+
+
+def test_initial_empty_transaction_writes_catalog_and_real_change_preserves_preimage(store):
+    with store.transaction() as tx:
+        assert tx.list() == []
+    initial = store.paths.data_json.read_bytes()
+    assert json.loads(initial)["entries"] == []
+    assert not store.paths.data_json_bak.exists()
+
+    store.add(Entry.new(name="first-real-change", type=EntryType.API_KEY))
+    assert store.paths.data_json.read_bytes() != initial
+    assert store.paths.data_json_bak.read_bytes() == initial
+
+
+def test_oversized_change_does_not_replace_metadata_or_backup(store, monkeypatch):
+    from keys_keeper import store as module
+    store.add(Entry.new(name="size-first", type=EntryType.API_KEY))
+    store.add(Entry.new(name="size-second", type=EntryType.API_KEY))
+    paths = (store.paths.data_json, store.paths.data_json_bak)
+    before = {path: path.read_bytes() for path in paths}
+    monkeypatch.setattr(module, "_MAX_METADATA_BYTES", len(before[paths[0]]) + 1)
+    with pytest.raises(module.StoreError, match="metadata file exceeds size limit"):
+        store.add(Entry.new(name="size-third", type=EntryType.API_KEY))
+    assert {path: path.read_bytes() for path in paths} == before
