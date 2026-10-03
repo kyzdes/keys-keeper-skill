@@ -129,11 +129,14 @@ A plaintext export is allowed only when the user explicitly asks for one. Build 
 
 Presence, successful resolution, and external service validity are three different claims. Report only the layer actually verified.
 
-### User asks for server credentials
+### User asks to access a server
 
-- `keys info NAME` for non-sensitive fields (host, user, port).
-- `keys ssh NAME` to actually connect — the CLI handles key material itself.
-- For deploy scripts that need ENV vars from `keys`: write `__KEYS:name__` placeholders, then `keys resolve PATH` at runtime.
+- Use `keys info NAME` to check host, user, port and the `ssh_key` reference. Notes and tags may be stale; they do not prove the server's current state.
+- Commands use the default profile unless one is selected explicitly. If the entry is missing or the target scope is unclear, `keys project-sync profiles` reads the local profile registry without opening credentials. Keep discovery and SSH in the same authorized profile: `keys --profile PROFILE_UUID info NAME`, then `keys --profile PROFILE_UUID ssh NAME`. On an established master installation, `--profile master` selects the master catalog. Do not fall back to master from a worker/replica or change the default with `project-sync use` to bypass a restriction.
+- For agent work, use a one-shot command: `keys --profile PROFILE_UUID ssh NAME --cmd 'id -un'`. Start with a read-only command that answers the task. Reserve `keys ssh NAME` without `--cmd` for an interactive terminal. The CLI creates and removes the protected key file; do not export the key yourself.
+- `--cmd` is a remote shell command, not a local SSH-options argument. Quote it as one local argument and quote any remote values for the remote shell. SSH passes remote stdout/stderr through: choose commands with value-free output; do not dump environment variables, secret files or raw service configuration.
+- Preserve SSH host verification. Use existing trusted `known_hosts` records; missing or changed trust needs resolution before connecting. Do not accept a new key, run `ssh-keyscan`, rewrite trust files or weaken checking as a connection workaround.
+- Distinguish missing metadata, local credential authorization failure, SSH transport/authentication failure and a remote command's nonzero exit. After one failed authorization attempt, stop that credential operation until a confirmed repair or explicit user direction; metadata/configuration diagnosis can continue. A failed remote command may already have changed state, so inspect its outcome before retrying.
 
 ### User asks whether Keys Keeper is installed, current, or healthy
 
