@@ -104,6 +104,12 @@ def _verify_version_contract(root: Path, names: set[str], wheel: Path) -> str:
             f"keys-keeper-skill.git@v{project_version}",
         ),
         root / "CHANGELOG.md": (f"## [{project_version}]",),
+        root / "scripts/install-windows.ps1": (
+            f"keys-keeper-skill/archive/refs/tags/v{project_version}.zip",
+        ),
+        root / "docs/landing/index.html": (
+            f"keys-keeper-skill.git@v{project_version}",
+        ),
         root / "skills/keys-keeper/references/install.md": (
             f"keys-keeper-skill.git@v{project_version}",
         ),

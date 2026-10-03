@@ -4,10 +4,12 @@ Every per-target rule file (SKILL.md, .cursor/rules/*.mdc, AGENTS.md, …) and
 the MCP server's `instructions` field is composed from the constants below.
 When you edit this file:
 
-  1. Bump the patch version in `pyproject.toml`, `__init__.py`, and
-     `.claude-plugin/plugin.json` so release metadata stays consistent.
-  2. Regenerate the shipped SKILL.md:  `keys init claude --force`
-  3. CI runs `keys init claude --check` to catch drift on subsequent commits.
+  1. Keep the chosen release version consistent in `pyproject.toml`,
+     `__init__.py`, and both Claude/Codex plugin manifests.
+  2. Run `keys init claude --force` for the main skill, then repeat with
+     `--out plugins/keys-keeper/skills/keys-keeper/SKILL.md` for the Codex payload.
+  3. Regenerate rule fixtures with `pytest tests/test_rule_generators.py --regen`.
+     CI checks generated payloads for drift.
 
 Language is English. Agents translate at use-time.
 """

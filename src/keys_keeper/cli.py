@@ -1215,7 +1215,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="keys", description="personal secrets manager")
     p.add_argument("--version", action="version", version=f"keys-keeper {__version__}")
     p.add_argument("--profile", "--project", dest="profile_selector", metavar="PROFILE_OR_PROJECT",
-                   help="select a replica profile UUID or project slug (with --env)")
+                   help="select master, a replica profile UUID, or a project slug (with --env)")
     p.add_argument("--env", dest="profile_environment", metavar="ENVIRONMENT",
                    help="environment used with --project before the command")
     sub = p.add_subparsers(dest="command", required=True)
