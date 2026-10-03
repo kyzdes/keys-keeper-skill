@@ -8,6 +8,8 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
 
 ### Fixed
 
+- Unchanged metadata transactions leave both the catalog and its recovery copy
+  untouched. Repeated idle project sync no longer rewrites identical files.
 - Agent SSH instructions keep metadata discovery and connection in the same
   authorized profile, use one-shot `--cmd` commands, and distinguish local
   diagnostics from retrying a failed credential operation. Worker/replica
@@ -21,7 +23,7 @@ Distribution: install via the Claude Code marketplace (`/plugin install keys-kee
   pins alongside the package and generated rules.
 
 No relay protocol, vault format or runtime dependency changes are included.
-Existing 0.12.1 relays do not require an update for these instruction changes.
+Existing 0.12.1 relays do not require an update for these client changes.
 
 ## [0.12.1] — 2026-10-03
 

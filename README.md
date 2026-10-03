@@ -10,7 +10,8 @@ Stores API keys, SSH keys, server credentials, and domain info in the OS-native 
 
 Version 0.13.0 clarifies profile selection and one-shot SSH commands for
 agents, including local diagnostics after a failed connection. The CLI help
-now names the supported `master` profile. Generated rules and installation
+now names the supported `master` profile. Idle project sync preserves unchanged
+catalog files and their recovery copy. Generated rules and installation
 references use the same release version; relay protocols and dependencies
 remain unchanged.
 
