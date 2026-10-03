@@ -563,6 +563,9 @@ class MetadataStore:
             self._atomic_write(data)
 
     def _atomic_write(self, data: dict) -> None:
+        payload = json.dumps(data, indent=2, sort_keys=False).encode("utf-8")
+        if len(payload) > _MAX_METADATA_BYTES:
+            raise StoreError("metadata file exceeds size limit")
         # Backup the current good file (if any) before overwriting.
         try:
             previous = _secure_read(self.paths.data_json, max_bytes=_MAX_METADATA_BYTES,
@@ -571,14 +574,15 @@ class MetadataStore:
             previous = None
         except (JournalError, OSError):
             raise StoreError("metadata file unavailable before write") from None
+        if previous == payload:
+            # Read-only transactions and already acknowledged publications must
+            # preserve both the current file and the last distinct backup.
+            return
         if previous is not None:
             try:
                 _atomic_write_bytes(self.paths.data_json_bak, previous)
             except (JournalError, OSError):
                 raise StoreError("cannot persist metadata backup") from None
-        payload = json.dumps(data, indent=2, sort_keys=False).encode("utf-8")
-        if len(payload) > _MAX_METADATA_BYTES:
-            raise StoreError("metadata file exceeds size limit")
         try:
             atomic_write_bytes(self.paths.data_json, payload)
         except (PrivateFileError, OSError):
